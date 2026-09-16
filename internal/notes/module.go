@@ -4,10 +4,8 @@
 // imgsecret/imgcache en el subdir de notes), los adjuntos y el servidor de la
 // API Notes/OCS sobre el validador Graph compartido (SPEC §6).
 //
-// NOTA para H5: la interfaz Module (SPEC §4.5) no quedó definida en common
-// tras H1, así que se define aquí de forma autocontenida. Si H5 la promueve a
-// un paquete común, basta borrar esta definición e importar la común: las
-// firmas del módulo no cambian.
+// La interfaz Module (SPEC §4.5) vive en internal/common/module desde H5;
+// este módulo la satisface (ver el var _ abajo).
 package notes
 
 import (
@@ -23,23 +21,14 @@ import (
 	"github.com/gnacho/ocapps/internal/common/config"
 	"github.com/gnacho/ocapps/internal/common/imgproxy"
 	oclog "github.com/gnacho/ocapps/internal/common/log"
+	commonmodule "github.com/gnacho/ocapps/internal/common/module"
 	commonstore "github.com/gnacho/ocapps/internal/common/store"
 	"github.com/gnacho/ocapps/internal/notes/api"
 	"github.com/gnacho/ocapps/internal/notes/attachments"
 	"github.com/gnacho/ocapps/internal/notes/store"
 )
 
-// Module es la interfaz de módulo del SPEC §4.5 que cmd/ocapps (H5) consume.
-type Module interface {
-	Name() string
-	Enabled() bool
-	// Register monta las rutas del módulo en el mux (o el handler 503 si failed).
-	Register(mux *http.ServeMux)
-	// Run ejecuta loops de background; debe retornar al cancelar ctx.
-	Run(ctx context.Context) error
-	// Healthy informa a /healthz y /readyz.
-	Healthy() error
-}
+var _ commonmodule.Module = (*notesModule)(nil)
 
 // Rutas públicas del módulo (contrato Notes API + OCS, SPEC §4.1/§4.2):
 //   - /index.php/apps/notes/api/v1/   (subárbol; GET /v1/img público firmado)
@@ -51,7 +40,9 @@ const (
 	ocsUserPath         = "/ocs/v2.php/cloud/user"
 )
 
-type module struct {
+// notesModule implementa common/module.Module. (El tipo NO se llama "module"
+// para no colisionar con el paquete común importado.)
+type notesModule struct {
 	enabled bool
 	log     *slog.Logger
 	db      *sql.DB
@@ -69,11 +60,11 @@ type module struct {
 // Un error aquí (BD que no abre, migración rota, backfill sin owner,
 // imgsecret corrupto) debe degradar el módulo a 503, no tumbar el proceso
 // (D3): es responsabilidad del wiring de H5 registrar el handler sustituto.
-func New(cfg *config.Config, logger *slog.Logger, validator *auth.GraphValidator) (Module, error) {
+func New(cfg *config.Config, logger *slog.Logger, validator *auth.GraphValidator) (commonmodule.Module, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	m := &module{enabled: cfg.NotesEnabled, log: oclog.Module(logger, "notes")}
+	m := &notesModule{enabled: cfg.NotesEnabled, log: oclog.Module(logger, "notes")}
 	if !m.enabled {
 		return m, nil
 	}
@@ -85,7 +76,7 @@ func New(cfg *config.Config, logger *slog.Logger, validator *auth.GraphValidator
 	if err != nil {
 		return nil, fmt.Errorf("notes: open sqlite: %w", err)
 	}
-	fail := func(err error) (Module, error) {
+	fail := func(err error) (commonmodule.Module, error) {
 		_ = db.Close()
 		return nil, err
 	}
@@ -110,14 +101,14 @@ func New(cfg *config.Config, logger *slog.Logger, validator *auth.GraphValidator
 	return m, nil
 }
 
-func (m *module) Name() string { return "notes" }
+func (m *notesModule) Name() string { return "notes" }
 
-func (m *module) Enabled() bool { return m.enabled }
+func (m *notesModule) Enabled() bool { return m.enabled }
 
 // Register monta las rutas del contrato Notes en el mux compartido. El
 // preflight OPTIONS lo responde el middleware CORS de la propia cadena del
 // servidor (204 sin auth, SPEC §4.4), así que no hace falta registro aparte.
-func (m *module) Register(mux *http.ServeMux) {
+func (m *notesModule) Register(mux *http.ServeMux) {
 	if !m.enabled || m.server == nil {
 		return
 	}
@@ -129,13 +120,13 @@ func (m *module) Register(mux *http.ServeMux) {
 }
 
 // Run no tiene tareas de fondo en notes: bloquea hasta la cancelación.
-func (m *module) Run(ctx context.Context) error {
+func (m *notesModule) Run(ctx context.Context) error {
 	<-ctx.Done()
 	return nil
 }
 
 // Healthy hace ping a la BD del módulo (SPEC §4.5).
-func (m *module) Healthy() error {
+func (m *notesModule) Healthy() error {
 	if !m.enabled {
 		return nil
 	}
@@ -151,7 +142,7 @@ func (m *module) Healthy() error {
 }
 
 // Close cierra la BD del módulo (para apagado ordenado en H5).
-func (m *module) Close() error {
+func (m *notesModule) Close() error {
 	if m.db != nil {
 		return m.db.Close()
 	}

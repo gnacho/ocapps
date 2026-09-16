@@ -26,6 +26,7 @@ import (
 	"github.com/gnacho/ocapps/internal/common/config"
 	"github.com/gnacho/ocapps/internal/common/cred"
 	"github.com/gnacho/ocapps/internal/common/httpx"
+	commonmodule "github.com/gnacho/ocapps/internal/common/module"
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"github.com/gnacho/ocapps/internal/photos/api"
 	"github.com/gnacho/ocapps/internal/photos/exif"
@@ -39,21 +40,8 @@ import (
 // constante del paquete api (fuente única: registro de rutas y firma de vídeo).
 const PublicPrefix = api.PublicPrefix
 
-// Interface es la interfaz de módulo de SPEC §4.5 que cmd/ocapps consume en
-// el wiring (H5). Se declara aquí a falta de un paquete common/module; las
-// firmas son las del SPEC.
-type Interface interface {
-	Name() string
-	Enabled() bool
-	// Register monta las rutas del módulo en el mux (o el handler 503 si failed).
-	Register(mux *http.ServeMux)
-	// Run ejecuta los loops de background; retorna al cancelar ctx.
-	Run(ctx context.Context) error
-	// Healthy informa a /healthz y /readyz.
-	Healthy() error
-}
-
-var _ Interface = (*Module)(nil)
+// Module implementa la interfaz común de SPEC §4.5 (internal/common/module).
+var _ commonmodule.Module = (*Module)(nil)
 
 // Backoff del reintento de init en background (SPEC §4.5).
 const (

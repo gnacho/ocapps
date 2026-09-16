@@ -9,12 +9,13 @@ import (
 
 	"github.com/gnacho/ocapps/internal/common/auth"
 	"github.com/gnacho/ocapps/internal/common/config"
+	commonmodule "github.com/gnacho/ocapps/internal/common/module"
 )
 
 // newTestModule builds the notes module on a temporary data dir. The Graph
 // validator points to an unreachable server, so every credential is invalid
 // (API routes must answer 401, never 404).
-func newTestModule(t *testing.T) Module {
+func newTestModule(t *testing.T) commonmodule.Module {
 	t.Helper()
 	cfg := &config.Config{
 		Common: config.Common{

@@ -1,18 +1,7 @@
 // Package news: wiring del módulo news de ocapps (SPEC §4.5, §8 H4).
 //
-// El módulo implementa la interfaz Module del SPEC §4.5 (Name, Enabled,
-// Register, Run, Healthy). H1 no la definió en common, así que aquí solo se
-// implementan los métodos con las firmas exactas del SPEC; H5 declarará la
-// interfaz (estructural en Go) en el paquete que elija y este módulo la
-// satisfará sin cambios:
-//
-//	type Module interface {
-//	    Name() string
-//	    Enabled() bool
-//	    Register(mux *http.ServeMux)
-//	    Run(ctx context.Context) error
-//	    Healthy() error
-//	}
+// El módulo satisface la interfaz unificada common/module.Module (SPEC §4.5,
+// promovida a common en H5) con las firmas exactas del SPEC.
 //
 // Constructor para H5: m, err := news.New(cfg, log) donde cfg es el
 // *common/config.Config ya cargado y log el logger BASE (New le añade
@@ -35,6 +24,7 @@ import (
 	"github.com/gnacho/ocapps/internal/common/cred"
 	"github.com/gnacho/ocapps/internal/common/imgproxy"
 	commonlog "github.com/gnacho/ocapps/internal/common/log"
+	commonmodule "github.com/gnacho/ocapps/internal/common/module"
 	"github.com/gnacho/ocapps/internal/news/api"
 	"github.com/gnacho/ocapps/internal/news/auth"
 	"github.com/gnacho/ocapps/internal/news/extract"
@@ -50,6 +40,8 @@ import (
 // dbFileName es el nombre histórico del fichero SQLite de news (SPEC §5.1:
 // se conserva para que la copia 1:1 de la migración funcione tal cual).
 const dbFileName = "ocnews.db"
+
+var _ commonmodule.Module = (*Module)(nil)
 
 // Module es el módulo news: News API v1.3 + API propia + scheduler de
 // refresco/retención/WebSub.
