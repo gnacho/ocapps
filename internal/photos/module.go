@@ -64,7 +64,6 @@ const (
 
 type Module struct {
 	cfg     config.PhotosConfig
-	ocURL   string
 	dataDir string
 	log     *slog.Logger
 
@@ -113,7 +112,7 @@ func New(cfg config.PhotosConfig, common config.Common, log *slog.Logger) (*Modu
 
 	dc := webdav.New(common.OpenCloudURL, cfg.User, cfg.AppToken)
 	m := &Module{
-		cfg: cfg, ocURL: common.OpenCloudURL, dataDir: dataDir, log: log,
+		cfg: cfg, dataDir: dataDir, log: log,
 		st: st, secret: secret, dav: dc,
 	}
 
