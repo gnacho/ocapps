@@ -4,6 +4,10 @@
 // comprobado ANTES que Graph) o con la sesión de OpenCloud validada por el
 // middleware común con política SingleTenant (SPEC §6.2). Las rutas firmadas
 // de vídeo están exentas (la firma HMAC va en la URL).
+//
+// Q7 (SPEC §7): los endpoints sin consumidor en la extensión (GET /api/thumb,
+// GET /api/assets/{id}/hls/{file}, GET /api/assets/{id}) se eliminaron en el
+// port; el streaming firmado /api/video/{id} sí se usa y se mantiene.
 package api
 
 import (
@@ -20,7 +24,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +35,6 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/phash"
 	"github.com/gnacho/ocapps/internal/photos/store"
 	"github.com/gnacho/ocapps/internal/photos/thumb"
-	"github.com/gnacho/ocapps/internal/photos/video"
 )
 
 // PublicPrefix es el namespace público del módulo photos (SPEC §4.3). Se usa
@@ -51,16 +53,15 @@ type Server struct {
 	thumbs    *thumb.Service
 	dav       *webdav.Client
 	geo       *geo.Geocoder
-	video     *video.Transcoder
 	validator *auth.GraphValidator // nil = solo token estático
 	cfg       Config
 	log       *slog.Logger
 	rescanCh  chan struct{}
 }
 
-func New(st *store.Store, th *thumb.Service, dc *webdav.Client, gc *geo.Geocoder, vt *video.Transcoder, v *auth.GraphValidator, cfg Config, log *slog.Logger) *Server {
+func New(st *store.Store, th *thumb.Service, dc *webdav.Client, gc *geo.Geocoder, v *auth.GraphValidator, cfg Config, log *slog.Logger) *Server {
 	return &Server{
-		st: st, thumbs: th, dav: dc, geo: gc, video: vt, validator: v, cfg: cfg, log: log,
+		st: st, thumbs: th, dav: dc, geo: gc, validator: v, cfg: cfg, log: log,
 		rescanCh: make(chan struct{}, 4), // Q5: buffer 4 (antes 1)
 	}
 }
@@ -69,15 +70,12 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+PublicPrefix+"/api/stats", s.stats)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/assets", s.assets)
-	mux.HandleFunc("GET "+PublicPrefix+"/api/assets/{id}", s.asset)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/assets/{id}/favorite", s.favorite)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/assets/{id}/archive", s.archive)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/duplicates", s.duplicates)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/assets/{id}/thumb", s.thumbHandler)
-	mux.HandleFunc("GET "+PublicPrefix+"/api/assets/{id}/hls/{file}", s.hls)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/assets/{id}/video-url", s.videoURL)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/video/{id}", s.videoStream)
-	mux.HandleFunc("GET "+PublicPrefix+"/api/thumb", s.thumbByPath)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/assets/{id}/original", s.original)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/memories/on-this-day", s.onThisDay)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/timeline/calendar", s.calendar)
@@ -165,16 +163,6 @@ func (s *Server) assets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"assets": list})
-}
-
-func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	a, err := s.st.AssetByID(r.Context(), id)
-	if err != nil {
-		http.Error(w, "not found", 404)
-		return
-	}
-	writeJSON(w, a)
 }
 
 func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
@@ -296,64 +284,6 @@ func (s *Server) videoStream(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(status)
 	_, _ = io.Copy(w, rc)
-}
-
-// hls: sirve la playlist y los segmentos HLS de un vídeo (transcodifica bajo demanda).
-func (s *Server) hls(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	a, err := s.st.AssetByID(r.Context(), id)
-	if err != nil || a.DeletedAt != nil {
-		http.Error(w, "not found", 404)
-		return
-	}
-	file := r.PathValue("file")
-	if file != filepath.Base(file) || (!strings.HasSuffix(file, ".m3u8") && !strings.HasSuffix(file, ".ts")) {
-		http.Error(w, "bad request", 400)
-		return
-	}
-	if s.video == nil {
-		http.Error(w, "transcoding no disponible", 501)
-		return
-	}
-	dir, err := s.video.HLS(r.Context(), a.Path, etagFor(a))
-	if err != nil {
-		s.log.Warn("hls", "id", id, "err", err)
-		http.Error(w, err.Error(), 502)
-		return
-	}
-	if strings.HasSuffix(file, ".m3u8") {
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-	} else {
-		w.Header().Set("Content-Type", "video/mp2t")
-	}
-	w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
-	http.ServeFile(w, r, filepath.Join(dir, file))
-}
-
-// thumbByPath genera una miniatura a partir de la ruta del fichero (sin índice),
-// de modo que la extensión puede pedir miniaturas de HEIC que OpenCloud no sabe
-// previsualizar. path = ruta dentro del espacio ("/Fotos/IMG.heic").
-func (s *Server) thumbByPath(w http.ResponseWriter, r *http.Request) {
-	p := r.URL.Query().Get("path")
-	if p == "" {
-		http.Error(w, "path required", http.StatusBadRequest)
-		return
-	}
-	maxSize := 400
-	if v := r.URL.Query().Get("w"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 64 && n <= 2048 {
-			maxSize = n
-		}
-	}
-	href := s.dav.SpaceFileURL(s.cfg.WebDAVURL, p)
-	file, err := s.thumbs.Get(r.Context(), href, r.URL.Query().Get("etag"), maxSize)
-	if err != nil {
-		s.log.Warn("thumb by path", "path", p, "err", err)
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-		return
-	}
-	w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
-	http.ServeFile(w, r, file)
 }
 
 // computePHash: hash perceptual a partir de la miniatura en caché (no descarga el original).

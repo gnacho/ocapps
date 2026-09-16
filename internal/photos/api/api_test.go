@@ -20,7 +20,7 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, nil, nil, nil, nil, nil,
+	return New(st, nil, nil, nil, nil,
 		Config{Token: "test-token", Secret: []byte("0123456789abcdef0123456789abcdef")},
 		slog.Default())
 }
@@ -66,6 +66,18 @@ func TestRutasBajoPublicPrefix(t *testing.T) {
 	// sin prefijo: no hay ruta (el proxy ya no strip-pea)
 	if rr := do(t, h, http.MethodGet, "/api/stats", bearer); rr.Code != http.StatusNotFound {
 		t.Fatalf("GET /api/stats sin prefijo -> %d, quiero 404", rr.Code)
+	}
+
+	// Q7: endpoints muertos eliminados (sin consumidor en la extensión)
+	for _, p := range []string{
+		"/api/thumb?path=/Fotos/IMG.heic", // thumb por path
+		"/api/assets/1",                   // asset por id (bare GET)
+		"/api/assets/1/hls/index.m3u8",    // HLS
+	} {
+		rr := do(t, h, http.MethodGet, PublicPrefix+p, bearer)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("GET %s%s -> %d, quiero 404 (endpoint eliminado en Q7)", PublicPrefix, p, rr.Code)
+		}
 	}
 
 	// sin auth: 401 (salvo video firmado y preflight)

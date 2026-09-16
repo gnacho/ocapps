@@ -33,7 +33,6 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/index"
 	"github.com/gnacho/ocapps/internal/photos/store"
 	"github.com/gnacho/ocapps/internal/photos/thumb"
-	"github.com/gnacho/ocapps/internal/photos/video"
 )
 
 // PublicPrefix es el namespace público del módulo (SPEC §4.3). Alias de la
@@ -107,9 +106,9 @@ func New(cfg config.PhotosConfig, common config.Common, log *slog.Logger) (*Modu
 		return nil, fmt.Errorf("photos: mediasecret: %w", err)
 	}
 	// Q4: ffmpeg es la única dependencia de sistema; su ausencia degrada
-	// (pósters de vídeo / HLS) pero no impide servir.
+	// (pósters de vídeo: se sirve el original) pero no impide servir.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		log.Warn("ffmpeg no encontrado: pósters de vídeo y HLS degradados", "err", err)
+		log.Warn("ffmpeg no encontrado: pósters de vídeo degradados (se servirá el original)", "err", err)
 	}
 
 	dc := webdav.New(common.OpenCloudURL, cfg.User, cfg.AppToken)
@@ -217,14 +216,10 @@ func (m *Module) initBackend(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("thumb cache: %w", err)
 	}
-	transcoder, err := video.New(m.dav, filepath.Join(m.dataDir, "hls"))
-	if err != nil {
-		return fmt.Errorf("hls cache: %w", err)
-	}
 	scanner := index.NewScanner(m.dav, webdav.DefaultOptions(), m.st, m.log)
 	exifW := exif.NewWorker(m.dav, m.st, m.log)
 	geocoder := geo.New(m.st, m.log)
-	srv := api.New(m.st, thumbs, m.dav, geocoder, transcoder, m.validator,
+	srv := api.New(m.st, thumbs, m.dav, geocoder, m.validator,
 		api.Config{WebDAVURL: webdavURL, Token: m.cfg.Token, Secret: m.secret}, m.log)
 
 	m.mu.Lock()
