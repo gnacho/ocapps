@@ -35,7 +35,7 @@ func testModule(t *testing.T) *Module {
 		},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	m, err := New(cfg, log)
+	m, err := New(cfg, log, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestNewConfigInvalida(t *testing.T) {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// Sin AuthUser/Pass y BD vacía en modo local → bootstrap imposible → error.
-	if _, err := New(cfg, log); err == nil {
+	if _, err := New(cfg, log, nil); err == nil {
 		t.Fatal("New con modo local sin usuarios ni bootstrap debe fallar")
 	}
 }

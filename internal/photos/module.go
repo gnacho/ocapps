@@ -68,13 +68,20 @@ type Module struct {
 	initErr   error // último error de init (Graph/ListDrives)
 }
 
-// New cablea el módulo. cfg es la sección photos de la config unificada y
-// common la común (OpenCloudURL + PhotosDataDir). Errores de wiring duro (BD,
-// mediasecret, credenciales vacías) → error: el módulo no se construye y el
-// wiring debe registrar su namespace como failed (SPEC §4.5/D3). Un fallo de
-// Graph/ListDrives NO es error de New: el módulo arranca en estado failed y
-// reintenta en background desde Run.
-func New(cfg config.PhotosConfig, common config.Common, log *slog.Logger) (*Module, error) {
+// New cablea el módulo. cfg es la sección photos de la config unificada,
+// common la común (OpenCloudURL + PhotosDataDir) y gv el validador Graph
+// COMPARTIDO del proceso (desde H5; el módulo deriva el suyo con
+// gv.WithPolicy(SingleTenant(meID)) — misma caché, tenancy propia, SPEC
+// §6.2). Si gv es nil se crea uno independiente (tests/standalone). Errores
+// de wiring duro (BD, mediasecret, credenciales vacías) → error: el módulo
+// no se construye y el wiring debe registrar su namespace como failed
+// (SPEC §4.5/D3). Un fallo de Graph/ListDrives NO es error de New: el
+// módulo arranca en estado failed y reintenta en background desde Run.
+//
+// OJO (SPEC §6.2): el Bearer estático OCAPPS_PHOTOS_TOKEN se comprueba en
+// internal/photos/api ANTES de cualquier validación Graph; este cambio de
+// validador no altera ese orden.
+func New(cfg config.PhotosConfig, common config.Common, log *slog.Logger, gv *auth.GraphValidator) (*Module, error) {
 	if cfg.User == "" || cfg.AppToken == "" {
 		return nil, fmt.Errorf("photos: OCAPPS_PHOTOS_USER / OCAPPS_PHOTOS_APP_TOKEN son obligatorios con el módulo enabled")
 	}
@@ -117,7 +124,10 @@ func New(cfg config.PhotosConfig, common config.Common, log *slog.Logger) (*Modu
 		m.log.Info("usuario del servicio", "id", meID)
 		policy = auth.SingleTenant(meID)
 	}
-	m.validator = auth.NewGraphValidator(common.OpenCloudURL, policy, log)
+	if gv == nil { // standalone/tests: validador propio sin caché compartida
+		gv = auth.NewGraphValidator(common.OpenCloudURL, auth.MultiTenant(), log)
+	}
+	m.validator = gv.WithPolicy(policy)
 
 	// Primer intento de init contra Graph; si falla, Run reintenta.
 	ictx, icancel := context.WithTimeout(context.Background(), initTimeout)

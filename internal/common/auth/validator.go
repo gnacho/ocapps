@@ -71,16 +71,24 @@ type cacheEntry struct {
 	negative bool
 }
 
-// GraphValidator valida credenciales contra <OCAPPS_OPENCLOUD_URL>/graph/v1.0/me.
-type GraphValidator struct {
-	meURL  string
+// validatorState es el estado compartible de un GraphValidator: caché,
+// singleflight y cliente HTTP. Los validadores derivados con WithPolicy
+// comparten este estado (una sola caché Graph por proceso, SPEC §6.2) y solo
+// difieren en la Policy aplicada tras la validación.
+type validatorState struct {
 	client *http.Client
-	policy Policy
-	log    *slog.Logger
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry // basic:<user> / bearer:<sha256(token)>
 	sf    singleflight.Group    // una sola llamada a Graph por clave en vuelo
+}
+
+// GraphValidator valida credenciales contra <OCAPPS_OPENCLOUD_URL>/graph/v1.0/me.
+type GraphValidator struct {
+	meURL  string
+	policy Policy
+	log    *slog.Logger
+	st     *validatorState
 }
 
 // NewGraphValidator construye el validador. graphURL es la raíz del servidor
@@ -99,11 +107,26 @@ func NewGraphValidator(graphURL string, pol Policy, log *slog.Logger) *GraphVali
 	}
 	return &GraphValidator{
 		meURL:  u,
-		client: &http.Client{Timeout: 10 * time.Second},
 		policy: pol,
 		log:    log,
-		cache:  map[string]cacheEntry{},
+		st: &validatorState{
+			client: &http.Client{Timeout: 10 * time.Second},
+			cache:  map[string]cacheEntry{},
+		},
 	}
+}
+
+// WithPolicy devuelve un validador que comparte caché, singleflight y
+// cliente HTTP con v (una sola caché Graph para todo el proceso, SPEC §6.2:
+// un usuario de la web que abre news y photos valida una vez contra Graph)
+// pero aplica otra Policy — p. ej. SingleTenant(meID) en photos frente a
+// MultiTenant en news/notes. La política se evalúa DESPUÉS de la resolución
+// cacheada, así que compartir caché no mezcla tenancy entre módulos.
+func (v *GraphValidator) WithPolicy(pol Policy) *GraphValidator {
+	if pol == nil {
+		pol = MultiTenant()
+	}
+	return &GraphValidator{meURL: v.meURL, policy: pol, log: v.log, st: v.st}
 }
 
 // cacheKey: `basic:<username>` y `bearer:<sha256(token)>` (SPEC §6.1; la
@@ -118,9 +141,9 @@ func cacheKey(c Credential) string {
 
 // lookup devuelve (user, negative, hit).
 func (v *GraphValidator) lookup(key string) (*User, bool, bool) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	e, ok := v.cache[key]
+	v.st.mu.Lock()
+	defer v.st.mu.Unlock()
+	e, ok := v.st.cache[key]
 	if !ok || time.Now().After(e.expiry) {
 		return nil, false, false
 	}
@@ -132,9 +155,9 @@ func (v *GraphValidator) store(key string, u *User, negative bool) {
 	if negative {
 		ttl = negativeTTL
 	}
-	v.mu.Lock()
-	v.cache[key] = cacheEntry{user: u, negative: negative, expiry: time.Now().Add(ttl)}
-	v.mu.Unlock()
+	v.st.mu.Lock()
+	v.st.cache[key] = cacheEntry{user: u, negative: negative, expiry: time.Now().Add(ttl)}
+	v.st.mu.Unlock()
 }
 
 // graphMe: campos de GET /graph/v1.0/me que usamos.
@@ -168,7 +191,7 @@ func (v *GraphValidator) Validate(ctx context.Context, c Credential) (*User, boo
 		return v.admit(u)
 	}
 
-	res, err, _ := v.sf.Do(key, func() (any, error) {
+	res, err, _ := v.st.sf.Do(key, func() (any, error) {
 		// doble chequeo: otro vuelo pudo rellenar la caché
 		if u, negative, hit := v.lookup(key); hit {
 			if negative || u == nil {
@@ -208,7 +231,7 @@ func (v *GraphValidator) fetch(ctx context.Context, c Credential) (*User, bool) 
 	} else {
 		req.SetBasicAuth(c.Username, c.Password)
 	}
-	resp, err := v.client.Do(req)
+	resp, err := v.st.client.Do(req)
 	if err != nil {
 		v.log.Warn("opencloud graph /me inalcanzable", "err", err)
 		return nil, false
