@@ -43,7 +43,7 @@ func photosCfg() config.PhotosConfig {
 }
 
 func TestNewRequiereCredenciales(t *testing.T) {
-	_, err := New(config.PhotosConfig{}, config.Common{OpenCloudURL: "http://x", PhotosDataDir: t.TempDir()}, slog.Default())
+	_, err := New(config.PhotosConfig{}, config.Common{OpenCloudURL: "http://x", PhotosDataDir: t.TempDir()}, slog.Default(), nil)
 	if err == nil {
 		t.Fatal("New sin user/app-token debería fallar (módulo failed en el wiring)")
 	}
@@ -51,7 +51,7 @@ func TestNewRequiereCredenciales(t *testing.T) {
 
 func TestModuloFailedSiGraphCae(t *testing.T) {
 	common := config.Common{OpenCloudURL: "http://127.0.0.1:1", PhotosDataDir: t.TempDir()}
-	m, err := New(photosCfg(), common, slog.Default())
+	m, err := New(photosCfg(), common, slog.Default(), nil)
 	if err != nil {
 		t.Fatalf("New no debe fallar por Graph caído (reintenta en background): %v", err)
 	}
@@ -88,7 +88,7 @@ func TestModuloOKContraGraphFalso(t *testing.T) {
 	srv := fakeOpenCloudConEspacio(t)
 	dataDir := t.TempDir()
 	common := config.Common{OpenCloudURL: srv.URL, PhotosDataDir: dataDir}
-	m, err := New(photosCfg(), common, slog.Default())
+	m, err := New(photosCfg(), common, slog.Default(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

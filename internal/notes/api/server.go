@@ -285,7 +285,8 @@ func (s *Server) handleAttachmentDownload(w http.ResponseWriter, r *http.Request
 }
 
 // authenticate valida Basic/Bearer contra el validador Graph compartido. Lo
-// usa handleUserInfo (OCS), donde la auth es opcional y nunca responde 401.
+// usa handleUserInfo (OCS): en modo XML la auth es opcional (200 "User" sin
+// credenciales); en modo JSON es obligatoria (401 si falla, SPEC §4.2).
 func (s *Server) authenticate(r *http.Request) (*auth.User, error) {
 	if s.validator == nil {
 		return nil, fmt.Errorf("no validator")
@@ -694,6 +695,45 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, xml)
 }
 
+// ocsUserJSON es el payload OCS v2 en JSON de /ocs/v2.php/cloud/user que
+// espera news-android para el drawer (SPEC §4.2: antes lo servía un stub en
+// news; desde H5 lo sirve ESTE handler, único registrado en la ruta).
+type ocsUserJSON struct {
+	Ocs struct {
+		Meta struct {
+			Status     string `json:"status"`
+			StatusCode int    `json:"statuscode"`
+			Message    string `json:"message"`
+		} `json:"meta"`
+		Data struct {
+			ID             string `json:"id"`
+			DisplayName    string `json:"displayname"`
+			DisplayNameAlt string `json:"display-name"`
+		} `json:"data"`
+	} `json:"ocs"`
+}
+
+func newOCSUserJSON(id, displayName string) *ocsUserJSON {
+	var v ocsUserJSON
+	v.Ocs.Meta.Status = "ok"
+	v.Ocs.Meta.StatusCode = 200
+	v.Ocs.Meta.Message = "OK"
+	v.Ocs.Data.ID = id
+	v.Ocs.Data.DisplayName = displayName
+	v.Ocs.Data.DisplayNameAlt = displayName
+	return &v
+}
+
+// handleUserInfo sirve /ocs/v2.php/cloud/user (único handler de la ruta tras
+// resolver la colisión news-stub vs notes-real, SPEC §4.2). Dos modos:
+//
+//   - XML (default, clientes Notes como Iotas): auth OPCIONAL; sin auth se
+//     responde 200 con "User" (comportamiento histórico conservado).
+//   - JSON (?format=json o Accept: application/json — la misma heurística
+//     que handleCapabilities y que pedía el stub de news, que respondía JSON
+//     siempre): auth OBLIGATORIA (401 sin credenciales válidas) y data con
+//     id=username, displayname y display-name (campos que necesita
+//     news-android y que el XML no emite).
 func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -701,6 +741,34 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, _ := s.authenticate(r)
+
+	wantsJSON := r.URL.Query().Get("format") == "json" ||
+		strings.Contains(r.Header.Get("Accept"), "application/json")
+	if wantsJSON {
+		if user == nil {
+			w.Header().Set("WWW-Authenticate", `Basic realm="ocapps"`)
+			var fail ocsUserJSON
+			fail.Ocs.Meta.Status = "failure"
+			fail.Ocs.Meta.StatusCode = 401
+			fail.Ocs.Meta.Message = "Unauthorised"
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(&fail)
+			return
+		}
+		id := user.Username
+		if id == "" {
+			id = user.ID
+		}
+		displayName := user.DisplayName
+		if displayName == "" {
+			displayName = id
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(newOCSUserJSON(id, displayName))
+		return
+	}
+
 	displayName := "User"
 	if user != nil {
 		displayName = user.DisplayName

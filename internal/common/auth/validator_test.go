@@ -291,6 +291,33 @@ func TestMiddleware(t *testing.T) {
 	})
 }
 
+// WithPolicy (H5, SPEC §6.2): el validador derivado comparte la caché con el
+// base (una sola petición a Graph entre módulos) pero aplica su propia
+// política — SingleTenant en photos no hereda la admisión MultiTenant.
+func TestWithPolicyComparteCacheNoPolitica(t *testing.T) {
+	g := newGraphStub(t)
+	base := g.validator(MultiTenant())
+	photos := base.WithPolicy(SingleTenant("id-otro"))
+
+	// photos valida primero: usuario válido pero NO es el tenant → rechazado.
+	if _, ok := photos.Validate(context.Background(), Credential{Bearer: "good-token"}); ok {
+		t.Fatal("WithPolicy(SingleTenant otro) admitió al usuario")
+	}
+	// la admisión quedó cacheada: base (MultiTenant) entra SIN nueva petición.
+	before := g.requests.Load()
+	if _, ok := base.Validate(context.Background(), Credential{Bearer: "good-token"}); !ok {
+		t.Fatal("base MultiTenant rechazó con la caché ya caliente")
+	}
+	if n := g.requests.Load(); n != before || n != 1 {
+		t.Fatalf("peticiones a Graph: got %d, want 1 (caché no compartida)", n)
+	}
+	// y el validador single-tenant correcto sí admite al tenant.
+	if _, ok := base.WithPolicy(SingleTenant("id-alice")).Validate(context.Background(),
+		Credential{Bearer: "good-token"}); !ok {
+		t.Fatal("WithPolicy(SingleTenant correcto) rechazó al tenant")
+	}
+}
+
 func ExampleCredential() {
 	c := Credential{Bearer: "token-de-sesion"}
 	fmt.Println(c.Bearer != "")

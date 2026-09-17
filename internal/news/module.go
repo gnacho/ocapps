@@ -1,23 +1,15 @@
 // Package news: wiring del módulo news de ocapps (SPEC §4.5, §8 H4).
 //
-// El módulo implementa la interfaz Module del SPEC §4.5 (Name, Enabled,
-// Register, Run, Healthy). H1 no la definió en common, así que aquí solo se
-// implementan los métodos con las firmas exactas del SPEC; H5 declarará la
-// interfaz (estructural en Go) en el paquete que elija y este módulo la
-// satisfará sin cambios:
+// El módulo satisface la interfaz unificada common/module.Module (SPEC §4.5,
+// promovida a common en H5) con las firmas exactas del SPEC.
 //
-//	type Module interface {
-//	    Name() string
-//	    Enabled() bool
-//	    Register(mux *http.ServeMux)
-//	    Run(ctx context.Context) error
-//	    Healthy() error
-//	}
-//
-// Constructor para H5: m, err := news.New(cfg, log) donde cfg es el
-// *common/config.Config ya cargado y log el logger BASE (New le añade
-// module=news vía common/log.Module). Un error de New significa "módulo
-// failed": H5 registra el handler 503 en su namespace (D3) y sigue.
+// Constructor para el wiring (H5): m, err := news.New(cfg, log, gv) donde
+// cfg es el *common/config.Config ya cargado, log el logger BASE (New le
+// añade module=news vía common/log.Module) y gv el validador Graph
+// COMPARTIDO del proceso (common/auth, política MultiTenant; una sola caché
+// para los tres módulos, SPEC §6.2). gv solo se usa con AuthMode=opencloud;
+// en modo local puede ser nil. Un error de New significa "módulo failed":
+// el wiring registra el handler 503 en su namespace (D3) y sigue.
 package news
 
 import (
@@ -35,6 +27,7 @@ import (
 	"github.com/gnacho/ocapps/internal/common/cred"
 	"github.com/gnacho/ocapps/internal/common/imgproxy"
 	commonlog "github.com/gnacho/ocapps/internal/common/log"
+	commonmodule "github.com/gnacho/ocapps/internal/common/module"
 	"github.com/gnacho/ocapps/internal/news/api"
 	"github.com/gnacho/ocapps/internal/news/auth"
 	"github.com/gnacho/ocapps/internal/news/extract"
@@ -51,6 +44,8 @@ import (
 // se conserva para que la copia 1:1 de la migración funcione tal cual).
 const dbFileName = "ocnews.db"
 
+var _ commonmodule.Module = (*Module)(nil)
+
 // Module es el módulo news: News API v1.3 + API propia + scheduler de
 // refresco/retención/WebSub.
 type Module struct {
@@ -66,12 +61,13 @@ type Module struct {
 // New construye el módulo a partir de la config unificada. Equivale al
 // arranque histórico de ocnews (cmd/ocnews/main.go) pero sobre los paquetes
 // common: store.Open+Migrate, cred (feedsecret), imgproxy (imgsecret +
-// imgcache en <NewsDataDir>) y el validador Graph común con MultiTenant +
+// imgcache en <NewsDataDir>) y el validador Graph COMPARTIDO (gv, recibido
+// del wiring desde H5 — antes lo creaba el propio módulo) con MultiTenant +
 // glue de shadow users (internal/news/auth). En modo local se conserva el
 // bootstrap del primer admin con OCAPPS_NEWS_AUTH_USER/PASS.
 //
 // log es el logger base del proceso; New le añade module=news.
-func New(cfg *config.Config, log *slog.Logger) (*Module, error) {
+func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*Module, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -108,11 +104,14 @@ func New(cfg *config.Config, log *slog.Logger) (*Module, error) {
 		return nil, err
 	}
 
-	// validador: opencloud (Graph común + shadow users) o local (bcrypt)
+	// validador: opencloud (Graph común COMPARTIDO + shadow users) o local
+	// (bcrypt). El wiring pasa gv con política MultiTenant (SPEC §6.2).
 	var validator auth.Validator
 	switch cfg.AuthMode {
 	case "opencloud":
-		gv := commonauth.NewGraphValidator(cfg.OpenCloudURL, commonauth.MultiTenant(), log)
+		if gv == nil {
+			return nil, errors.New("modo opencloud requiere el validador Graph compartido (gv nil)")
+		}
 		validator = auth.NewShadowValidator(gv, st, log)
 		log.Info("auth: opencloud", "server", cfg.OpenCloudURL)
 	default:
@@ -176,6 +175,15 @@ func (m *Module) Register(mux *http.ServeMux) {
 // nil en apagado normal.
 func (m *Module) Run(ctx context.Context) error {
 	m.sched.Run(ctx)
+	return nil
+}
+
+// Close cierra la SQLite del módulo (apagado ordenado; el wiring lo invoca
+// por type assertion io.Closer tras drenar los Run, SPEC §4.5/H5).
+func (m *Module) Close() error {
+	if m.store != nil {
+		return m.store.Close()
+	}
 	return nil
 }
 

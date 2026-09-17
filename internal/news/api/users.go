@@ -71,21 +71,11 @@ func (s *Server) refreshUserFeeds(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"refreshed": len(feeds), "newItems": inserted})
 }
 
-// ocsUser: stub del endpoint OCS de Nextcloud que consume news-android
-// (display name del drawer). Formato OCS v2 con "ocs"→"data"→{id,displayname}.
-func (s *Server) ocsUser(w http.ResponseWriter, r *http.Request) {
-	u := user(r)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ocs": map[string]any{
-			"meta": map[string]any{"status": "ok", "statuscode": 200, "message": "OK"},
-			"data": map[string]any{
-				"id":           u.Username,
-				"displayname":  u.DisplayName,
-				"display-name": u.DisplayName,
-			},
-		},
-	})
-}
+// NOTA (SPEC §4.2): el stub OCS de /ocs/v2.php/cloud/user que servía este
+// paquete para news-android se eliminó en H5 — la ruta la registra SOLO el
+// módulo notes, cuyo handler extendido emite el mismo payload JSON
+// (id=username, displayname, display-name; 401 sin auth) cuando el cliente
+// pide ?format=json o Accept: application/json.
 
 var validUsername = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{2,31}$`)
 
