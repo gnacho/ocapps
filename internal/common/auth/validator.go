@@ -4,7 +4,8 @@
 //
 //   - Basic user:app-token (clientes News/Notes) y Bearer <access-token>
 //     (sesión web de OpenCloud) validan contra Graph /me.
-//   - Caché positiva 5 min + caché NEGATIVA 30 s (un 401 no martillea el IdP)
+//   - Caché positiva 5 min + caché NEGATIVA 30 s (un 401/403 de Graph no
+//     martillea el IdP; los fallos de red/5xx NO se cachean, M7).
 //   - singleflight por clave (una sola petición a Graph en vuelo).
 //   - La revocación de credenciales tarda ≤5 min en propagarse (ya era así
 //     en news/notes; en photos pasa de 0 a 5 min — ventana aceptable, §6.1).
@@ -79,7 +80,7 @@ type validatorState struct {
 	client *http.Client
 
 	mu    sync.Mutex
-	cache map[string]cacheEntry // basic:<user> / bearer:<sha256(token)>
+	cache map[string]cacheEntry // basic:<user>:<sha256(pass)> / bearer:<sha256(token)>
 	sf    singleflight.Group    // una sola llamada a Graph por clave en vuelo
 }
 
@@ -129,14 +130,20 @@ func (v *GraphValidator) WithPolicy(pol Policy) *GraphValidator {
 	return &GraphValidator{meURL: v.meURL, policy: pol, log: v.log, st: v.st}
 }
 
-// cacheKey: `basic:<username>` y `bearer:<sha256(token)>` (SPEC §6.1; la
-// clave Basic no incluye la contraseña — la ventana de revocación es el TTL).
+// cacheKey: `basic:<username>:<hex(sha256(password))>` y
+// `bearer:<sha256(token)>` (SPEC §6.1). La contraseña forma parte de la
+// clave SOLO como hash (nunca en claro), restaurando la semántica del
+// ocnews original (sha256("basic\x00user\x00pass")): con la clave
+// `basic:<username>` (B1), tras un login legítimo CUALQUIER contraseña de
+// ese usuario entraba por caché durante 5 min, y una caché negativa bajo la
+// misma clave permitía un DoS del usuario legítimo con un intento fallido.
 func cacheKey(c Credential) string {
 	if c.Bearer != "" {
 		h := sha256.Sum256([]byte(c.Bearer))
 		return "bearer:" + hex.EncodeToString(h[:])
 	}
-	return "basic:" + c.Username
+	h := sha256.Sum256([]byte(c.Password))
+	return "basic:" + c.Username + ":" + hex.EncodeToString(h[:])
 }
 
 // lookup devuelve (user, negative, hit).
@@ -199,8 +206,16 @@ func (v *GraphValidator) Validate(ctx context.Context, c Credential) (*User, boo
 			}
 			return fetchResult{user: u, valid: true}, nil
 		}
-		u, ok := v.fetch(ctx, c)
-		v.store(key, u, !ok)
+		u, ok, rejected := v.fetch(ctx, c)
+		// M7: la caché negativa solo aplica a un RECHAZO explícito de Graph
+		// (401/403). Un fallo de red o un 5xx NO se cachea: el IdP caído no
+		// debe envenenar la caché 30 s y convertir un glitch en un outage.
+		switch {
+		case ok:
+			v.store(key, u, false)
+		case rejected:
+			v.store(key, nil, true)
+		}
 		return fetchResult{user: u, valid: ok}, nil
 	})
 	if err != nil {
@@ -220,11 +235,14 @@ func (v *GraphValidator) admit(u *User) (*User, bool) {
 	return u, true
 }
 
-// fetch hace la petición a Graph /me y mapea la respuesta a User.
-func (v *GraphValidator) fetch(ctx context.Context, c Credential) (*User, bool) {
+// fetch hace la petición a Graph /me y mapea la respuesta a User. El
+// tercer retorno (rejected) es true solo ante un rechazo explícito de
+// credenciales (401/403): es el único resultado que merece caché negativa
+// (M7); los fallos de red, 5xx o respuestas malformadas no se cachean.
+func (v *GraphValidator) fetch(ctx context.Context, c Credential) (*User, bool, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.meURL, nil)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	if c.Bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Bearer)
@@ -234,25 +252,26 @@ func (v *GraphValidator) fetch(ctx context.Context, c Credential) (*User, bool) 
 	resp, err := v.st.client.Do(req)
 	if err != nil {
 		v.log.Warn("opencloud graph /me inalcanzable", "err", err)
-		return nil, false
+		return nil, false, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode != http.StatusUnauthorized {
+		rejected := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
+		if !rejected {
 			v.log.Warn("graph /me inesperado", "status", resp.StatusCode)
 		}
-		return nil, false
+		return nil, false, rejected
 	}
 	var me graphMe
 	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	return &User{
 		ID:          me.ID,
 		Username:    username(me, c),
 		DisplayName: me.DisplayName,
 		Email:       me.Mail,
-	}, true
+	}, true, false
 }
 
 // username: con Basic es el del cliente; con Bearer, el account name del IDM
