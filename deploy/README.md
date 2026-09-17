@@ -11,7 +11,7 @@ Referencia: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) y §9.
 | [`opencloud-apps.service`](opencloud-apps.service) | Unit systemd único (SPEC §9.1) |
 | [`env.example`](env.example) | Plantilla de `/etc/ocapps/env` con cada variable y su legacy (SPEC §9.2/§3.2) |
 | [`proxy/nginx.conf`](proxy/nginx.conf) · [`proxy/Caddyfile`](proxy/Caddyfile) | Snippets de proxy (SPEC §9.3) |
-| [`migrate.sh`](migrate.sh) | Migración de datos 3→1, idempotente, con `--dry-run` (SPEC §5.4) |
+| [`migrate.sh`](migrate.sh) | Migración de datos 3→1, idempotente, con `--dry-run` y `--force-redeploy` (SPEC §5.4) |
 | [`repo-notices/`](repo-notices/) | Borradores de aviso para los README de los repos de app |
 
 ## Requisitos
@@ -137,8 +137,11 @@ sudo deploy/migrate.sh
 
 Pasos que ejecuta:
 
-0. **Pre-vuelo**: comprueba `sqlite3`/`systemctl`/`curl`, root, y avisa si
-   `opencloud-apps` ya estaba activo (migración ya aplicada).
+0. **Pre-vuelo**: comprueba `sqlite3`/`systemctl`/`curl`, root, y **aborta
+   si `opencloud-apps` está activo**: sus BDs están vivas y copiar las
+   viejas encima las corrompería. Para re-desplegar encima a propósito
+   (p. ej. repetir la migración tras un rollback) usa `--force-redeploy`:
+   el script para el unit, copia y lo rearranca en el paso 6.
 0b. **Para los servicios viejos** (`ocnews ocnotes ocphotos`) y espera a
    que queden inactivos.
 1. **Verifica el origen**: `PRAGMA integrity_check` en las tres BDs vivas
