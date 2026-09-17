@@ -2,10 +2,12 @@ package webdav
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -186,5 +188,104 @@ func TestDownloadYMeID(t *testing.T) {
 	b, _ := io.ReadAll(body)
 	if string(b) != "jpeg-bytes" || ct != "image/jpeg" {
 		t.Fatalf("Download: %q %q", b, ct)
+	}
+}
+
+// TestNewBearerAuth: NewBearer manda "Authorization: Bearer <token>" en TODAS
+// las operaciones (Graph, PROPFIND, GET, Range) y nunca Basic (H8 §2).
+func TestNewBearerAuth(t *testing.T) {
+	var auths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auths = append(auths, r.Method+" "+r.Header.Get("Authorization"))
+		switch {
+		case r.URL.Path == "/graph/v1.0/me":
+			fmt.Fprint(w, `{"id":"u1"}`)
+		case r.URL.Path == "/graph/v1.0/me/drives":
+			fmt.Fprint(w, `{"value":[]}`)
+		case r.Method == "PROPFIND":
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			fmt.Fprint(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
+		default:
+			w.Header().Set("Content-Type", "application/octet-stream")
+			fmt.Fprint(w, "datos")
+		}
+	}))
+	defer srv.Close()
+
+	c := NewBearer(srv.URL, "oidc-token-123")
+	ctx := context.Background()
+	if _, err := c.MeID(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ListDrives(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Propfind(ctx, "/dav/spaces/x/", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetRange(ctx, "/dav/spaces/x/a.jpg", 0, 4); err != nil {
+		t.Fatal(err)
+	}
+	rc, _, err := c.Download(ctx, "/dav/spaces/x/a.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.Close()
+	rc2, _, _, err := c.DownloadRange(ctx, "/dav/spaces/x/a.jpg", "bytes=0-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc2.Close()
+
+	if len(auths) != 6 {
+		t.Fatalf("peticiones: %d (%v)", len(auths), auths)
+	}
+	for _, a := range auths {
+		if want := " Bearer oidc-token-123"; !strings.HasSuffix(a, want) {
+			t.Fatalf("auth %q: quiero Bearer, no Basic", a)
+		}
+	}
+}
+
+// TestErrUnauthorized: un 401/403 de cualquier operación envuelve
+// ErrUnauthorized (errors.Is) para que el scanner/worker aborten sin
+// soft-delete (H8 §2). Un 404 de PROPFIND NO es ErrUnauthorized.
+func TestErrUnauthorized(t *testing.T) {
+	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}))
+		c := NewBearer(srv.URL, "caducado")
+		ctx := context.Background()
+		if _, err := c.MeID(ctx); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("MeID %d: %v", code, err)
+		}
+		if _, err := c.ListDrives(ctx); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("ListDrives %d: %v", code, err)
+		}
+		if _, err := c.Propfind(ctx, "/dav/x/", 1); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("Propfind %d: %v", code, err)
+		}
+		if _, err := c.GetRange(ctx, "/dav/x/a", 0, 4); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("GetRange %d: %v", code, err)
+		}
+		if _, _, err := c.Download(ctx, "/dav/x/a"); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("Download %d: %v", code, err)
+		}
+		if _, _, _, err := c.DownloadRange(ctx, "/dav/x/a", ""); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("DownloadRange %d: %v", code, err)
+		}
+		srv.Close()
+	}
+
+	// 404 en PROPFIND no es un problema de credenciales
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "u", "t")
+	if _, err := c.Propfind(context.Background(), "/dav/noexiste/", 1); err == nil || errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("404 no debe ser ErrUnauthorized: %v", err)
 	}
 }

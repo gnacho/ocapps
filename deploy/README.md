@@ -120,6 +120,48 @@ En ambos snippets se preservan `Authorization` y `Host`, y
 (Range requests). Tras recargar el proxy, valida con
 `nginx -t` / `caddy validate` antes de `reload`.
 
+## Multiusuario en photos (H8)
+
+Photos pasa de single-tenant (un solo usuario, el del app-token) a
+**multi-tenant**: cualquier usuario de OpenCloud que abra la app de fotos
+tiene su propio índice, álbumes, etiquetas, lugares y miniaturas, scopeados
+a su `oc_id` en la misma `memories.db`. Puntos clave para el operador:
+
+- **Indexado por actividad, progresivo.** No hay scan global al arranque:
+  el primer request autenticado de un usuario dispara SU scan (su espacio
+  personal se resuelve lazy vía Graph con su propia credencial) y su
+  índice crece de forma incremental. Hasta entonces sus respuestas son
+  vacías coherentes (0 fotos, no errores).
+- **`OCAPPS_PHOTOS_USERS` para background scan.** Si quieres que las fotos
+  de ciertos usuarios se indexen aunque no abran la app (scan periódico
+  cada `OCAPPS_PHOTOS_SCAN_EVERY`), dales un app-token:
+  `OCAPPS_PHOTOS_USERS="alice:apptoken1,bob:apptoken2"`. El par legacy
+  `OCAPPS_PHOTOS_USER`+`OCAPPS_PHOTOS_APP_TOKEN` sigue funcionando y se
+  pliega en esa lista con un WARN de deprecación.
+- **`OCAPPS_PHOTOS_TOKEN` (Bearer estático) está DEPRECATED.** Solo sigue
+  funcionando si `OCAPPS_PHOTOS_USER` está configurado (mapea al oc_id de
+  ese usuario); configurarlo sin `USER` deja el módulo failed (error de
+  config). Migra los clientes machine-to-machine al Bearer OIDC.
+- **Migración desde el despliegue single-tenant (backfill).** Al primer
+  arranque multi-tenant, la migración 002 añade `owner` a `assets`/
+  `albums` dejando las filas antiguas con `owner=''`. Si
+  `OCAPPS_PHOTOS_USER`+`OCAPPS_PHOTOS_APP_TOKEN` están configurados, el
+  módulo resuelve el oc_id de ese usuario y adopta las filas
+  automáticamente (log INFO "backfill multi-owner"). **Si no los
+  configuras**, el módulo arranca igual pero esas fotos antiguas quedan
+  invisibles para todos (log WARN con el recuento: "hay N assets de la era
+  single-tenant sin owner..."); configura el par una vez y reinicia para
+  adoptarlas — después puedes quitarlo si no quieres background scan.
+  `user_version` final de `memories.db`: **2**.
+- **Privacidad.** Las credenciales de sesión (tokens OIDC) y los espacios
+  resueltos viven SOLO en memoria (nunca en disco); las sesiones web sin
+  actividad >24h se purgan. Las miniaturas en disco y la caché de
+  geocodificación no contienen datos personales ligados a otro usuario
+  (la clave de caché incluye el space-UUID del dueño).
+- **El módulo ya no depende de OpenCloud para arrancar**: `Healthy()` es
+  un ping a su SQLite; sin `PHOTOS_USERS` configurados no hay ninguna
+  credencial obligatoria.
+
 ## Cambios de comportamiento respecto a los backends separados
 
 Además del enrutado (§Cambio de proxy), el servicio unificado cambia tres
@@ -135,11 +177,11 @@ corte:
    status no se ven afectados.
 2. **Photos ya no tiene modo LAN abierto sin auth.** Todo el namespace
    `/ocphotos-api/` exige credenciales (Bearer de sesión OpenCloud
-   validado contra Graph con política single-tenant, o el token estático
-   `OCAPPS_PHOTOS_TOKEN`); las únicas exenciones son el preflight CORS y
-   el stream de vídeo firmado (`/ocphotos-api/api/video/`). Un despliegue
-   que confiara en el acceso abierto desde la LAN deja de funcionar: hay
-   que dar credenciales a esos clientes.
+   validado contra Graph, o el token estático `OCAPPS_PHOTOS_TOKEN`
+   deprecated); las únicas exenciones son el preflight CORS y el stream de
+   vídeo firmado (`/ocphotos-api/api/video/`). Un despliegue que confiara
+   en el acceso abierto desde la LAN deja de funcionar: hay que dar
+   credenciales a esos clientes.
 3. **`/ocs/v2.php/cloud/user` solo sirve JSON si se pide explícitamente**:
    `?format=json` o cabecera `Accept: application/json` (la heurística OCS
    estándar de ocnotes, que es quien sirve ahora el endpoint). El stub que
@@ -183,7 +225,9 @@ Pasos que ejecuta:
 4. **Verifica el destino**: `integrity_check` en las tres BDs copiadas.
 5. **Auditoría de versiones**: registra `PRAGMA user_version` — esperado
    **18** (news), **2** (notes); photos llega sin versionar (0) y ocapps
-   aplica el **baseline a 1** en el primer arranque (SPEC §5.3).
+   aplica el **baseline (1) + 002 multi-owner → 2** en el primer arranque
+   (SPEC §5.3), con backfill del índice single-tenant si hay credenciales
+   legacy (ver §Multiusuario en photos).
 6. **systemd**: `disable` de los units viejos (**sin borrarlos**) y
    `enable --now opencloud-apps`.
 7. **Smoke checks** por localhost: `/healthz` (los 3 módulos `ok`) y
@@ -224,7 +268,7 @@ curl -s  -H "Authorization: Bearer $TOK" localhost:8096/ocphotos-api/api/stats
 for f in /var/lib/ocapps/*/*.db; do sqlite3 "$f" 'PRAGMA integrity_check;'; done   # ok x3
 sqlite3 /var/lib/ocapps/news/ocnews.db 'PRAGMA user_version;'      # 18
 sqlite3 /var/lib/ocapps/notes/notes.db 'PRAGMA user_version;'      # 2
-sqlite3 /var/lib/ocapps/photos/memories.db 'PRAGMA user_version;'  # 1 (baseline aplicado)
+sqlite3 /var/lib/ocapps/photos/memories.db 'PRAGMA user_version;'  # 2 (baseline + 002 multi-owner)
 
 # Desde el exterior (vía proxy, mismo origen que la web — valida el cambio de proxy):
 curl -s  -H "Authorization: Bearer $TOK" https://<host>/ocphotos-api/api/stats
@@ -288,9 +332,13 @@ systemctl enable --now ocnews ocnotes ocphotos
 systemctl disable opencloud-apps
 ```
 
-⚠ Limitación conocida: si ocapps aplicó el **baseline de photos**
-(`user_version` 0→1), el ocphotos antiguo ignora ese pragma (su esquema es
-`CREATE TABLE IF NOT EXISTS`), así que la vuelta es segura. News/notes
+⚠ Limitación conocida: si ocapps aplicó el **baseline + 002 de photos**
+(`user_version` 0→2, esquema multi-owner), el ocphotos antiguo ignora ese
+pragma y arranca con las columnas `owner` extra. OJO: la unicidad pasó de
+`UNIQUE(path)` a `UNIQUE(owner, path)`, así que un reindexado completo con
+el binario viejo podría insertar duplicados (owner=''); si vuelves
+definitivamente, deduplica antes con
+`DELETE FROM assets WHERE id NOT IN (SELECT min(id) FROM assets GROUP BY owner, path)`. News/notes
 llevan el mismo `user_version` que tenían (18/2): sin transformación.
 
 ### Después de N días de estabilidad (≥ 7 recomendados, SPEC §5.4)

@@ -1,10 +1,18 @@
 // Package store — persistencia SQLite (modernc.org/sqlite, Go puro, sin cgo).
-// Diseño single-tenant: una instancia = un usuario OpenCloud.
-// Para 70k-500k assets SQLite va sobrado; backups = copiar el fichero .db.
+// Multi-owner (H8): una instancia sirve a TODOS los usuarios de OpenCloud;
+// cada fila de assets/albums lleva su owner (oc_id) y TODOS los métodos de
+// dominio toman `owner string` tras ctx y filtran por él. Regla IDOR: leer
+// o escribir un id ajeno devuelve sql.ErrNoRows ("no encontrado" → 404 en la
+// API), nunca un error que delate la existencia del recurso.
+// Para 70k-500k assets por usuario SQLite va sobrado; backups = copiar el
+// fichero .db.
 //
 // Apertura y migraciones delegadas en common/store (SPEC §5.2/§5.3): la BD
 // se abre con los pragmas unificados y el esquema se gestiona con el runner
-// de migraciones + baseline de adopción (ver migrations/001_baseline.sql).
+// de migraciones + baseline de adopción (ver migrations/001_baseline.sql y
+// migrations/002_multiowner.sql). El backfill de filas de la era
+// single-tenant (owner=”) no puede ser SQL (necesita Graph): lo hace el
+// módulo con BackfillOwner tras resolver el oc_id (SPEC §5.3).
 package store
 
 import (
@@ -45,7 +53,7 @@ type Asset struct {
 }
 
 type DayBucket struct {
-	Day   string `json:"day"` // yyyy-mm-dd
+	Day   string `json:"day"`
 	Count int    `json:"count"`
 }
 
@@ -55,9 +63,12 @@ type Store struct {
 
 // Open abre la BD con common/store.Open (pragmas unificados, §5.2) y deja el
 // esquema al día con la política de adopción de SPEC §5.3:
-//   - BD nueva/vacía → Migrate aplica 001_baseline.sql (user_version=1).
-//   - BD viva (esquema actual ya presente, user_version=0) → se verifica con
-//     PRAGMA table_info y se adopta con Baseline(db, 1).
+//   - BD nueva/vacía → Migrate aplica 001_baseline.sql (esquema ya
+//     multi-owner) + 002_multiowner.sql (no-op efectivo sobre tablas vacías)
+//     y queda en user_version=2.
+//   - BD viva (esquema pre-H8 ya presente, user_version=0) → se verifica con
+//     PRAGMA table_info, se adopta con Baseline(db, 1) y Migrate aplica 002
+//     (rebuild de assets con owner + ALTER de albums).
 //   - BD con tablas pero sin el esquema esperado completo → error (fail-loud;
 //     desaparecen los ALTERs tolerantes a "duplicate column").
 func Open(path string) (*Store, error) {
@@ -74,6 +85,8 @@ func Open(path string) (*Store, error) {
 }
 
 // tablas y columnas (en assets) que debe tener una memories.db viva (§5.3).
+// Las columnas nuevas de 002 (owner) NO se exigen aquí: una BD viva pre-H8
+// no las tiene y es precisamente 002 quien las añade.
 var expectedTables = []string{"assets", "scan_state", "albums", "album_assets", "asset_tags", "geocode"}
 var expectedAssetCols = []string{"is_archived", "phash"}
 
@@ -89,7 +102,7 @@ func (s *Store) adoptOrMigrate() error {
 		}
 		switch {
 		case len(tables) == 0:
-			// BD nueva: Migrate aplica el baseline.
+			// BD nueva: Migrate aplica el baseline (y 002).
 		case liveSchemaPresent(tables):
 			cols, err := s.assetColumns()
 			if err != nil {
@@ -166,18 +179,87 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
+// --- backfill de la era single-tenant (H8, SPEC §5.3) ---
+
+// OrphanCounts cuenta las filas de la era single-tenant (owner=”) que quedan
+// por adoptar. Si ambos son 0 no hay backfill pendiente.
+func (s *Store) OrphanCounts(ctx context.Context) (assets, albums int64, err error) {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM assets WHERE owner=''`).Scan(&assets); err != nil {
+		return 0, 0, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM albums WHERE owner=''`).Scan(&albums); err != nil {
+		return 0, 0, err
+	}
+	return assets, albums, nil
+}
+
+// BackfillOwner asigna owner a las filas huérfanas (owner=”) de assets y
+// albums. Devuelve (adoptados, eliminados) por tabla. No puede ser una
+// migración SQL: el oc_id hay que resolverlo contra Graph con el app-token
+// (SPEC §5.3); lo invoca el módulo al arrancar si OCAPPS_PHOTOS_USER +
+// OCAPPS_PHOTOS_APP_TOKEN están configurados.
+//
+// Tolerante a colisiones con UNIQUE(owner, path) (H8 review): si el backfill
+// se saltó en un arranque (OpenCloud caído) y el usuario re-escaneó, puede
+// haber a la vez (”,path) y (owner,path). Un UPDATE a ciegas reventaría
+// entero con error 2067 y las filas legacy quedarían invisibles para
+// siempre. Por eso primero se BORRAN las huérfanas conflictivas (las filas
+// nuevas del owner ya las representan; sus album_assets/asset_tags mueren
+// por el ON DELETE CASCADE) y solo se adoptan las no conflictivas. Álbumes
+// (sin UNIQUE): mismo criterio por (owner, name). Idempotente.
+func (s *Store) BackfillOwner(ctx context.Context, owner string) (adoptedAssets, adoptedAlbums, removedAssets, removedAlbums int64, err error) {
+	if owner == "" {
+		return 0, 0, 0, 0, fmt.Errorf("backfill con owner vacío")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM assets WHERE owner='' AND path IN (SELECT path FROM assets WHERE owner=?)`, owner)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	removedAssets, _ = res.RowsAffected()
+	res, err = s.db.ExecContext(ctx, `UPDATE assets SET owner=? WHERE owner=''`, owner)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	adoptedAssets, _ = res.RowsAffected()
+	res, err = s.db.ExecContext(ctx,
+		`DELETE FROM albums WHERE owner='' AND name IN (SELECT name FROM albums WHERE owner=?)`, owner)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	removedAlbums, _ = res.RowsAffected()
+	res, err = s.db.ExecContext(ctx, `UPDATE albums SET owner=? WHERE owner=''`, owner)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	adoptedAlbums, _ = res.RowsAffected()
+	return adoptedAssets, adoptedAlbums, removedAssets, removedAlbums, nil
+}
+
+// AssetOwner devuelve el owner de un asset por id. Uso EXCLUSIVO del
+// streaming de vídeo firmado (capability URL sin sesión, H8 §6.2): la firma
+// HMAC solo se genera tras verificar ownership en videoURL, así que resolver
+// el owner desde el id no filtra nada que la capability no conceda ya.
+// NO usar en handlers autenticados (allí el owner viene del contexto).
+func (s *Store) AssetOwner(ctx context.Context, id int64) (string, error) {
+	var owner string
+	err := s.db.QueryRowContext(ctx, `SELECT owner FROM assets WHERE id=?`, id).Scan(&owner)
+	return owner, err
+}
+
 // --- escritura (scanner) ---
 
 // UpsertByETag inserta o actualiza si el etag cambió. Devuelve (id, changed).
-func (s *Store) UpsertByETag(ctx context.Context, path, etag, filename, mediaType string, mtime time.Time, size int64) (int64, bool, error) {
+// La unicidad es (owner, path): el mismo path puede coexistir en dos owners.
+func (s *Store) UpsertByETag(ctx context.Context, owner, path, etag, filename, mediaType string, mtime time.Time, size int64) (int64, bool, error) {
 	var id int64
 	var curETag string
-	err := s.db.QueryRowContext(ctx, `SELECT id, etag FROM assets WHERE path = ?`, path).Scan(&id, &curETag)
+	err := s.db.QueryRowContext(ctx, `SELECT id, etag FROM assets WHERE owner = ? AND path = ?`, owner, path).Scan(&id, &curETag)
 	switch {
 	case err == sql.ErrNoRows:
 		res, err := s.db.ExecContext(ctx,
-			`INSERT INTO assets (path, etag, filename, media_type, taken_at, size) VALUES (?,?,?,?,?,?)`,
-			path, etag, filename, mediaType, mtime.Unix(), size)
+			`INSERT INTO assets (owner, path, etag, filename, media_type, taken_at, size) VALUES (?,?,?,?,?,?,?)`,
+			owner, path, etag, filename, mediaType, mtime.Unix(), size)
 		if err != nil {
 			return 0, false, err
 		}
@@ -200,9 +282,10 @@ func (s *Store) UpsertByETag(ctx context.Context, path, etag, filename, mediaTyp
 	}
 }
 
-// SoftDeleteExcept marca como borrados los assets vivos cuyo etag no está en seen.
-func (s *Store) SoftDeleteExcept(ctx context.Context, seen map[string]bool) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, etag FROM assets WHERE deleted_at IS NULL`)
+// SoftDeleteExcept marca como borrados los assets vivos DEL OWNER cuyo etag
+// no está en seen. Nunca toca filas de otros owners.
+func (s *Store) SoftDeleteExcept(ctx context.Context, owner string, seen map[string]bool) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, etag FROM assets WHERE owner = ? AND deleted_at IS NULL`, owner)
 	if err != nil {
 		return 0, err
 	}
@@ -228,10 +311,10 @@ func (s *Store) SoftDeleteExcept(ctx context.Context, seen map[string]bool) (int
 	return len(stale), nil
 }
 
-// PendingExif devuelve assets sin EXIF procesado (lotes para el worker).
-func (s *Store) PendingExif(ctx context.Context, limit int) ([]Asset, error) {
+// PendingExif devuelve assets del owner sin EXIF procesado (lotes del worker).
+func (s *Store) PendingExif(ctx context.Context, owner string, limit int) ([]Asset, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, path, media_type FROM assets WHERE exif_done = 0 AND deleted_at IS NULL AND media_type='image' LIMIT ?`, limit)
+		`SELECT id, path, media_type FROM assets WHERE owner = ? AND exif_done = 0 AND deleted_at IS NULL AND media_type='image' LIMIT ?`, owner, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +338,9 @@ type ExifResult struct {
 	Lat, Lon                               *float64
 }
 
+// SaveExif guarda el EXIF por id (los ids son globales; el worker solo
+// procesa ids obtenidos de PendingExif(owner, ...), así que no hace falta
+// repetir el filtro de owner aquí).
 func (s *Store) SaveExif(ctx context.Context, id int64, r ExifResult) error {
 	q := `UPDATE assets SET exif_done=1, camera=?, lens=?, iso=?, aperture=?, shutter=?, focal=?, width=?, height=?, lat=?, lon=?`
 	args := []any{r.Camera, r.Lens, r.ISO, r.Aperture, r.Shutter, r.Focal, r.Width, r.Height, r.Lat, r.Lon}
@@ -314,14 +400,15 @@ func scanAsset(rows interface{ Scan(...any) error }) (Asset, error) {
 	return a, nil
 }
 
-// AssetsPage pagina por cursor (taken_at, id) descendente — scroll infinito estable.
-func (s *Store) AssetsPage(ctx context.Context, beforeTaken int64, beforeID int64, limit int, favoritesOnly, archivedOnly bool, query string) ([]Asset, error) {
+// AssetsPage pagina por cursor (taken_at, id) descendente — scroll infinito
+// estable. Solo devuelve assets del owner.
+func (s *Store) AssetsPage(ctx context.Context, owner string, beforeTaken int64, beforeID int64, limit int, favoritesOnly, archivedOnly bool, query string) ([]Asset, error) {
 	arch := 0
 	if archivedOnly {
 		arch = 1
 	}
-	q := `SELECT ` + assetCols + ` FROM assets WHERE deleted_at IS NULL AND is_archived = ? AND (taken_at < ? OR (taken_at = ? AND id < ?))`
-	args := []any{arch, beforeTaken, beforeTaken, beforeID}
+	q := `SELECT ` + assetCols + ` FROM assets WHERE owner = ? AND deleted_at IS NULL AND is_archived = ? AND (taken_at < ? OR (taken_at = ? AND id < ?))`
+	args := []any{owner, arch, beforeTaken, beforeTaken, beforeID}
 	if favoritesOnly {
 		q += ` AND is_favorite = 1`
 	}
@@ -348,39 +435,53 @@ func (s *Store) AssetsPage(ctx context.Context, beforeTaken int64, beforeID int6
 	return out, rows.Err()
 }
 
-func (s *Store) AssetByID(ctx context.Context, id int64) (Asset, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+assetCols+` FROM assets WHERE id=?`, id)
+// AssetByID: un id de OTRO owner devuelve sql.ErrNoRows (regla IDOR, H8).
+func (s *Store) AssetByID(ctx context.Context, owner string, id int64) (Asset, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+assetCols+` FROM assets WHERE id=? AND owner=?`, id, owner)
 	return scanAsset(row)
 }
 
-func (s *Store) SetFavorite(ctx context.Context, id int64, fav bool) error {
+// updateOwned ejecuta un UPDATE acotado al owner y devuelve sql.ErrNoRows si
+// no tocó ninguna fila (id inexistente O ajeno: regla IDOR, H8).
+func updateOwned(res sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) SetFavorite(ctx context.Context, owner string, id int64, fav bool) error {
 	v := 0
 	if fav {
 		v = 1
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE assets SET is_favorite=? WHERE id=?`, v, id)
-	return err
+	return updateOwned(s.db.ExecContext(ctx, `UPDATE assets SET is_favorite=? WHERE id=? AND owner=?`, v, id, owner))
 }
 
-func (s *Store) SetArchived(ctx context.Context, id int64, arch bool) error {
+func (s *Store) SetArchived(ctx context.Context, owner string, id int64, arch bool) error {
 	v := 0
 	if arch {
 		v = 1
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE assets SET is_archived=? WHERE id=?`, v, id)
-	return err
+	return updateOwned(s.db.ExecContext(ctx, `UPDATE assets SET is_archived=? WHERE id=? AND owner=?`, v, id, owner))
 }
 
 // SetPHash guarda el hash perceptual (hex) de una foto.
-func (s *Store) SetPHash(ctx context.Context, id int64, hash string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE assets SET phash=? WHERE id=?`, hash, id)
-	return err
+func (s *Store) SetPHash(ctx context.Context, owner string, id int64, hash string) error {
+	return updateOwned(s.db.ExecContext(ctx, `UPDATE assets SET phash=? WHERE id=? AND owner=?`, hash, id, owner))
 }
 
-// AssetsWithoutPHash: fotos vivas sin hash perceptual (para calcularlo).
-func (s *Store) AssetsWithoutPHash(ctx context.Context, limit int) ([]Asset, error) {
+// AssetsWithoutPHash: fotos vivas del owner sin hash perceptual.
+func (s *Store) AssetsWithoutPHash(ctx context.Context, owner string, limit int) ([]Asset, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+assetCols+` FROM assets
-		WHERE deleted_at IS NULL AND (phash IS NULL OR phash='') LIMIT ?`, limit)
+		WHERE owner = ? AND deleted_at IS NULL AND (phash IS NULL OR phash='') LIMIT ?`, owner, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -396,10 +497,10 @@ func (s *Store) AssetsWithoutPHash(ctx context.Context, limit int) ([]Asset, err
 	return out, rows.Err()
 }
 
-// AllPHashes: id -> hash perceptual de las fotos vivas que ya lo tienen.
-func (s *Store) AllPHashes(ctx context.Context) (map[int64]string, error) {
+// AllPHashes: id -> hash perceptual de las fotos vivas del owner que ya lo tienen.
+func (s *Store) AllPHashes(ctx context.Context, owner string) (map[int64]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, phash FROM assets
-		WHERE deleted_at IS NULL AND phash IS NOT NULL AND phash <> ''`)
+		WHERE owner = ? AND deleted_at IS NULL AND phash IS NOT NULL AND phash <> ''`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -417,12 +518,12 @@ func (s *Store) AllPHashes(ctx context.Context) (map[int64]string, error) {
 }
 
 // OnThisDay: fotos de este mes-día (o ±dayRange días) en años anteriores.
-func (s *Store) OnThisDay(ctx context.Context, month, day, thisYear, dayRange int) ([]Asset, error) {
+func (s *Store) OnThisDay(ctx context.Context, owner string, month, day, thisYear, dayRange int) ([]Asset, error) {
 	// pares (mes, día) del rango, evitando duplicados
 	base := time.Date(2000, time.Month(month), day, 12, 0, 0, 0, time.UTC)
 	seen := map[[2]int]bool{}
 	var conds []string
-	var args []any
+	args := []any{owner}
 	for j := -dayRange; j <= dayRange; j++ {
 		t := base.AddDate(0, 0, j)
 		k := [2]int{int(t.Month()), t.Day()}
@@ -436,7 +537,7 @@ func (s *Store) OnThisDay(ctx context.Context, month, day, thisYear, dayRange in
 	args = append(args, thisYear)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+assetCols+` FROM assets
-		 WHERE deleted_at IS NULL
+		 WHERE owner = ? AND deleted_at IS NULL
 		   AND (`+strings.Join(conds, " OR ")+`)
 		   AND CAST(strftime('%Y', taken_at, 'unixepoch') AS INT) < ?
 		 ORDER BY taken_at DESC`, args...)
@@ -456,13 +557,13 @@ func (s *Store) OnThisDay(ctx context.Context, month, day, thisYear, dayRange in
 }
 
 // OnThisMonth: fotos del mes actual en años anteriores (fallback de highlights).
-func (s *Store) OnThisMonth(ctx context.Context, month, thisYear, limit int) ([]Asset, error) {
+func (s *Store) OnThisMonth(ctx context.Context, owner string, month, thisYear, limit int) ([]Asset, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+assetCols+` FROM assets
-		 WHERE deleted_at IS NULL
+		 WHERE owner = ? AND deleted_at IS NULL
 		   AND CAST(strftime('%m', taken_at, 'unixepoch') AS INT) = ?
 		   AND CAST(strftime('%Y', taken_at, 'unixepoch') AS INT) < ?
-		 ORDER BY taken_at DESC LIMIT ?`, month, thisYear, limit)
+		 ORDER BY taken_at DESC LIMIT ?`, owner, month, thisYear, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -478,10 +579,10 @@ func (s *Store) OnThisMonth(ctx context.Context, month, thisYear, limit int) ([]
 	return out, rows.Err()
 }
 
-// OldestAssets: las fotos más antiguas (último recurso de highlights).
-func (s *Store) OldestAssets(ctx context.Context, limit int) ([]Asset, error) {
+// OldestAssets: las fotos más antiguas del owner (último recurso de highlights).
+func (s *Store) OldestAssets(ctx context.Context, owner string, limit int) ([]Asset, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+assetCols+` FROM assets WHERE deleted_at IS NULL ORDER BY taken_at ASC LIMIT ?`, limit)
+		`SELECT `+assetCols+` FROM assets WHERE owner = ? AND deleted_at IS NULL ORDER BY taken_at ASC LIMIT ?`, owner, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -507,26 +608,33 @@ type Album struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
-func (s *Store) CreateAlbum(ctx context.Context, name string) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO albums (name) VALUES (?)`, name)
+func (s *Store) CreateAlbum(ctx context.Context, owner, name string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO albums (owner, name) VALUES (?,?)`, owner, name)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-func (s *Store) RenameAlbum(ctx context.Context, id int64, name string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE albums SET name=? WHERE id=?`, name, id)
+func (s *Store) RenameAlbum(ctx context.Context, owner string, id int64, name string) error {
+	return updateOwned(s.db.ExecContext(ctx, `UPDATE albums SET name=? WHERE id=? AND owner=?`, name, id, owner))
+}
+
+func (s *Store) DeleteAlbum(ctx context.Context, owner string, id int64) error {
+	return updateOwned(s.db.ExecContext(ctx, `DELETE FROM albums WHERE id=? AND owner=?`, id, owner))
+}
+
+// albumOwned devuelve sql.ErrNoRows si el álbum no existe O es de otro owner
+// (regla IDOR, H8): las operaciones sobre álbumes la usan como guardia.
+func (s *Store) albumOwned(ctx context.Context, owner string, albumID int64) error {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM albums WHERE id=? AND owner=?`, albumID, owner).Scan(&one)
 	return err
 }
 
-func (s *Store) DeleteAlbum(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM albums WHERE id=?`, id)
-	return err
-}
-
-// ListAlbums: álbumes con recuento de fotos vivas y portada (la más reciente).
-func (s *Store) ListAlbums(ctx context.Context) ([]Album, error) {
+// ListAlbums: álbumes del owner con recuento de fotos vivas y portada (la más
+// reciente).
+func (s *Store) ListAlbums(ctx context.Context, owner string) ([]Album, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT a.id, a.name, a.created_at,
 		  (SELECT count(*) FROM album_assets aa JOIN assets s ON s.id=aa.asset_id
@@ -534,7 +642,7 @@ func (s *Store) ListAlbums(ctx context.Context) ([]Album, error) {
 		  COALESCE((SELECT aa.asset_id FROM album_assets aa JOIN assets s ON s.id=aa.asset_id
 		     WHERE aa.album_id=a.id AND s.deleted_at IS NULL
 		     ORDER BY s.taken_at DESC LIMIT 1), 0) AS cover
-		FROM albums a ORDER BY a.name COLLATE NOCASE`)
+		FROM albums a WHERE a.owner = ? ORDER BY a.name COLLATE NOCASE`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -550,10 +658,14 @@ func (s *Store) ListAlbums(ctx context.Context) ([]Album, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) AlbumAssets(ctx context.Context, albumID int64) ([]Asset, error) {
+// AlbumAssets: fotos del álbum (solo si el álbum es del owner; IDOR → ErrNoRows).
+func (s *Store) AlbumAssets(ctx context.Context, owner string, albumID int64) ([]Asset, error) {
+	if err := s.albumOwned(ctx, owner, albumID); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT `+assetCols+` FROM assets
-		WHERE deleted_at IS NULL AND id IN (SELECT asset_id FROM album_assets WHERE album_id=?)
-		ORDER BY taken_at DESC`, albumID)
+		WHERE owner = ? AND deleted_at IS NULL AND id IN (SELECT asset_id FROM album_assets WHERE album_id=?)
+		ORDER BY taken_at DESC`, owner, albumID)
 	if err != nil {
 		return nil, err
 	}
@@ -569,18 +681,28 @@ func (s *Store) AlbumAssets(ctx context.Context, albumID int64) ([]Asset, error)
 	return out, rows.Err()
 }
 
-func (s *Store) AddToAlbum(ctx context.Context, albumID int64, assetIDs []int64) error {
+// AddToAlbum añade assets a un álbum verificando que el álbum Y TODOS los
+// assets son del owner; si alguno no lo es, sql.ErrNoRows (regla IDOR, H8:
+// no se distingue "no existe" de "es ajeno").
+func (s *Store) AddToAlbum(ctx context.Context, owner string, albumID int64, assetIDs []int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var one int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM albums WHERE id=? AND owner=?`, albumID, owner).Scan(&one); err != nil {
+		return err // ErrNoRows: álbum inexistente o ajeno
+	}
 	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO album_assets (album_id, asset_id) VALUES (?,?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, id := range assetIDs {
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM assets WHERE id=? AND owner=?`, id, owner).Scan(&one); err != nil {
+			return err // ErrNoRows: asset inexistente o ajeno
+		}
 		if _, err := stmt.ExecContext(ctx, albumID, id); err != nil {
 			return err
 		}
@@ -588,9 +710,19 @@ func (s *Store) AddToAlbum(ctx context.Context, albumID int64, assetIDs []int64)
 	return tx.Commit()
 }
 
-func (s *Store) RemoveFromAlbum(ctx context.Context, albumID, assetID int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM album_assets WHERE album_id=? AND asset_id=?`, albumID, assetID)
-	return err
+// RemoveFromAlbum quita un asset de un álbum del owner (IDOR → ErrNoRows).
+func (s *Store) RemoveFromAlbum(ctx context.Context, owner string, albumID, assetID int64) error {
+	if err := s.albumOwned(ctx, owner, albumID); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM album_assets WHERE album_id=? AND asset_id=?`, albumID, assetID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // --- Lugares ---
@@ -603,13 +735,14 @@ type Place struct {
 	Name    string  `json:"name,omitempty"`
 }
 
-// PlaceClusters agrupa las fotos con GPS por coordenadas redondeadas a `decimals`
-// decimales (~1 km con 2). Devuelve la portada (foto más reciente de cada sitio).
-func (s *Store) PlaceClusters(ctx context.Context, decimals int) ([]Place, error) {
+// PlaceClusters agrupa las fotos con GPS del owner por coordenadas redondeadas
+// a `decimals` decimales (~1 km con 2). Devuelve la portada (foto más
+// reciente de cada sitio).
+func (s *Store) PlaceClusters(ctx context.Context, owner string, decimals int) ([]Place, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT round(lat, ?) AS rlat, round(lon, ?) AS rlon, count(*) AS cnt
-		FROM assets WHERE deleted_at IS NULL AND lat IS NOT NULL
-		GROUP BY rlat, rlon ORDER BY cnt DESC`, decimals, decimals)
+		FROM assets WHERE owner = ? AND deleted_at IS NULL AND lat IS NOT NULL
+		GROUP BY rlat, rlon ORDER BY cnt DESC`, decimals, decimals, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -630,8 +763,8 @@ func (s *Store) PlaceClusters(ctx context.Context, decimals int) ([]Place, error
 	// el rows sigue abierto (deadlock).
 	for i := range out {
 		_ = s.db.QueryRowContext(ctx,
-			`SELECT id FROM assets WHERE deleted_at IS NULL AND round(lat,?)=? AND round(lon,?)=?
-			 ORDER BY taken_at DESC LIMIT 1`, decimals, out[i].Lat, decimals, out[i].Lon).Scan(&out[i].CoverID)
+			`SELECT id FROM assets WHERE owner = ? AND deleted_at IS NULL AND round(lat,?)=? AND round(lon,?)=?
+			 ORDER BY taken_at DESC LIMIT 1`, owner, decimals, out[i].Lat, decimals, out[i].Lon).Scan(&out[i].CoverID)
 	}
 	return out, nil
 }
@@ -643,17 +776,38 @@ type Tag struct {
 	Count int    `json:"count"`
 }
 
-func (s *Store) AddTag(ctx context.Context, assetID int64, tag string) error {
+// AddTag etiqueta un asset del owner (id inexistente/ajeno → ErrNoRows, H8).
+func (s *Store) AddTag(ctx context.Context, owner string, assetID int64, tag string) error {
+	var one int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM assets WHERE id=? AND owner=?`, assetID, owner).Scan(&one); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO asset_tags (asset_id, tag) VALUES (?,?)`, assetID, tag)
 	return err
 }
 
-func (s *Store) RemoveTag(ctx context.Context, assetID int64, tag string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM asset_tags WHERE asset_id=? AND tag=?`, assetID, tag)
-	return err
+// RemoveTag quita una etiqueta de un asset del owner (IDOR → ErrNoRows).
+func (s *Store) RemoveTag(ctx context.Context, owner string, assetID int64, tag string) error {
+	var one int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM assets WHERE id=? AND owner=?`, assetID, owner).Scan(&one); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM asset_tags WHERE asset_id=? AND tag=?`, assetID, tag)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
-func (s *Store) AssetTags(ctx context.Context, assetID int64) ([]string, error) {
+// AssetTags: etiquetas de un asset del owner (IDOR → ErrNoRows).
+func (s *Store) AssetTags(ctx context.Context, owner string, assetID int64) ([]string, error) {
+	var one int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM assets WHERE id=? AND owner=?`, assetID, owner).Scan(&one); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT tag FROM asset_tags WHERE asset_id=? ORDER BY tag COLLATE NOCASE`, assetID)
 	if err != nil {
 		return nil, err
@@ -670,11 +824,11 @@ func (s *Store) AssetTags(ctx context.Context, assetID int64) ([]string, error) 
 	return out, rows.Err()
 }
 
-// ListTags: etiquetas con recuento de fotos vivas.
-func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
+// ListTags: etiquetas del owner con recuento de fotos vivas.
+func (s *Store) ListTags(ctx context.Context, owner string) ([]Tag, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.tag, count(*) FROM asset_tags t JOIN assets a ON a.id=t.asset_id
-		WHERE a.deleted_at IS NULL GROUP BY t.tag ORDER BY t.tag COLLATE NOCASE`)
+		WHERE a.owner = ? AND a.deleted_at IS NULL GROUP BY t.tag ORDER BY t.tag COLLATE NOCASE`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -690,10 +844,10 @@ func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) AssetsByTag(ctx context.Context, tag string) ([]Asset, error) {
+func (s *Store) AssetsByTag(ctx context.Context, owner, tag string) ([]Asset, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+assetCols+` FROM assets
-		WHERE deleted_at IS NULL AND id IN (SELECT asset_id FROM asset_tags WHERE tag=?)
-		ORDER BY taken_at DESC`, tag)
+		WHERE owner = ? AND deleted_at IS NULL AND id IN (SELECT asset_id FROM asset_tags WHERE tag=?)
+		ORDER BY taken_at DESC`, owner, tag)
 	if err != nil {
 		return nil, err
 	}
@@ -718,13 +872,13 @@ type FolderEntry struct {
 }
 
 // Subfolders: subcarpetas directas bajo `base` (con recuento de fotos, recursivo).
-func (s *Store) Subfolders(ctx context.Context, base string) ([]FolderEntry, error) {
+func (s *Store) Subfolders(ctx context.Context, owner, base string) ([]FolderEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT substr(path, ?+1, instr(substr(path, ?+1), '/')-1) AS name, count(*)
 		FROM assets
-		WHERE deleted_at IS NULL AND path LIKE ? || '%' AND instr(substr(path, ?+1), '/') > 0
+		WHERE owner = ? AND deleted_at IS NULL AND path LIKE ? || '%' AND instr(substr(path, ?+1), '/') > 0
 		GROUP BY name ORDER BY name COLLATE NOCASE`,
-		len(base), len(base), base, len(base))
+		len(base), len(base), owner, base, len(base))
 	if err != nil {
 		return nil, err
 	}
@@ -741,10 +895,10 @@ func (s *Store) Subfolders(ctx context.Context, base string) ([]FolderEntry, err
 }
 
 // FolderAssets: fotos directamente en `base` (sin bajar a subcarpetas).
-func (s *Store) FolderAssets(ctx context.Context, base string) ([]Asset, error) {
+func (s *Store) FolderAssets(ctx context.Context, owner, base string) ([]Asset, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+assetCols+` FROM assets
-		WHERE deleted_at IS NULL AND path LIKE ? || '%' AND path NOT LIKE ? || '%/%'
-		ORDER BY taken_at DESC`, base, base)
+		WHERE owner = ? AND deleted_at IS NULL AND path LIKE ? || '%' AND path NOT LIKE ? || '%/%'
+		ORDER BY taken_at DESC`, owner, base, base)
 	if err != nil {
 		return nil, err
 	}
@@ -761,6 +915,8 @@ func (s *Store) FolderAssets(ctx context.Context, base string) ([]Asset, error) 
 }
 
 // --- caché de geocodificación (Lugares) ---
+// SIN owner a propósito (H8): es una caché GLOBAL de nombres de lugares
+// (dato público de Nominatim), no información personal del usuario.
 
 func (s *Store) GetGeocode(ctx context.Context, latKey, lonKey float64) (string, bool, error) {
 	var name string
@@ -780,9 +936,9 @@ func (s *Store) SaveGeocode(ctx context.Context, latKey, lonKey float64, name st
 	return err
 }
 
-func (s *Store) GeoAssets(ctx context.Context, limit int) ([]Asset, error) {
+func (s *Store) GeoAssets(ctx context.Context, owner string, limit int) ([]Asset, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+assetCols+` FROM assets WHERE deleted_at IS NULL AND lat IS NOT NULL ORDER BY taken_at DESC LIMIT ?`, limit)
+		`SELECT `+assetCols+` FROM assets WHERE owner = ? AND deleted_at IS NULL AND lat IS NOT NULL ORDER BY taken_at DESC LIMIT ?`, owner, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -811,13 +967,14 @@ type YearCount struct {
 	Months []MonthCount `json:"months"`
 }
 
-// Calendar devuelve los años (y meses) con fotos, descendente. Excluye archivadas.
-func (s *Store) Calendar(ctx context.Context) ([]YearCount, error) {
+// Calendar devuelve los años (y meses) con fotos del owner, descendente.
+// Excluye archivadas.
+func (s *Store) Calendar(ctx context.Context, owner string) ([]YearCount, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT CAST(strftime('%Y', taken_at, 'unixepoch') AS INT) AS y,
 		        CAST(strftime('%m', taken_at, 'unixepoch') AS INT) AS m, count(*)
-		 FROM assets WHERE deleted_at IS NULL AND is_archived = 0
-		 GROUP BY y, m ORDER BY y DESC, m DESC`)
+		 FROM assets WHERE owner = ? AND deleted_at IS NULL AND is_archived = 0
+		 GROUP BY y, m ORDER BY y DESC, m DESC`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -844,7 +1001,8 @@ func (s *Store) Calendar(ctx context.Context) ([]YearCount, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) Stats(ctx context.Context) (map[string]any, error) {
+// Stats del owner (los endpoints de admin globales NO existen, H8).
+func (s *Store) Stats(ctx context.Context, owner string) (map[string]any, error) {
 	var total, favs, geo, exifPending, videos int64
 	row := s.db.QueryRowContext(ctx, `SELECT
 		count(*),
@@ -852,7 +1010,7 @@ func (s *Store) Stats(ctx context.Context) (map[string]any, error) {
 		COALESCE(sum(lat IS NOT NULL),0),
 		COALESCE(sum(exif_done=0 AND media_type='image'),0),
 		COALESCE(sum(media_type='video'),0)
-	  FROM assets WHERE deleted_at IS NULL`)
+	  FROM assets WHERE owner = ? AND deleted_at IS NULL`, owner)
 	if err := row.Scan(&total, &favs, &geo, &exifPending, &videos); err != nil {
 		return nil, err
 	}

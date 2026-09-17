@@ -33,11 +33,12 @@ func TestVideoPoster(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	svc, err := New(webdav.New(srv.URL, "u", "t"), filepath.Join(dir, "cache"))
+	dav := webdav.New(srv.URL, "u", "t")
+	svc, err := New(filepath.Join(dir, "cache"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := svc.VideoPoster(context.Background(), "/v.mp4", "e1", 200)
+	out, err := svc.VideoPoster(context.Background(), dav, "/v.mp4", "e1", 200)
 	if err != nil {
 		t.Fatalf("VideoPoster: %v", err)
 	}
@@ -54,7 +55,7 @@ func TestVideoPoster(t *testing.T) {
 		t.Fatalf("no se escaló: %dx%d", b.Dx(), b.Dy())
 	}
 	// segunda llamada: cacheado
-	if out2, err := svc.VideoPoster(context.Background(), "/v.mp4", "e1", 200); err != nil || out2 != out {
+	if out2, err := svc.VideoPoster(context.Background(), dav, "/v.mp4", "e1", 200); err != nil || out2 != out {
 		t.Fatalf("caché del póster: %v %v", out2, err)
 	}
 }

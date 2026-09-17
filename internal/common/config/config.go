@@ -83,11 +83,22 @@ type NotesConfig struct {
 	Owner string // backfill de `user` en filas vacías (migración 002)
 }
 
-// PhotosConfig: módulo photos (OCAPPS_PHOTOS_*).
+// AppUser: un usuario de photos con app-token para scan periódico en
+// background (OCAPPS_PHOTOS_USERS, H8). El app-token solo vive en memoria.
+type AppUser struct {
+	User  string
+	Token string
+}
+
+// PhotosConfig: módulo photos (OCAPPS_PHOTOS_*). Multi-tenant (H8): ya no
+// hay usuario obligatorio; User/AppToken quedan como vía legacy de (a)
+// identidad del Bearer estático DEPRECATED y (b) backfill del índice
+// single-tenant, y se pliegan en Users para background scan.
 type PhotosConfig struct {
-	User      string // usuario del app-token (single-tenant); oblig. si enabled
-	AppToken  string // app-token de OpenCloud; oblig. si enabled
-	Token     string // Bearer estático propio (compat clientes viejos)
+	User      string    // usuario del app-token (legacy); opcional desde H8
+	AppToken  string    // app-token de OpenCloud (legacy); opcional desde H8
+	Users     []AppUser // OCAPPS_PHOTOS_USERS + pliegue legacy (background scan)
+	Token     string    // Bearer estático DEPRECATED (exige User); "" = desactivado
 	ScanRoot  string
 	ScanEvery time.Duration
 }
@@ -357,7 +368,7 @@ func Load() (*Config, error) {
 		Owner: l.get("OCAPPS_NOTES_OWNER", "OCNOTES_OWNER", ""),
 	}
 
-	// --- photos (user/token vacíos → degrada el módulo, §3.3) ---
+	// --- photos multi-tenant (H8): ya NO hay usuario obligatorio (§3.3/§6.2) ---
 	c.Photos = PhotosConfig{
 		User:     l.get("OCAPPS_PHOTOS_USER", "OC_USER", ""),
 		AppToken: l.get("OCAPPS_PHOTOS_APP_TOKEN", "OC_APP_TOKEN", ""),
@@ -365,13 +376,22 @@ func Load() (*Config, error) {
 		ScanRoot: l.get("OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT", DefaultScanRoot),
 	}
 	var photosErrs []error
-	if c.PhotosEnabled {
-		if c.Photos.User == "" {
-			photosErrs = append(photosErrs, fmt.Errorf("OCAPPS_PHOTOS_USER vacío con photos enabled"))
-		}
-		if c.Photos.AppToken == "" {
-			photosErrs = append(photosErrs, fmt.Errorf("OCAPPS_PHOTOS_APP_TOKEN vacío con photos enabled"))
-		}
+	var usersErr error
+	c.Photos.Users, usersErr = parsePhotosUsers(l.get("OCAPPS_PHOTOS_USERS", "", ""))
+	if usersErr != nil {
+		photosErrs = append(photosErrs, usersErr)
+	}
+	// El Bearer estático está DEPRECATED y ya no tiene identidad propia
+	// (H8 §6.2): sin OCAPPS_PHOTOS_USER no hay oc_id al que mapearlo.
+	if c.PhotosEnabled && c.Photos.Token != "" && c.Photos.User == "" {
+		photosErrs = append(photosErrs, fmt.Errorf("OCAPPS_PHOTOS_TOKEN (deprecated) exige OCAPPS_PHOTOS_USER para mapear el token al owner legacy"))
+	}
+	// Pliegue del par legacy USER+APP_TOKEN en la lista de usuarios con
+	// background scan (H8 §6.2): mismo efecto que OCAPPS_PHOTOS_USERS.
+	if c.Photos.User != "" && c.Photos.AppToken != "" && !photosUserListed(c.Photos.Users, c.Photos.User) {
+		slog.Warn("OCAPPS_PHOTOS_USER + OCAPPS_PHOTOS_APP_TOKEN están deprecated para background scan: usa OCAPPS_PHOTOS_USERS",
+			"user", c.Photos.User)
+		c.Photos.Users = append(c.Photos.Users, AppUser{User: c.Photos.User, Token: c.Photos.AppToken})
 	}
 	if c.Photos.ScanEvery, err = l.dur("OCAPPS_PHOTOS_SCAN_EVERY", "SCAN_EVERY", DefaultScanEvery); err != nil {
 		photosErrs = append(photosErrs, err)
@@ -396,6 +416,40 @@ func Load() (*Config, error) {
 
 	c.Legacy = l.used
 	return c, nil
+}
+
+// parsePhotosUsers parsea OCAPPS_PHOTOS_USERS: "alice:apptoken1,bob:apptoken2"
+// (usuarios con scan periódico en background, H8). Formato estricto: cada
+// entrada no vacía debe ser `user:token` con ambas partes no vacías; una
+// entrada malformada es error de config del módulo (ModuleErr, patrón D3).
+func parsePhotosUsers(raw string) ([]AppUser, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var out []AppUser
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		user, token, ok := strings.Cut(entry, ":")
+		if !ok || strings.TrimSpace(user) == "" || strings.TrimSpace(token) == "" {
+			return nil, fmt.Errorf("OCAPPS_PHOTOS_USERS: entrada malformada %q (formato: user:apptoken[,user2:apptoken2])", entry)
+		}
+		out = append(out, AppUser{User: strings.TrimSpace(user), Token: strings.TrimSpace(token)})
+	}
+	return out, nil
+}
+
+// photosUserListed: ¿ya está ese usuario en la lista (pliegue legacy)?
+func photosUserListed(users []AppUser, user string) bool {
+	for _, u := range users {
+		if u.User == user {
+			return true
+		}
+	}
+	return false
 }
 
 // loadOpenCloudURL resuelve la raíz del servidor con la precedencia

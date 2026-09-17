@@ -28,16 +28,23 @@ import (
 
 var ErrUnsupported = errors.New("formato sin decodificador nativo")
 
+// Service genera y cachea miniaturas. Es multi-owner (H8): NO guarda el
+// cliente DAV — llega por parámetro con la credencial del owner de cada
+// request. La caché en disco ES compartida entre usuarios sin riesgo de
+// colisión: la cache key es sha1(href|etag|maxSize) y el href contiene el
+// space-UUID del espacio personal del usuario
+// (/dav/spaces/<uuid>$<owner>/...), así que dos usuarios NUNCA generan la
+// misma clave para ficheros distintos (y para el mismo fichero físico del
+// mismo espacio la miniatura es idéntica).
 type Service struct {
-	dav      *webdav.Client
 	cacheDir string
 }
 
-func New(c *webdav.Client, cacheDir string) (*Service, error) {
+func New(cacheDir string) (*Service, error) {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, err
 	}
-	return &Service{dav: c, cacheDir: cacheDir}, nil
+	return &Service{cacheDir: cacheDir}, nil
 }
 
 func cacheKey(href, etag string, maxSize int) string {
@@ -47,14 +54,14 @@ func cacheKey(href, etag string, maxSize int) string {
 
 // VideoPoster extrae un fotograma del vídeo con ffmpeg y lo cachea como JPEG.
 // Descarga el vídeo a un temporal (ffmpeg necesita poder buscar en el fichero).
-func (s *Service) VideoPoster(ctx context.Context, href, etag string, maxSize int) (string, error) {
+func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, etag string, maxSize int) (string, error) {
 	key := "v" + cacheKey(href, etag, maxSize)
 	out := filepath.Join(s.cacheDir, key[:2], key)
 	if _, err := os.Stat(out); err == nil {
 		return out, nil
 	}
 
-	rc, _, err := s.dav.Download(ctx, href)
+	rc, _, err := dav.Download(ctx, href)
 	if err != nil {
 		return "", err
 	}
@@ -93,14 +100,15 @@ func (s *Service) VideoPoster(ctx context.Context, href, etag string, maxSize in
 
 // Get devuelve la ruta del thumbnail en caché, generándolo si hace falta.
 // maxSize es el lado largo. Se sirve como JPEG progresivo calidad 80.
-func (s *Service) Get(ctx context.Context, href, etag string, maxSize int) (string, error) {
+// dav es el cliente de la sesión del owner del asset (H8).
+func (s *Service) Get(ctx context.Context, dav *webdav.Client, href, etag string, maxSize int) (string, error) {
 	key := cacheKey(href, etag, maxSize)
 	out := filepath.Join(s.cacheDir, key[:2], key)
 	if _, err := os.Stat(out); err == nil {
 		return out, nil
 	}
 
-	rc, _, err := s.dav.Download(ctx, href)
+	rc, _, err := dav.Download(ctx, href)
 	if err != nil {
 		return "", err
 	}

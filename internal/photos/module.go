@@ -1,37 +1,34 @@
 // Package photos — módulo photos del servicio unificado ocapps (SPEC §4.5,
-// §8-H3). El loop de scan (antes closures de cmd/photos-service/main.go) vive
-// en Run; el wiring es:
+// §8-H3), MULTI-TENANT desde H8 (SPEC §6.2): cualquier usuario de OpenCloud
+// tiene su índice (scoping por owner = oc_id), su sesión DAV en memoria y su
+// scan por actividad. El wiring es:
 //
-//	store (baseline §5.3) → mediasecret (cred, Q3) → ffmpeg check (Q4) →
-//	webdav + MeID (single-tenant §6.2) → ListDrives → api.Server.
+//	store (baseline §5.3 + migración 002 multi-owner) → mediasecret (cred,
+//	Q3) → ffmpeg check (Q4) → registry de sesiones + scheduler → api.Server.
 //
-// Si Graph/ListDrives falla al arrancar, el módulo queda en estado failed
-// (503 en su namespace) y reintenta en background desde Run con backoff
-// 30 s→5 min, en vez del os.Exit(1) histórico (SPEC §4.5).
+// El módulo YA NO depende de OpenCloud para arrancar: no hay initBackend
+// global ni retry loop contra Graph (H8 §7). Healthy() = ping SQLite. La
+// resolución de espacios personales es lazy (primer request/scan del
+// usuario).
 package photos
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/gnacho/ocapps/internal/common/auth"
 	"github.com/gnacho/ocapps/internal/common/config"
 	"github.com/gnacho/ocapps/internal/common/cred"
-	"github.com/gnacho/ocapps/internal/common/httpx"
 	commonmodule "github.com/gnacho/ocapps/internal/common/module"
-	"github.com/gnacho/ocapps/internal/common/webdav"
 	"github.com/gnacho/ocapps/internal/photos/api"
 	"github.com/gnacho/ocapps/internal/photos/exif"
 	"github.com/gnacho/ocapps/internal/photos/geo"
-	"github.com/gnacho/ocapps/internal/photos/index"
 	"github.com/gnacho/ocapps/internal/photos/store"
 	"github.com/gnacho/ocapps/internal/photos/thumb"
 )
@@ -43,13 +40,6 @@ const PublicPrefix = api.PublicPrefix
 // Module implementa la interfaz común de SPEC §4.5 (internal/common/module).
 var _ commonmodule.Module = (*Module)(nil)
 
-// Backoff del reintento de init en background (SPEC §4.5).
-const (
-	retryInitDelay = 30 * time.Second
-	retryInitMax   = 5 * time.Minute
-	initTimeout    = 60 * time.Second
-)
-
 type Module struct {
 	cfg     config.PhotosConfig
 	dataDir string
@@ -57,43 +47,40 @@ type Module struct {
 
 	st        *store.Store
 	secret    []byte
-	dav       *webdav.Client
 	validator *auth.GraphValidator
 
-	mu        sync.Mutex
-	apiSrv    *api.Server // nil hasta que initBackend tiene éxito
-	scanner   *index.Scanner
-	exifW     *exif.Worker
-	webdavURL string
-	initErr   error // último error de init (Graph/ListDrives)
+	apiSrv *api.Server
+	reg    *registry
+	sched  *scheduler
 }
 
 // New cablea el módulo. cfg es la config unificada completa (se usa la
 // sección Photos, la Common y ModuleErr("photos"): un error de config del
-// módulo — p. ej. OCAPPS_PHOTOS_SCAN_EVERY inválido — es error de New y el
-// módulo queda failed en init, patrón D3 como news, I1) y gv el validador
-// Graph COMPARTIDO del proceso (desde H5; el módulo deriva el suyo con
-// gv.WithPolicy(SingleTenant(meID)) — misma caché, tenancy propia, SPEC
-// §6.2). Si gv es nil se crea uno independiente (tests/standalone). Errores
-// de wiring duro (config inválida, BD, mediasecret, credenciales vacías) →
-// error: el módulo no se construye y el wiring debe registrar su namespace
-// como failed (SPEC §4.5/D3). Un fallo de Graph/ListDrives NO es error de
-// New: el módulo arranca en estado failed y reintenta en background desde
-// Run.
+// módulo — p. ej. OCAPPS_PHOTOS_SCAN_EVERY inválido u OCAPPS_PHOTOS_USERS
+// malformado — es error de New y el módulo queda failed en init, patrón D3
+// como news, I1) y gv el validador Graph COMPARTIDO del proceso (desde H5;
+// el módulo deriva el suyo con gv.WithPolicy(MultiTenant()) — misma caché,
+// tenancy multiusuario desde H8, SPEC §6.2). Si gv es nil se crea uno
+// independiente (tests/standalone). Errores de wiring duro (config inválida,
+// BD, mediasecret) → error: el módulo no se construye y el wiring registra
+// su namespace como failed (SPEC §4.5/D3). El módulo NO toca OpenCloud en
+// New (H8): arranca siempre y sirve aunque OpenCloud esté caído (los
+// requests fallarán en auth contra Graph, pero el proceso y /health viven).
 //
-// OJO (SPEC §6.2): el Bearer estático OCAPPS_PHOTOS_TOKEN se comprueba en
-// internal/photos/api ANTES de cualquier validación Graph; este cambio de
-// validador no altera ese orden.
+// OCAPPS_PHOTOS_USER/APP_TOKEN ya NO son obligatorios (H8). El Bearer
+// estático OCAPPS_PHOTOS_TOKEN está DEPRECATED: sigue funcionando solo si
+// Photos.User está configurado (mapea al oc_id legacy); Token sin User es
+// error de config (el token ya no tiene identidad).
 func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module, error) {
 	// I1: sin este chequeo, una config de módulo inválida que PARSEA bien
 	// (p. ej. SCAN_EVERY=0s) construía un módulo "sano" que paniqueaba en
-	// time.NewTicker(≤0) tras el scan inicial.
+	// time.NewTicker(≤0).
 	if err := cfg.ModuleErr("photos"); err != nil {
 		return nil, fmt.Errorf("config de photos inválida: %w", err)
 	}
 	pcfg, common := cfg.Photos, cfg.Common
-	if pcfg.User == "" || pcfg.AppToken == "" {
-		return nil, fmt.Errorf("photos: OCAPPS_PHOTOS_USER / OCAPPS_PHOTOS_APP_TOKEN son obligatorios con el módulo enabled")
+	if pcfg.Token != "" && pcfg.User == "" {
+		return nil, fmt.Errorf("photos: OCAPPS_PHOTOS_TOKEN (deprecated) exige OCAPPS_PHOTOS_USER para mapear el token al owner legacy")
 	}
 	dataDir := common.PhotosDataDir
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -114,40 +101,35 @@ func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		log.Warn("ffmpeg no encontrado: pósters de vídeo degradados (se servirá el original)", "err", err)
 	}
-
-	dc := webdav.New(common.OpenCloudURL, pcfg.User, pcfg.AppToken)
-	m := &Module{
-		cfg: pcfg, dataDir: dataDir, log: log,
-		st: st, secret: secret, dav: dc,
+	if pcfg.Token != "" {
+		log.Warn("OCAPPS_PHOTOS_TOKEN está DEPRECATED (H8): los clientes deben usar el Bearer OIDC de OpenCloud; el token estático mapea al owner legacy de OCAPPS_PHOTOS_USER",
+			"user", pcfg.User)
 	}
 
-	// Identidad del usuario configurado: el servicio es single-tenant y solo
-	// atiende su sesión. Si MeID falla, se omite el chequeo con log (como hoy).
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	meID, err := dc.MeID(ctx)
-	cancel()
-	var policy auth.Policy
-	if err != nil {
-		m.log.Warn("no se pudo resolver el id del usuario (se omite la comprobación de sesión)", "err", err)
-		policy = auth.MultiTenant()
-	} else {
-		m.log.Info("usuario del servicio", "id", meID)
-		policy = auth.SingleTenant(meID)
-	}
 	if gv == nil { // standalone/tests: validador propio sin caché compartida
 		gv = auth.NewGraphValidator(common.OpenCloudURL, auth.MultiTenant(), log)
 	}
-	m.validator = gv.WithPolicy(policy)
+	validator := gv.WithPolicy(auth.MultiTenant())
 
-	// Primer intento de init contra Graph; si falla, Run reintenta.
-	ictx, icancel := context.WithTimeout(context.Background(), initTimeout)
-	err = m.initBackend(ictx)
-	icancel()
+	thumbs, err := thumb.New(filepath.Join(dataDir, "thumbs"))
 	if err != nil {
-		m.setInitErr(err)
-		m.log.Error("photos: init contra OpenCloud fallido; se reintentará en background", "err", err)
+		_ = st.Close()
+		return nil, fmt.Errorf("photos: thumb cache: %w", err)
 	}
-	return m, nil
+	reg := newRegistry(common.OpenCloudURL, pcfg.User, pcfg.AppToken, log)
+	exifW := exif.NewWorker(st, log)
+	sched := newScheduler(reg, st, exifW, pcfg.ScanRoot, pcfg.ScanEvery, log)
+	reg.touchHook = sched.maybeScan
+	reg.scanHook = sched.requestScan
+	geocoder := geo.New(st, log)
+	srv := api.New(st, thumbs, geocoder, validator, reg,
+		api.Config{Token: pcfg.Token, Secret: secret}, log)
+
+	return &Module{
+		cfg: pcfg, dataDir: dataDir, log: log,
+		st: st, secret: secret, validator: validator,
+		apiSrv: srv, reg: reg, sched: sched,
+	}, nil
 }
 
 func (m *Module) Name() string { return "photos" }
@@ -156,34 +138,15 @@ func (m *Module) Name() string { return "photos" }
 // OCAPPS_PHOTOS_ENABLED lo aplica el wiring antes de llamar a New.
 func (m *Module) Enabled() bool { return true }
 
-// Register monta el namespace del módulo. Si el backend aún no está listo
-// (init contra Graph pendiente de reintento) sirve 503 en todo el namespace,
-// como manda SPEC §4.5; al completarse el reintento las rutas reales empiezan
-// a responder sin re-registrar nada.
+// Register monta el namespace del módulo (SPEC §4.5). El módulo ya no tiene
+// init remoto (H8): las rutas reales responden desde el arranque.
 func (m *Module) Register(mux *http.ServeMux) {
-	mux.Handle(PublicPrefix+"/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if h := m.handler(); h != nil {
-			h.ServeHTTP(w, r)
-			return
-		}
-		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "module photos unavailable"})
-	}))
+	mux.Handle(PublicPrefix+"/", m.apiSrv.Handler())
 }
 
-// Healthy: el error de init si el módulo está failed (o "inicializando" si
-// aún no terminó el primer init); con el backend operativo, ping a la
-// SQLite del módulo como news/notes (M5).
+// Healthy: ping a la SQLite del módulo como news/notes (M5). El módulo ya no
+// depende de OpenCloud para estar sano (H8 §7).
 func (m *Module) Healthy() error {
-	m.mu.Lock()
-	ready := m.apiSrv != nil
-	initErr := m.initErr
-	m.mu.Unlock()
-	if !ready {
-		if initErr != nil {
-			return fmt.Errorf("failed: %w", initErr)
-		}
-		return errors.New("inicializando")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := m.st.Ping(ctx); err != nil {
@@ -192,153 +155,65 @@ func (m *Module) Healthy() error {
 	return nil
 }
 
-func (m *Module) handler() http.Handler {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.apiSrv == nil {
-		return nil
-	}
-	return m.apiSrv.Handler()
-}
-
-func (m *Module) setInitErr(err error) {
-	m.mu.Lock()
-	m.initErr = err
-	m.mu.Unlock()
-}
-
-// initBackend descubre el espacio personal y construye scanner, cachés y la
-// API. Es idempotente: los reintentos pisan el estado anterior por completo.
-func (m *Module) initBackend(ctx context.Context) error {
-	drives, err := m.dav.ListDrives(ctx)
-	if err != nil {
-		return fmt.Errorf("listar espacios de OpenCloud: %w", err)
-	}
-	var webdavURL string
-	for _, d := range drives {
-		if d.DriveType == "personal" {
-			webdavURL = d.WebDAVURL
-			break
-		}
-	}
-	if webdavURL == "" && len(drives) > 0 {
-		webdavURL = drives[0].WebDAVURL
-	}
-	if webdavURL == "" {
-		return errors.New("ningún espacio con webDavUrl disponible")
-	}
-
-	thumbs, err := thumb.New(m.dav, filepath.Join(m.dataDir, "thumbs"))
-	if err != nil {
-		return fmt.Errorf("thumb cache: %w", err)
-	}
-	scanner := index.NewScanner(m.dav, webdav.DefaultOptions(), m.st, m.log)
-	exifW := exif.NewWorker(m.dav, m.st, m.log)
-	geocoder := geo.New(m.st, m.log)
-	srv := api.New(m.st, thumbs, m.dav, geocoder, m.validator,
-		api.Config{WebDAVURL: webdavURL, Token: m.cfg.Token, Secret: m.secret}, m.log)
-
-	m.mu.Lock()
-	m.webdavURL = webdavURL
-	m.scanner = scanner
-	m.exifW = exifW
-	m.apiSrv = srv
-	m.initErr = nil
-	m.mu.Unlock()
-	m.log.Info("espacio OpenCloud localizado", "webdav", webdavURL, "root", m.cfg.ScanRoot)
-	return nil
-}
-
-// Run ejecuta el loop de scan (inicial + ticker SCAN_EVERY + rescans bajo
-// demanda con throttle de 20 s). Si el backend no está listo, primero
-// reintenta el init en background (backoff 30 s→5 min, SPEC §4.5). Retorna al
-// cancelar ctx.
+// Run siembra las sesiones de OCAPPS_PHOTOS_USERS, aplica el backfill del
+// índice single-tenant si procede (H8 §5.3) y ejecuta el scheduler (scans
+// por actividad + ticker + purga de sesiones). Retorna al cancelar ctx.
 func (m *Module) Run(ctx context.Context) error {
 	defer func() { _ = m.st.Close() }()
-
-	if m.handler() == nil && !m.retryInit(ctx) {
-		return nil // shutdown durante el reintento
-	}
-	m.scanLoop(ctx)
+	m.seedUsers(ctx)
+	m.backfill(ctx)
+	m.sched.run(ctx)
 	return nil
 }
 
-// retryInit reintenta initBackend hasta que tenga éxito o se cancele ctx.
-func (m *Module) retryInit(ctx context.Context) bool {
-	delay := retryInitDelay
-	for {
-		ictx, cancel := context.WithTimeout(ctx, initTimeout)
-		err := m.initBackend(ictx)
-		cancel()
-		if err == nil {
-			m.log.Info("photos: init recuperado tras reintento en background")
-			return true
+// seedUsers siembra las sesiones de los usuarios con app-token
+// (OCAPPS_PHOTOS_USERS + pliegue legacy): cliente Basic, MeID y espacio
+// personal. Si uno falla, log ERROR y ese usuario queda sin background scan,
+// pero el módulo sigue (H8 §7).
+func (m *Module) seedUsers(ctx context.Context) {
+	for _, u := range m.cfg.Users {
+		owner, err := m.reg.seed(ctx, u.User, u.Token)
+		if err != nil {
+			m.log.Error("photos: no se pudo sembrar el usuario de background scan; queda sin scan programado",
+				"user", u.User, "err", err)
+			continue
 		}
-		m.setInitErr(err)
-		m.log.Error("photos: reintento de init fallido", "err", err, "proximo", delay)
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(delay):
-		}
-		if delay < retryInitMax {
-			delay *= 2
-			if delay > retryInitMax {
-				delay = retryInitMax
-			}
-		}
+		m.log.Info("usuario de background scan sembrado", "user", u.User, "owner", owner)
 	}
 }
 
-// scanLoop es el port de las closures de cmd/photos-service/main.go: scan
-// inicial, ticker programado y rescans bajo demanda (los pide la extensión al
-// abrir/enfocar) con throttle de 20 s para no encadenar PROPFINDs completos.
-func (m *Module) scanLoop(ctx context.Context) {
-	m.mu.Lock()
-	scanner, exifW, webdavURL, rescan := m.scanner, m.exifW, m.webdavURL, m.apiSrv.RescanRequests()
-	m.mu.Unlock()
-
-	var scanMu sync.Mutex
-	lastScan := time.Time{}
-	runScan := func(reason string) {
-		sctx, cancel := context.WithTimeout(ctx, 2*time.Hour)
-		defer cancel()
-		m.log.Info("scan", "motivo", reason)
-		if err := scanner.ScanSpace(sctx, webdavURL, m.cfg.ScanRoot); err != nil {
-			m.log.Error("scan", "err", err)
-		}
-		exifW.Run(sctx)
-		scanMu.Lock()
-		lastScan = time.Now()
-		scanMu.Unlock()
+// backfill adopta las filas de la era single-tenant (owner=”) al oc_id del
+// usuario legacy (H8 §5.3). No puede ser SQL: el oc_id se resuelve contra
+// Graph con el app-token. Sin OCAPPS_PHOTOS_USER+APP_TOKEN configurados el
+// módulo arranca igual y deja un WARN explícito con el recuento.
+func (m *Module) backfill(ctx context.Context) {
+	orphanAssets, orphanAlbums, err := m.st.OrphanCounts(ctx)
+	if err != nil {
+		m.log.Error("backfill: no se pudo contar filas sin owner", "err", err)
+		return
 	}
-
-	runScan("inicial")
-	// Segunda línea de defensa de I1: New ya rechaza ScanEvery ≤ 0 vía
-	// ModuleErr, pero un Module construido a mano no debe paniquear en
-	// time.NewTicker(≤0). Se degrada al default con log, no se tumba.
-	scanEvery := m.cfg.ScanEvery
-	if scanEvery <= 0 {
-		m.log.Error("OCAPPS_PHOTOS_SCAN_EVERY <= 0 (config inválida); se usa el default",
-			"got", scanEvery, "default", config.DefaultScanEvery)
-		scanEvery = config.DefaultScanEvery
+	if orphanAssets == 0 && orphanAlbums == 0 {
+		return
 	}
-	ticker := time.NewTicker(scanEvery)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			runScan("programado")
-		case <-rescan:
-			scanMu.Lock()
-			recent := time.Since(lastScan) < 20*time.Second
-			scanMu.Unlock()
-			if recent {
-				continue
-			}
-			runScan("bajo demanda")
-		}
+	if m.cfg.User == "" || m.cfg.AppToken == "" {
+		m.log.Warn(fmt.Sprintf("hay %d assets y %d álbumes de la era single-tenant sin owner; configura OCAPPS_PHOTOS_USER + OCAPPS_PHOTOS_APP_TOKEN (una vez) para adoptarlos", orphanAssets, orphanAlbums),
+			"assets", orphanAssets, "albums", orphanAlbums)
+		return
 	}
+	owner, err := m.reg.LegacyOwner(ctx)
+	if err != nil {
+		m.log.Error("backfill: no se pudo resolver el oc_id del usuario legacy; se reintentará en el próximo arranque", "err", err)
+		return
+	}
+	nAssets, nAlbums, rmAssets, rmAlbums, err := m.st.BackfillOwner(ctx, owner)
+	if err != nil {
+		m.log.Error("backfill", "err", err)
+		return
+	}
+	if rmAssets > 0 || rmAlbums > 0 {
+		m.log.Warn("backfill multi-owner: filas huérfanas conflictivas descartadas (ya existían re-escaneadas para el owner)",
+			"owner", owner, "assets", rmAssets, "albums", rmAlbums)
+	}
+	m.log.Info("backfill multi-owner: filas de la era single-tenant adoptadas",
+		"owner", owner, "assets", nAssets, "albums", nAlbums)
 }
