@@ -188,17 +188,18 @@ func (l *loader) dur(nueva, legacy string, def time.Duration) (time.Duration, er
 
 | Nueva | Default | Legacy | Notas |
 |---|---|---|---|
-| `OCAPPS_PHOTOS_USER` | *(oblig. si photos enabled)* | `OC_USER` | usuario del app-token (single-tenant) |
-| `OCAPPS_PHOTOS_APP_TOKEN` | *(oblig. si photos enabled)* | `OC_APP_TOKEN` | app-token de OpenCloud |
-| `OCAPPS_PHOTOS_TOKEN` | `""` | `MEMORIES_TOKEN` | Bearer estático propio (compat clientes viejos). Renombrado: el nombre `MEMORIES_TOKEN` es heredado y confuso. |
-| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | `SCAN_ROOT` | |
+| `OCAPPS_PHOTOS_USERS` | `""` | — | **(H8)** `alice:apptoken1,bob:apptoken2` — usuarios con scan periódico en background (app-token por usuario, solo en memoria). Entrada malformada = error del módulo (D3). |
+| `OCAPPS_PHOTOS_USER` | `""` | `OC_USER` | *(opcional desde H8)* usuario del app-token legacy. Sigue usándose para (a) la identidad del Bearer estático y (b) el backfill del índice single-tenant (§5.3); se pliega en `PHOTOS_USERS` con WARN de deprecación. |
+| `OCAPPS_PHOTOS_APP_TOKEN` | `""` | `OC_APP_TOKEN` | *(opcional desde H8)* app-token de OpenCloud (idem). |
+| `OCAPPS_PHOTOS_TOKEN` | `""` | `MEMORIES_TOKEN` | **DEPRECATED (H8)**: Bearer estático machine-to-machine. Solo válido si `OCAPPS_PHOTOS_USER` está configurado (mapea al oc_id legacy); configurarlo sin `USER` es error de config del módulo. Los clientes deben usar el Bearer OIDC de OpenCloud. |
+| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | `SCAN_ROOT` | aplica igual a todos los usuarios |
 | `OCAPPS_PHOTOS_SCAN_EVERY` | `5m` | `SCAN_EVERY` | |
 | — | — | `WEB_DIR` | **Eliminada** (PWA legacy retirada, Q6). Si está definida: warn "ignorada". |
 
 ### 3.3 Reglas de validación
 
 - **Fatal (config común)**: `OCAPPS_OPENCLOUD_URL` vacía con auth mode `opencloud`; `OCAPPS_LOG_LEVEL` inválido; `OCAPPS_DATA_DIR` no creable/escribible.
-- **Degrada el módulo, no el proceso**: `OCAPPS_PHOTOS_USER/APP_TOKEN` vacíos → photos arranca en estado failed (503), news/notes sirven; valores inválidos de `OCAPPS_NEWS_*` (durations) → news failed. Justificación en §4.5/D3.
+- **Degrada el módulo, no el proceso**: valores inválidos de `OCAPPS_NEWS_*` (durations) → news failed; `OCAPPS_PHOTOS_TOKEN` sin `OCAPPS_PHOTOS_USER` u `OCAPPS_PHOTOS_USERS` malformado → photos failed (H8: `PHOTOS_USER/APP_TOKEN` vacíos ya NO degradan — photos es multi-tenant y no exige usuario). Justificación en §4.5/D3.
 
 ---
 
@@ -258,7 +259,7 @@ GET /readyz   → 200 si todos los módulos enabled = ok; 503 si alguno falla (m
 
 - Un módulo cuyo wiring falla (DB no abre, migración rota, Graph inalcanzable) queda en estado `failed`: sus rutas devuelven `503 {"error":"module <name> unavailable"}` (handler sustituto registrado en su namespace), se loguea el error con causa, y el proceso **sigue**. Servicio parcial > apagón total; el operador lo ve en `readyz` (503) y en logs; systemd no entra en bucle de reinicios.
 - **Excepción fatal**: errores de la base común (config común inválida, `DATA_DIR` no escribible, puerto ocupado) → el proceso no arranca (`main` devuelve error, `os.Exit(1)`), porque ahí no hay nada útil que servir.
-- Photos además gana una mejora: si `ListDrives`/Graph falla al arrancar, el módulo queda `failed` y **reintenta en background** (backoff 30 s→5 min) en vez del `os.Exit(1)` actual.
+- Photos además gana una mejora: si `ListDrives`/Graph falla al arrancar, el módulo queda `failed` y **reintenta en background** (backoff 30 s→5 min) en vez del `os.Exit(1)` actual. **(H8: ya no aplica — photos es multi-tenant y NO hace init contra OpenCloud al arrancar; el módulo nace sano, `Healthy()` = ping SQLite, y la resolución de espacios personales es lazy por usuario.)**
 - Loops en background (scheduler de news, scanner de photos) corren con `recover()` por goroutine: un pánico marca el módulo `failed` sin tumbar el proceso. No hay auto-restart de módulos en v0.1 (queda como trabajo futuro; systemd solo reinicia si muere el proceso entero).
 
 Interfaz de módulo (en `internal/common/httpx` o un mini-paquete `common/module`):
@@ -332,7 +333,7 @@ func Baseline(db *sql.DB, version int) error
 |---|---|---|
 | **news** | 18 migraciones, `user_version=18` | **Cero cambios.** Copiar `migrations/001..018` a `internal/news/store/migrations/` y usar `Migrate`. La BD viva llega con `user_version=18` y no se aplica nada. |
 | **notes** | 2 migraciones + backup previo + backfill de owner | Portar `migrate.go` sobre el runner común **conservando** su backup pre-migración (`notes.db.<ts>.bak`) y el backfill con `OCAPPS_NOTES_OWNER`. BD viva: `user_version=2`, no-op. |
-| **photos** | schema `CREATE TABLE IF NOT EXISTS` + 2 `ALTER` idempotentes tolerantes a "duplicate column", **sin versiones** | **Baselinar**: `001_baseline.sql` = el schema completo actual (CREATE IF NOT EXISTS + índices + las dos columnas `is_archived`/`phash` ya incluidas en el CREATE de `assets`). La función de adopción: (1) abre la BD viva; (2) verifica que existen las tablas esperadas (`assets`, `scan_state`, `albums`, `album_assets`, `asset_tags`, `geocode`) y las columnas `is_archived`, `phash` (`PRAGMA table_info(assets)`); (3) si todo está → `Baseline(db, 1)`; (4) si la BD está vacía/nueva → `Migrate` aplica `001_baseline.sql` y fija `user_version=1`. Futuras migraciones empiezan en `002_*.sql`. El patrón frágil de ALTERs en caliente desaparece. |
+| **photos** | schema `CREATE TABLE IF NOT EXISTS` + 2 `ALTER` idempotentes tolerantes a "duplicate column", **sin versiones** | **Baselinar**: `001_baseline.sql` = el schema completo actual (CREATE IF NOT EXISTS + índices + las dos columnas `is_archived`/`phash` ya incluidas en el CREATE de `assets`). La función de adopción: (1) abre la BD viva; (2) verifica que existen las tablas esperadas (`assets`, `scan_state`, `albums`, `album_assets`, `asset_tags`, `geocode`) y las columnas `is_archived`, `phash` (`PRAGMA table_info(assets)`); (3) si todo está → `Baseline(db, 1)`; (4) si la BD está vacía/nueva → `Migrate` aplica `001_baseline.sql` y fija `user_version=1`. Futuras migraciones empiezan en `002_*.sql`. El patrón frágil de ALTERs en caliente desaparece. **(H8)** `002_multiowner.sql` lleva el esquema a multi-owner (rebuild de `assets` con `owner` + `UNIQUE(owner,path)`, `ALTER albums ADD owner`, índices con prefijo owner; `geocode` sigue global a propósito — caché de nombres públicos, no personal). El baseline 001 se actualizó para que las BDs nuevas **nazcan** multi-owner y el estado final converja a `user_version=2` (una BD nueva aplica 001+002; la 002 sobre tablas vacías es no-op efectivo; la BD viva adoptada en 1 recibe el owner vía 002). El runner ejecuta las migraciones con `foreign_keys` OFF (sin ello, el `DROP TABLE` del rebuild dispararía los `ON DELETE CASCADE` de `album_assets`/`asset_tags`). El **backfill** de las filas de la era single-tenant (`owner=''`) no puede ser SQL: el módulo resuelve el oc_id con `OCAPPS_PHOTOS_USER`+`APP_TOKEN` (`MeID`) y hace `UPDATE ... SET owner=?` al arrancar; sin esas credenciales loguea un WARN con el recuento y arranca igual (ver §6.2 y `deploy/README.md`). |
 
 **Regla nueva para los tres**: toda migración futura es un fichero `NNN_descripcion.sql` inmutable en el `migrations/` de su módulo; prohibido ALTERs tolerantes a error fuera del runner.
 
@@ -395,20 +396,25 @@ type GraphValidator struct {
 - **TTL**: positiva 5 min (igual que hoy en news/notes). **Negativa 30 s (nuevo)**: un 401/403 de Graph se cachea 30 s para que un cliente en bucle no martillee el IdP. **Solo se cachean rechazos explícitos (401/403)**: los fallos de red, 5xx o respuestas malformadas NO se cachean — un IdP caído no debe envenenar la caché y convertir un glitch transitorio en un outage de 30 s. Documentar el cambio: revocación de credenciales tarda ≤5 min en propagarse (ya era así en news/notes; en photos pasa de 0 a 5 min — ventana aceptable, alineada con el resto).
 - **Singleflight**: en cache-miss concurrente con la misma clave, una sola petición a Graph; las demás esperan su resultado. Elimina la estampida al expirar entradas calientes (la extensión de photos hace ráfagas de peticiones de miniaturas).
 
-### 6.2 Convivencia multiusuario (news/notes) vs single-tenant (photos)
+### 6.2 Multiusuario en los tres módulos (photos multi-tenant desde H8)
 
 Un mismo validador, **política inyectada**:
 
 ```go
 type Policy interface { Admit(u *User) bool }
-type multiTenant struct{}                    // news, notes: todo usuario Graph válido entra
-type singleTenant struct{ ocID string }      // photos: solo u.ID == ocID (id de OC_USER)
+type multiTenant struct{}                    // los tres módulos (photos desde H8)
+type singleTenant struct{ ocID string }      // ya sin uso en photos; queda en common/auth
 ```
 
 - **News**: mantiene su tabla `users` (shadow users con `oc_id`, rol admin al primer usuario) — es su modelo de dominio; el validador común devuelve el `User` Graph y `internal/news` resuelve/crea su fila local como hace hoy `OpenCloudValidator` (esa parte queda en `internal/news/auth.go`, fina).
 - **Notes**: mantiene su shadow user en memoria + escopado por graph ID en la columna `user` (su "persistencia" es la propia tabla `notes`).
-- **Photos**: `SingleTenant(ocID)` donde `ocID = dav.MeID(ctx)` resuelto al arranque con el app-token (como hoy; si falla, se omite el chequeo y se loguea — comportamiento actual conservado). **Además** photos conserva su Bearer estático (`OCAPPS_PHOTOS_TOKEN`, ex-`MEMORIES_TOKEN`) comprobado **antes** de Graph, para clientes machine-to-machine.
-- Resultado: una sola caché Graph compartida por los tres módulos (un usuario de la web que abre news y photos valida una vez contra Graph), sin romper ninguno de los dos modelos de tenancy.
+- **Photos (H8)**: `MultiTenant()`. El `*auth.User` resuelto por `Validate` se inyecta en el request context (`api.OwnerFrom`) y TODOS los handlers scopean al owner (oc_id): el store filtra por `owner` en cada consulta (regla IDOR: un id ajeno → `sql.ErrNoRows` → 404, nunca 403). También entra Basic app-password. La extensión web ya manda el Bearer OIDC en cada llamada.
+  - **Sesiones en memoria (registry)**: cada request autenticado hace `Touch(owner, cred)` que crea/actualiza `map[owner]*session{dav, webdavURL, isBasic, lastSeen}` con un cliente `webdav.NewBearer` (o Basic). **Nada se persiste a disco** (privacidad: los tokens OIDC solo viven en RAM). Las sesiones Bearer sin actividad >24h se purgan; las Basic y las sembradas por `OCAPPS_PHOTOS_USERS` no. El `webDavUrl` del espacio personal se resuelve lazy (primer request/scan del usuario) vía `ListDrives` con SU credencial.
+  - **Indexado por actividad (scheduler)**: el primer uso de un usuario dispara su scan (índice progresivo); un ticker `SCAN_EVERY` escanea a los usuarios sembrados y a las sesiones Basic activas; cola con dedupe por owner + semáforo de 2 scans concurrentes + timeout 2h por scan. Ante 401/403 (`webdav.ErrUnauthorized`) el scan ABORTA sin soft-delete (el índice queda intacto) y se pospone a la próxima actividad del usuario.
+  - **Bearer estático `OCAPPS_PHOTOS_TOKEN` (DEPRECATED)**: comprobado ANTES de Graph como siempre, pero solo válido si `OCAPPS_PHOTOS_USER` está configurado — mapea al oc_id legacy resuelto con el app-token (WARN de deprecación en arranque). Sin `USER` es error de config (el token ya no tiene identidad).
+  - **Vídeo firmado (`/api/video/{id}`)**: capability URL sin sesión, como antes; la firma HMAC solo se genera tras verificar ownership en `video-url`, y el stream resuelve el owner desde el id (los ids son globales) para servir con la sesión DAV de ese owner.
+  - **Thumbs**: caché en disco compartida sin colisiones (la clave incluye el href, que contiene el space-UUID del usuario).
+- Resultado: una sola caché Graph compartida por los tres módulos (un usuario de la web que abre news y photos valida una vez contra Graph), con los tres módulos multi-tenant.
 
 ### 6.3 Middleware
 
