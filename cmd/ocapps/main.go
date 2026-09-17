@@ -291,7 +291,7 @@ func (a *app) wirePhotos(gv *commonauth.GraphValidator) *entry {
 	if !e.enabled {
 		return e
 	}
-	m, err := photos.New(a.cfg.Photos, a.cfg.Common, a.log, gv)
+	m, err := photos.New(a.cfg, a.log, gv)
 	if err != nil {
 		e.setErr(err)
 		a.log.Error("módulo failed en init; su namespace sirve 503 (D3)", "module", "photos", "err", err)

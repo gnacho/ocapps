@@ -17,8 +17,9 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -o /ocapps ./cmd/ocapps
 
 # --- etapa 2: runtime ---
-# ffmpeg: única dependencia de sistema (SPEC Q4/Q10 — pósters de vídeo y HLS
-# del módulo photos). ca-certificates: TLS hacia el servidor OpenCloud.
+# ffmpeg: única dependencia de sistema (SPEC Q4/Q10 — pósters de vídeo del
+# módulo photos; HLS se eliminó en Q7, ffmpeg ya no se usa para streaming).
+# ca-certificates: TLS hacia el servidor OpenCloud.
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata ffmpeg \
     && adduser -D -u 10001 ocapps

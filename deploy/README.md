@@ -11,7 +11,7 @@ Referencia: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) y §9.
 | [`opencloud-apps.service`](opencloud-apps.service) | Unit systemd único (SPEC §9.1) |
 | [`env.example`](env.example) | Plantilla de `/etc/ocapps/env` con cada variable y su legacy (SPEC §9.2/§3.2) |
 | [`proxy/nginx.conf`](proxy/nginx.conf) · [`proxy/Caddyfile`](proxy/Caddyfile) | Snippets de proxy (SPEC §9.3) |
-| [`migrate.sh`](migrate.sh) | Migración de datos 3→1, idempotente, con `--dry-run` (SPEC §5.4) |
+| [`migrate.sh`](migrate.sh) | Migración de datos 3→1, idempotente, con `--dry-run` y `--force-redeploy` (SPEC §5.4) |
 | [`repo-notices/`](repo-notices/) | Borradores de aviso para los README de los repos de app |
 
 ## Requisitos
@@ -21,9 +21,9 @@ Referencia: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) y §9.
   El binario es estático (`CGO_ENABLED=0`, modernc.org/sqlite): no necesita
   libc ni ninguna otra librería de sistema.
 - **ffmpeg es la ÚNICA dependencia de sistema en runtime** (SPEC Q4):
-  pósters de vídeo y HLS del módulo photos. Sin ffmpeg el servicio arranca
-  igualmente y photos lo loguea como degradado (`ffmpeg no encontrado:
-  pósters de vídeo y HLS degradados`), pero instálalo:
+  pósters de vídeo del módulo photos (HLS se eliminó en Q7). Sin ffmpeg el
+  servicio arranca igualmente y photos lo loguea como degradado (`ffmpeg no
+  encontrado: pósters de vídeo degradados`), pero instálalo:
   `apt install ffmpeg` / `apk add ffmpeg`.
 - **Go solo para compilar** (≥ 1.26, ver `go.mod`). No hace falta en el
   host de producción si usas el artefacto de release o la imagen Docker.
@@ -87,7 +87,7 @@ systemctl daemon-reload
 /var/lib/ocapps/
 ├── news/     ocnews.db  (+ favicons/, imgcache/, imgsecret, feedsecret)
 ├── notes/    notes.db   (+ attachments/, imgcache/, imgsecret)
-└── photos/   memories.db(+ thumbs/, hls/, mediasecret)
+└── photos/   memories.db(+ thumbs/, mediasecret)
 ```
 
 ## Cambio de proxy
@@ -120,6 +120,34 @@ En ambos snippets se preservan `Authorization` y `Host`, y
 (Range requests). Tras recargar el proxy, valida con
 `nginx -t` / `caddy validate` antes de `reload`.
 
+## Cambios de comportamiento respecto a los backends separados
+
+Además del enrutado (§Cambio de proxy), el servicio unificado cambia tres
+detalles observables por clientes/proxy. Revísalos en staging antes del
+corte:
+
+1. **El 401 de photos es ahora JSON con `WWW-Authenticate`.** ocphotos
+   respondía `401 Unauthorized` en texto plano; ocapps responde
+   `401 {"error":{"code":"unauthorized","message":"..."}}`
+   (`Content-Type: application/json`) con la cabecera
+   `WWW-Authenticate: Bearer realm="ocphotos"`. Los clientes que parseaban
+   el cuerpo de texto plano deben pasar al JSON; los que solo miran el
+   status no se ven afectados.
+2. **Photos ya no tiene modo LAN abierto sin auth.** Todo el namespace
+   `/ocphotos-api/` exige credenciales (Bearer de sesión OpenCloud
+   validado contra Graph con política single-tenant, o el token estático
+   `OCAPPS_PHOTOS_TOKEN`); las únicas exenciones son el preflight CORS y
+   el stream de vídeo firmado (`/ocphotos-api/api/video/`). Un despliegue
+   que confiara en el acceso abierto desde la LAN deja de funcionar: hay
+   que dar credenciales a esos clientes.
+3. **`/ocs/v2.php/cloud/user` solo sirve JSON si se pide explícitamente**:
+   `?format=json` o cabecera `Accept: application/json` (la heurística OCS
+   estándar de ocnotes, que es quien sirve ahora el endpoint). El stub que
+   llevaba news servía JSON siempre, sin negociación. Si tu proxy o algun
+   cliente llamaba al stub de news sin esas cabeceras y esperaba JSON,
+   añade `?format=json` o el `Accept` — **verifícalo en la configuración
+   de proxy de staging** antes del corte.
+
 ## Migración desde los 3 servicios antiguos
 
 `deploy/migrate.sh` implementa el procedimiento del SPEC §5.4 paso a paso
@@ -137,8 +165,11 @@ sudo deploy/migrate.sh
 
 Pasos que ejecuta:
 
-0. **Pre-vuelo**: comprueba `sqlite3`/`systemctl`/`curl`, root, y avisa si
-   `opencloud-apps` ya estaba activo (migración ya aplicada).
+0. **Pre-vuelo**: comprueba `sqlite3`/`systemctl`/`curl`, root, y **aborta
+   si `opencloud-apps` está activo**: sus BDs están vivas y copiar las
+   viejas encima las corrompería. Para re-desplegar encima a propósito
+   (p. ej. repetir la migración tras un rollback) usa `--force-redeploy`:
+   el script para el unit, copia y lo rearranca en el paso 6.
 0b. **Para los servicios viejos** (`ocnews ocnotes ocphotos`) y espera a
    que queden inactivos.
 1. **Verifica el origen**: `PRAGMA integrity_check` en las tres BDs vivas
@@ -147,7 +178,7 @@ Pasos que ejecuta:
 2. **Copia las BDs** al nuevo layout con `cp -a` (incluye `-wal`/`-shm` si
    existieran). Nunca `mv`.
 3. **Copia los datos auxiliares** por módulo (favicons, imgcache,
-   imgsecret, feedsecret, attachments, thumbs, hls, mediasecret) y fija la
+   imgsecret, feedsecret, attachments, thumbs, mediasecret) y fija la
    propiedad `ocapps:ocapps`.
 4. **Verifica el destino**: `integrity_check` en las tres BDs copiadas.
 5. **Auditoría de versiones**: registra `PRAGMA user_version` — esperado

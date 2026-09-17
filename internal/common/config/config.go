@@ -127,9 +127,25 @@ type loader struct {
 	used []LegacyUse
 }
 
+// lookup: valor de una variable LEGACY solo si está definida Y no vacía —
+// una legacy vacía cuenta como no definida (comportamiento conservado, §3.1).
 func (l *loader) lookup(key string) (string, bool) {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
+		return "", false
+	}
+	return v, true
+}
+
+// lookupNew: valor de una variable OCAPPS_* NUEVA. A diferencia de las
+// legacy, una nueva definida EXPLÍCITAMENTE vacía cuenta como definida
+// (M9): prevalece sobre la legacy, que se ignora. Con el valor vacío, get
+// devuelve "" y dur/intVar/boolVar caen al default (su guarda raw==""
+// devuelve def sin error) — definir una nueva vacía es la forma de anular
+// una legacy heredada del entorno.
+func (l *loader) lookupNew(key string) (string, bool) {
+	v, ok := os.LookupEnv(key)
+	if !ok {
 		return "", false
 	}
 	return v, true
@@ -159,9 +175,10 @@ func (l *loader) alreadyUsed(legacy string) bool {
 }
 
 // get devuelve el valor de la var nueva; si no existe, la legacy (con warn);
-// si ninguna, def. Registra cada legacy usada para el log resumen.
+// si ninguna, def. Registra cada legacy usada para el log resumen. Una nueva
+// definida vacía PREVALECE sobre la legacy (M9, ver lookupNew).
 func (l *loader) get(nueva, legacy, def string) string {
-	if v, ok := l.lookup(nueva); ok {
+	if v, ok := l.lookupNew(nueva); ok {
 		return v
 	}
 	if legacy != "" {
@@ -175,7 +192,7 @@ func (l *loader) get(nueva, legacy, def string) string {
 
 // getFirst es get con varias legacy en orden de precedencia entre ellas.
 func (l *loader) getFirst(nueva string, legacies []string, def string) string {
-	if v, ok := l.lookup(nueva); ok {
+	if v, ok := l.lookupNew(nueva); ok {
 		return v
 	}
 	for _, legacy := range legacies {
@@ -188,10 +205,11 @@ func (l *loader) getFirst(nueva string, legacies []string, def string) string {
 }
 
 // dur parsea una duración con precedencia nueva > legacy > def. El error
-// nombra la variable que aportó el valor inválido.
+// nombra la variable que aportó el valor inválido. Una nueva definida vacía
+// bloquea la legacy y cae al default (M9).
 func (l *loader) dur(nueva, legacy string, def time.Duration) (time.Duration, error) {
 	raw, src := "", ""
-	if v, ok := l.lookup(nueva); ok {
+	if v, ok := l.lookupNew(nueva); ok {
 		raw, src = v, nueva
 	} else if legacy != "" {
 		if v, ok := l.lookup(legacy); ok {
@@ -209,10 +227,11 @@ func (l *loader) dur(nueva, legacy string, def time.Duration) (time.Duration, er
 	return d, nil
 }
 
-// intVar parsea un entero con precedencia nueva > legacy > def.
+// intVar parsea un entero con precedencia nueva > legacy > def. Una nueva
+// definida vacía bloquea la legacy y cae al default (M9).
 func (l *loader) intVar(nueva, legacy string, def int) (int, error) {
 	raw, src := "", ""
-	if v, ok := l.lookup(nueva); ok {
+	if v, ok := l.lookupNew(nueva); ok {
 		raw, src = v, nueva
 	} else if legacy != "" {
 		if v, ok := l.lookup(legacy); ok {
@@ -230,10 +249,10 @@ func (l *loader) intVar(nueva, legacy string, def int) (int, error) {
 	return n, nil
 }
 
-// boolVar parsea un booleano nuevo (sin legacy).
+// boolVar parsea un booleano nuevo (sin legacy). Vacía = default.
 func (l *loader) boolVar(nueva string, def bool) (bool, error) {
-	raw, ok := l.lookup(nueva)
-	if !ok {
+	raw, ok := l.lookupNew(nueva)
+	if !ok || raw == "" {
 		return def, nil
 	}
 	b, err := strconv.ParseBool(raw)
@@ -262,7 +281,7 @@ func Load() (*Config, error) {
 	// ListenAddr: las legacy solo detectan despliegues viejos en logs; el
 	// puerto NO se hereda (cada servicio tenía uno distinto, §3.2).
 	c.ListenAddr = DefaultListenAddr
-	if v, ok := l.lookup("OCAPPS_LISTEN_ADDR"); ok {
+	if v, ok := l.lookupNew("OCAPPS_LISTEN_ADDR"); ok {
 		c.ListenAddr = v
 	} else {
 		for _, legacy := range []string{"OCNEWS_ADDR", "OCNOTES_ADDR", "LISTEN_ADDR"} {
@@ -382,8 +401,10 @@ func Load() (*Config, error) {
 // loadOpenCloudURL resuelve la raíz del servidor con la precedencia
 // OCAPPS_OPENCLOUD_URL > OCNEWS_OPENCOLOUD_URL (typo histórico, Q1) >
 // OCNOTES_GRAPH_URL (derivando la raíz: strip de /graph/v1.0/me) > OC_BASE_URL.
+// La nueva definida vacía prevalece sobre las legacy (M9) y la validación
+// fatal de §3.3 la rechaza después si auth mode es opencloud.
 func loadOpenCloudURL(l *loader) string {
-	if v, ok := l.lookup("OCAPPS_OPENCLOUD_URL"); ok {
+	if v, ok := l.lookupNew("OCAPPS_OPENCLOUD_URL"); ok {
 		return strings.TrimRight(v, "/")
 	}
 	if v, ok := l.lookup("OCNEWS_OPENCOLOUD_URL"); ok {

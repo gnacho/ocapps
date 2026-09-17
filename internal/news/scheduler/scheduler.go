@@ -8,7 +8,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -19,9 +21,15 @@ import (
 	"github.com/gnacho/ocapps/internal/news/websub"
 )
 
+// feedRefresher es la parte de refresher.Refresher que usa el scheduler;
+// interfaz para poder inyectar dobles en tests (I3: uno que panique).
+type feedRefresher interface {
+	Refresh(ctx context.Context, f *store.Feed) refresher.Result
+}
+
 type Scheduler struct {
 	store       *store.Store
-	refresher   *refresher.Refresher
+	refresher   feedRefresher
 	favicons    *favicon.Cache
 	log         *slog.Logger
 	tick        time.Duration // periodo de comprobación
@@ -29,9 +37,11 @@ type Scheduler struct {
 	retention   time.Duration // retención de items leídos; 0 = infinita
 	websub      *websub.Client
 	pubBase     string // URL pública del backend para callbacks WebSub (#44)
+
+	cycleHook func() // solo tests (I3): se invoca al inicio de cada cycle
 }
 
-func New(st *store.Store, r *refresher.Refresher, fc *favicon.Cache, log *slog.Logger,
+func New(st *store.Store, r feedRefresher, fc *favicon.Cache, log *slog.Logger,
 	tick time.Duration, concurrency int, retention time.Duration, ws *websub.Client, pubBase string) *Scheduler {
 	if concurrency < 1 {
 		concurrency = 4
@@ -43,9 +53,33 @@ func New(st *store.Store, r *refresher.Refresher, fc *favicon.Cache, log *slog.L
 		tick: tick, concurrency: concurrency, retention: retention, websub: ws, pubBase: pubBase}
 }
 
-// Run bloquea hasta que ctx se cancela. Toda goroutine interna es hija del
-// ctx y se drena con el WaitGroup antes de volver.
-func (s *Scheduler) Run(ctx context.Context) {
+// guarded ejecuta fn recuperando cualquier pánico (I3): un pánico en una
+// goroutine interna del scheduler se loguea con stack y NO tumba el
+// proceso — el loop sigue vivo.
+func (s *Scheduler) guarded(name string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("pánico recuperado en goroutine del scheduler; el loop continúa",
+				"goroutine", name, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	fn()
+}
+
+// Run bloquea hasta que ctx se cancela (devuelve nil en apagado normal).
+// Toda goroutine interna es hija del ctx, va protegida con recover (I3) y
+// se drena con el WaitGroup antes de volver. Un pánico en el loop PRINCIPAL
+// se recupera y se devuelve como error: el wiring marca el módulo failed
+// (D3) sin tumbar el proceso.
+func (s *Scheduler) Run(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("pánico en el loop principal del scheduler; módulo failed",
+				"panic", r, "stack", string(debug.Stack()))
+			err = fmt.Errorf("pánico en el loop principal del scheduler: %v", r)
+		}
+	}()
+
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
@@ -58,7 +92,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.runRetention(retentionCtx)
+		s.guarded("retention", func() { s.runRetention(retentionCtx) })
 	}()
 
 	// WebSub: suscripciones y renovaciones de lease (#44)
@@ -68,7 +102,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.runWebSub(wsCtx)
+			s.guarded("websub", func() { s.runWebSub(wsCtx) })
 		}()
 	}
 
@@ -77,7 +111,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			s.log.Info("scheduler detenido")
-			return
+			return nil
 		case <-ticker.C:
 			s.cycle(ctx)
 		}
@@ -86,6 +120,9 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 // cycle refresca los feeds vencidos con concurrencia acotada.
 func (s *Scheduler) cycle(ctx context.Context) {
+	if s.cycleHook != nil { // solo tests (I3)
+		s.cycleHook()
+	}
 	due, err := s.store.ListDueFeeds(time.Now().Unix(), 50)
 	if err != nil {
 		s.log.Error("listar feeds vencidos", "err", err)
@@ -103,24 +140,26 @@ func (s *Scheduler) cycle(ctx context.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				return
-			}
-			res := s.refresher.Refresh(ctx, &f)
-			// WebSub: registrar el hub detectado para suscribirse en el loop
-			if res.Err == nil && res.Hub != "" {
-				if err := s.store.UpsertWebSub(f.ID, res.Hub, f.URL); err != nil {
-					s.log.Warn("websub: registrar hub", "feed", f.ID, "err", err)
+			s.guarded("worker", func() {
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					return
 				}
-			}
-			// favicon best-effort: solo cuando el feed trae novedades y no
-			// está cacheado (un sitio sin favicon no se reintenta cada ciclo)
-			if s.favicons != nil && res.Inserted > 0 && !s.favicons.Has(favicon.Hash(f.URL)) {
-				s.favicons.Fetch(ctx, f.URL, f.Link)
-			}
+				res := s.refresher.Refresh(ctx, &f)
+				// WebSub: registrar el hub detectado para suscribirse en el loop
+				if res.Err == nil && res.Hub != "" {
+					if err := s.store.UpsertWebSub(f.ID, res.Hub, f.URL); err != nil {
+						s.log.Warn("websub: registrar hub", "feed", f.ID, "err", err)
+					}
+				}
+				// favicon best-effort: solo cuando el feed trae novedades y no
+				// está cacheado (un sitio sin favicon no se reintenta cada ciclo)
+				if s.favicons != nil && res.Inserted > 0 && !s.favicons.Has(favicon.Hash(f.URL)) {
+					s.favicons.Fetch(ctx, f.URL, f.Link)
+				}
+			})
 		}()
 	}
 	wg.Wait()

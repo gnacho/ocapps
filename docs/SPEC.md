@@ -391,8 +391,8 @@ type GraphValidator struct {
 }
 ```
 
-- **Claves de caché**: `basic:<username>` y `bearer:<sha256(token)>` (ocnotes hoy trunca `token[:32]` en claro como clave — mejor hash completo; evita colisiones y no guarda el token).
-- **TTL**: positiva 5 min (igual que hoy en news/notes). **Negativa 30 s (nuevo)**: un 401 de Graph se cachea 30 s para que un cliente en bucle no martillee el IdP. Documentar el cambio: revocación de credenciales tarda ≤5 min en propagarse (ya era así en news/notes; en photos pasa de 0 a 5 min — ventana aceptable, alineada con el resto).
+- **Claves de caché**: `basic:<username>:<sha256(password)>` y `bearer:<sha256(token)>` (ocnotes hoy trunca `token[:32]` en claro como clave — mejor hash completo; evita colisiones y no guarda el token). La clave Basic incluye la contraseña **solo como hash** (nunca en claro), como hacía el ocnews original (`sha256("basic\x00user\x00pass")`): sin ella, tras un login legítimo cualquier contraseña de ese usuario entraría por caché durante el TTL, y una entrada negativa cacheada bajo la misma clave permitiría un DoS del usuario legítimo con un solo intento fallido.
+- **TTL**: positiva 5 min (igual que hoy en news/notes). **Negativa 30 s (nuevo)**: un 401/403 de Graph se cachea 30 s para que un cliente en bucle no martillee el IdP. **Solo se cachean rechazos explícitos (401/403)**: los fallos de red, 5xx o respuestas malformadas NO se cachean — un IdP caído no debe envenenar la caché y convertir un glitch transitorio en un outage de 30 s. Documentar el cambio: revocación de credenciales tarda ≤5 min en propagarse (ya era así en news/notes; en photos pasa de 0 a 5 min — ventana aceptable, alineada con el resto).
 - **Singleflight**: en cache-miss concurrente con la misma clave, una sola petición a Graph; las demás esperan su resultado. Elimina la estampida al expirar entradas calientes (la extensión de photos hace ráfagas de peticiones de miniaturas).
 
 ### 6.2 Convivencia multiusuario (news/notes) vs single-tenant (photos)

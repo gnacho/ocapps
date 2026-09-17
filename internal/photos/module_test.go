@@ -42,16 +42,49 @@ func photosCfg() config.PhotosConfig {
 	}
 }
 
+// testConfig envuelve las secciones en la config unificada completa que
+// espera New (sin ModuleErr: config manual = config válida).
+func testConfig(common config.Common, pcfg config.PhotosConfig) *config.Config {
+	return &config.Config{Common: common, Photos: pcfg}
+}
+
 func TestNewRequiereCredenciales(t *testing.T) {
-	_, err := New(config.PhotosConfig{}, config.Common{OpenCloudURL: "http://x", PhotosDataDir: t.TempDir()}, slog.Default(), nil)
+	_, err := New(testConfig(config.Common{OpenCloudURL: "http://x", PhotosDataDir: t.TempDir()}, config.PhotosConfig{}), slog.Default(), nil)
 	if err == nil {
 		t.Fatal("New sin user/app-token debería fallar (módulo failed en el wiring)")
 	}
 }
 
+// I1: un ModuleErr("photos") registrado por config.Load (p. ej.
+// OCAPPS_PHOTOS_SCAN_EVERY=0s, que PARSEA bien pero es inválido) debe
+// tumbar New — antes el módulo arrancaba "sano" y paniqueaba en
+// time.NewTicker(≤0) tras el scan inicial.
+func TestNewFalloConScanEveryInvalido(t *testing.T) {
+	for _, raw := range []string{"0s", "-5m", "no-es-duracion"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("OCAPPS_AUTH_MODE", "local") // sin OPENCLOUD_URL obligatoria
+			t.Setenv("OCAPPS_DATA_DIR", t.TempDir())
+			t.Setenv("OCAPPS_PHOTOS_USER", "admin")
+			t.Setenv("OCAPPS_PHOTOS_APP_TOKEN", "app-token")
+			t.Setenv("OCAPPS_PHOTOS_SCAN_EVERY", raw)
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v (SCAN_EVERY inválido degrada el módulo, no es fatal)", err)
+			}
+			if cfg.ModuleErr("photos") == nil {
+				t.Fatalf("SCAN_EVERY=%q debería registrar ModuleErr(photos)", raw)
+			}
+			_, err = New(cfg, slog.Default(), nil)
+			if err == nil {
+				t.Fatalf("New con SCAN_EVERY=%q debería fallar (módulo failed en init, D3)", raw)
+			}
+		})
+	}
+}
+
 func TestModuloFailedSiGraphCae(t *testing.T) {
 	common := config.Common{OpenCloudURL: "http://127.0.0.1:1", PhotosDataDir: t.TempDir()}
-	m, err := New(photosCfg(), common, slog.Default(), nil)
+	m, err := New(testConfig(common, photosCfg()), slog.Default(), nil)
 	if err != nil {
 		t.Fatalf("New no debe fallar por Graph caído (reintenta en background): %v", err)
 	}
@@ -88,7 +121,7 @@ func TestModuloOKContraGraphFalso(t *testing.T) {
 	srv := fakeOpenCloudConEspacio(t)
 	dataDir := t.TempDir()
 	common := config.Common{OpenCloudURL: srv.URL, PhotosDataDir: dataDir}
-	m, err := New(photosCfg(), common, slog.Default(), nil)
+	m, err := New(testConfig(common, photosCfg()), slog.Default(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

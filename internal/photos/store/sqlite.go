@@ -105,7 +105,7 @@ func (s *Store) adoptOrMigrate() error {
 				return err
 			}
 		default:
-			return fmt.Errorf("BD con tablas ajenas al esquema de photos (%d tablas, faltan algunas de %v); no se adopta", len(tables), expectedTables)
+			return fmt.Errorf("BD no reconocible como memories.db de photos: tiene %d tablas pero faltan tablas esperadas del esquema (%v); no se adopta", len(tables), expectedTables)
 		}
 	}
 	return commonstore.Migrate(s.db, migrationsFS, "migrations")
@@ -160,6 +160,11 @@ func (s *Store) assetColumns() (map[string]bool, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// Ping verifica que la BD sigue viva (health del módulo, SPEC §4.5).
+func (s *Store) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
 
 // --- escritura (scanner) ---
 

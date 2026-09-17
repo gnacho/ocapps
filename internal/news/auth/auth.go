@@ -87,7 +87,7 @@ type ShadowValidator struct {
 	log   *slog.Logger
 
 	mu    sync.Mutex
-	cache map[string]shadowEntry // basic:<user> / bearer:<sha256(token)> → userID local
+	cache map[string]shadowEntry // basic:<user>:<sha256(pass)> / bearer:<sha256(token)> → userID local
 
 	upsertMu sync.Mutex // serializa upsertShadow (read-then-create)
 }
@@ -195,14 +195,17 @@ func (v *ShadowValidator) upsertShadow(gu *commonauth.User) (*store.User, error)
 	return v.store.GetUserByUsername(username)
 }
 
-// cacheKey: mismo esquema que common/auth (basic:<user> /
-// bearer:<sha256(token)>) — la contraseña nunca forma parte de la clave.
+// cacheKey: mismo esquema que common/auth (basic:<user>:<sha256(pass)> /
+// bearer:<sha256(token)>) — la contraseña forma parte de la clave SOLO como
+// hash, nunca en claro (B1: sin ella, cualquier password del mismo usuario
+// entraba por caché durante el TTL).
 func cacheKey(cred Credential) string {
 	if cred.Bearer != "" {
 		h := sha256.Sum256([]byte(cred.Bearer))
 		return "bearer:" + hex.EncodeToString(h[:])
 	}
-	return "basic:" + cred.Username
+	h := sha256.Sum256([]byte(cred.Password))
+	return "basic:" + cred.Username + ":" + hex.EncodeToString(h[:])
 }
 
 func randomShadowHash() string {

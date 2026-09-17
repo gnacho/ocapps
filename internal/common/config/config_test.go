@@ -1,13 +1,15 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
 // allVars: todas las variables del esquema §3.2 (nuevas y legacy). Cada test
-// las blanquea para aislar el caso (lookup trata "" como no definida).
+// las DESDEFINE para aislar el caso (M9: una OCAPPS_* definida vacía ya NO
+// equivale a no definida — blanquear con Setenv(k, "") no sirve).
 var allVars = []string{
 	"OCAPPS_OPENCLOUD_URL", "OCNEWS_OPENCOLOUD_URL", "OCNOTES_GRAPH_URL", "OC_BASE_URL",
 	"OCAPPS_LISTEN_ADDR", "OCNEWS_ADDR", "OCNOTES_ADDR", "LISTEN_ADDR",
@@ -32,12 +34,28 @@ var allVars = []string{
 	"WEB_DIR",
 }
 
+// unsetEnv DESDEFINE cada variable y restaura su valor previo al terminar
+// el test (equivalente a t.Setenv pero para "no definida").
+func unsetEnv(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		k := k
+		v, ok := os.LookupEnv(k)
+		t.Cleanup(func() {
+			if ok {
+				_ = os.Setenv(k, v)
+			} else {
+				_ = os.Unsetenv(k)
+			}
+		})
+		_ = os.Unsetenv(k)
+	}
+}
+
 // base prepara un entorno limpio y válido (auth opencloud + data dir propio).
 func base(t *testing.T) {
 	t.Helper()
-	for _, k := range allVars {
-		t.Setenv(k, "")
-	}
+	unsetEnv(t, allVars...)
 	t.Setenv("OCAPPS_OPENCLOUD_URL", "https://cloud.example.com")
 	t.Setenv("OCAPPS_DATA_DIR", t.TempDir())
 	t.Setenv("OCAPPS_PHOTOS_USER", "alice")
@@ -276,12 +294,12 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			base(t)
-			// la variable nueva del caso: con su valor, o blanqueada para
-			// que gane la legacy
+			// la variable nueva del caso: con su valor, o DESDEFINIDA
+			// (base define algunas) para que gane la legacy
 			if tc.setNueva != "" {
 				t.Setenv(tc.nueva, tc.setNueva)
 			} else {
-				t.Setenv(tc.nueva, "")
+				unsetEnv(t, tc.nueva)
 			}
 			if tc.setLegacy != "" {
 				t.Setenv(tc.legacy, tc.setLegacy)
@@ -295,11 +313,62 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 	}
 }
 
+// TestNuevaVaciaPrevaleceSobreLegacy (M9): una OCAPPS_* definida
+// EXPLÍCITAMENTE vacía ignora la legacy (es la forma de anular una legacy
+// heredada del entorno); una legacy vacía sigue contando como no definida.
+func TestNuevaVaciaPrevaleceSobreLegacy(t *testing.T) {
+	t.Run("string: nueva vacía anula la legacy", func(t *testing.T) {
+		base(t)
+		t.Setenv("OCAPPS_NEWS_NTFY_TOPIC", "")
+		t.Setenv("OCNEWS_NTFY_TOPIC", "topic-legacy")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.News.NtfyTopic != "" {
+			t.Fatalf("NtfyTopic: %q (la nueva vacía debe prevalecer sobre la legacy)", cfg.News.NtfyTopic)
+		}
+		if legacyUsed(cfg, "OCNEWS_NTFY_TOPIC") {
+			t.Error("legacy registrada como usada con la nueva definida (vacía)")
+		}
+	})
+	t.Run("duration: nueva vacía bloquea la legacy y cae al default", func(t *testing.T) {
+		base(t)
+		t.Setenv("OCAPPS_NEWS_FEED_INTERVAL", "")
+		t.Setenv("OCNEWS_FEED_INTERVAL", "1h")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.News.FeedInterval != DefaultFeedInterval {
+			t.Fatalf("FeedInterval: %s, want default %s", cfg.News.FeedInterval, DefaultFeedInterval)
+		}
+		if legacyUsed(cfg, "OCNEWS_FEED_INTERVAL") {
+			t.Error("legacy registrada como usada con la nueva definida (vacía)")
+		}
+	})
+	t.Run("legacy vacía = no definida (comportamiento conservado)", func(t *testing.T) {
+		base(t)
+		unsetEnv(t, "OCAPPS_NEWS_NTFY_TOPIC")
+		t.Setenv("OCNEWS_NTFY_TOPIC", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.News.NtfyTopic != "" {
+			t.Fatalf("NtfyTopic: %q (legacy vacía no debe contar)", cfg.News.NtfyTopic)
+		}
+		if legacyUsed(cfg, "OCNEWS_NTFY_TOPIC") {
+			t.Error("legacy vacía registrada como usada")
+		}
+	})
+}
+
 // TestOCNotesGraphURLStrip: OCNOTES_GRAPH_URL es la URL completa .../graph/v1.0/me;
 // al mapearla se deriva la raíz (§3.2 †).
 func TestOCNotesGraphURLStrip(t *testing.T) {
 	base(t)
-	t.Setenv("OCAPPS_OPENCLOUD_URL", "")
+	unsetEnv(t, "OCAPPS_OPENCLOUD_URL")
 	t.Setenv("OCNOTES_GRAPH_URL", "https://notes.example.com/graph/v1.0/me")
 	cfg, err := Load()
 	if err != nil {
@@ -314,7 +383,7 @@ func TestOCNotesGraphURLStrip(t *testing.T) {
 
 	// si no trae el sufijo, se usa tal cual
 	base(t)
-	t.Setenv("OCAPPS_OPENCLOUD_URL", "")
+	unsetEnv(t, "OCAPPS_OPENCLOUD_URL")
 	t.Setenv("OCNOTES_GRAPH_URL", "https://notes.example.com/")
 	cfg2, err := Load()
 	if err != nil {
@@ -362,7 +431,7 @@ func TestDataDirLegacy(t *testing.T) {
 	t.Run("legacy por módulo define la ruta de ese módulo", func(t *testing.T) {
 		base(t)
 		legacyDir := t.TempDir() + "/ocnews"
-		t.Setenv("OCAPPS_DATA_DIR", "")
+		unsetEnv(t, "OCAPPS_DATA_DIR")
 		t.Setenv("OCNEWS_DATA_DIR", legacyDir)
 		cfg, err := Load()
 		if err != nil {
@@ -420,14 +489,14 @@ func TestWebDirIgnorada(t *testing.T) {
 func TestValidacionFatal(t *testing.T) {
 	t.Run("opencloud sin URL", func(t *testing.T) {
 		base(t)
-		t.Setenv("OCAPPS_OPENCLOUD_URL", "")
+		unsetEnv(t, "OCAPPS_OPENCLOUD_URL")
 		if _, err := Load(); err == nil {
 			t.Fatal("esperaba error fatal")
 		}
 	})
 	t.Run("modo local no exige URL", func(t *testing.T) {
 		base(t)
-		t.Setenv("OCAPPS_OPENCLOUD_URL", "")
+		unsetEnv(t, "OCAPPS_OPENCLOUD_URL")
 		t.Setenv("OCAPPS_AUTH_MODE", "local")
 		if _, err := Load(); err != nil {
 			t.Fatalf("Load: %v", err)

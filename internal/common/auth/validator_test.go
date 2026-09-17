@@ -168,9 +168,10 @@ func TestBasicBearerMismoUsuario(t *testing.T) {
 	}
 }
 
-// La caché Basic se indexa por usuario (SPEC §6.1): segunda validación con
-// otra contraseña dentro del TTL sigue entrando por caché (ventana de
-// revocación documentada, ≤5 min).
+// La caché Basic se indexa por usuario Y contraseña (hash, SPEC §6.1): una
+// contraseña distinta para el mismo usuario NO sale de caché — va a Graph y
+// falla (B1: con la clave antigua `basic:<user>` cualquier password entraba
+// durante 5 min tras un login legítimo).
 func TestCacheBasicPorUsuario(t *testing.T) {
 	g := newGraphStub(t)
 	v := g.validator(MultiTenant())
@@ -178,12 +179,103 @@ func TestCacheBasicPorUsuario(t *testing.T) {
 	if _, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "app-token"}); !ok {
 		t.Fatal("basic rechazado")
 	}
-	if _, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "otra"}); !ok {
-		t.Fatal("segunda validación dentro del TTL debería salir de caché")
+	if _, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "otra"}); ok {
+		t.Fatal("contraseña distinta admitida desde caché (B1)")
 	}
-	if n := g.requests.Load(); n != 1 {
-		t.Fatalf("peticiones a Graph: got %d, want 1", n)
+	// 2 peticiones: la buena (200) y la mala (401): la segunda NO fue cache hit.
+	if n := g.requests.Load(); n != 2 {
+		t.Fatalf("peticiones a Graph: got %d, want 2 (la password distinta no debe salir de caché)", n)
 	}
+	// y la buena sigue saliendo de caché sin nueva petición.
+	if _, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "app-token"}); !ok {
+		t.Fatal("la credencial buena debería seguir saliendo de caché")
+	}
+	if n := g.requests.Load(); n != 2 {
+		t.Fatalf("peticiones a Graph: got %d, want 2", n)
+	}
+}
+
+// DoS por caché negativa (B1): un intento con password MALA no puede
+// invalidar la entrada cacheada de la password buena del mismo usuario —
+// cada contraseña tiene su propia clave.
+func TestPasswordMalaNoInvalidaLaBuena(t *testing.T) {
+	g := newGraphStub(t)
+	v := g.validator(MultiTenant())
+
+	good := Credential{Username: "alice", Password: "app-token"}
+	bad := Credential{Username: "alice", Password: "mala"}
+
+	if _, ok := v.Validate(context.Background(), good); !ok {
+		t.Fatal("basic bueno rechazado")
+	}
+	// atacante: password mala en bucle → 401 cacheado 30 s BAJO SU CLAVE.
+	for i := 0; i < 3; i++ {
+		if _, ok := v.Validate(context.Background(), bad); ok {
+			t.Fatal("password mala validada")
+		}
+	}
+	// el usuario legítimo sigue entrando por caché, sin nueva petición a Graph.
+	before := g.requests.Load()
+	if _, ok := v.Validate(context.Background(), good); !ok {
+		t.Fatal("DoS: la password mala invalidó la entrada cacheada de la buena")
+	}
+	if n := g.requests.Load(); n != before {
+		t.Fatalf("peticiones extra a Graph: got %d, want %d", n, before)
+	}
+	// y el bucle malo solo costó UNA petición (negativa cacheada bajo su clave).
+	if n := g.requests.Load(); n != 2 {
+		t.Fatalf("peticiones a Graph: got %d, want 2 (1 buena + 1 mala cacheada)", n)
+	}
+}
+
+// M7: un fallo de red o un 5xx de Graph NO se cachea como negativo — cada
+// intento reintenta contra Graph y un Graph recuperado vuelve a validar al
+// instante (sin esperar los 30 s de la caché negativa).
+func TestFallosTransitoriosNoSeCachean(t *testing.T) {
+	t.Run("5xx no cacheado", func(t *testing.T) {
+		var requests atomic.Int32
+		var fail atomic.Bool
+		fail.Store(true)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			if fail.Load() {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "id-alice"})
+		}))
+		t.Cleanup(srv.Close)
+		v := NewGraphValidator(srv.URL, MultiTenant(), slog.Default())
+		cred := Credential{Bearer: "tok"}
+
+		for i := 0; i < 3; i++ {
+			if _, ok := v.Validate(context.Background(), cred); ok {
+				t.Fatal("validó con Graph 502")
+			}
+		}
+		if n := requests.Load(); n != 3 {
+			t.Fatalf("peticiones a Graph: got %d, want 3 (el 5xx no debe cachearse como negativo)", n)
+		}
+		// Graph se recupera: la siguiente validación entra sin esperar 30 s.
+		fail.Store(false)
+		if _, ok := v.Validate(context.Background(), cred); !ok {
+			t.Fatal("Graph recuperado pero la validación sigue fallando (negativa cacheada indebidamente)")
+		}
+	})
+
+	t.Run("red caida no cacheada", func(t *testing.T) {
+		v := NewGraphValidator("http://127.0.0.1:1", MultiTenant(), slog.Default())
+		for i := 0; i < 2; i++ {
+			if _, ok := v.Validate(context.Background(), Credential{Bearer: "x"}); ok {
+				t.Fatal("validó con Graph inalcanzable")
+			}
+		}
+		// sin caché negativa: la clave no existe en la caché.
+		if _, _, hit := v.lookup(cacheKey(Credential{Bearer: "x"})); hit {
+			t.Fatal("fallo de red cacheado como negativo (M7)")
+		}
+	})
 }
 
 func TestURLNormalizacion(t *testing.T) {

@@ -9,6 +9,11 @@
 # Uso (como root en el host de producción):
 #   sudo deploy/migrate.sh --dry-run     # ensayo: solo imprime
 #   sudo deploy/migrate.sh               # migración real
+#   sudo deploy/migrate.sh --force-redeploy
+#       re-despliegue consciente CON el servicio nuevo activo: lo para,
+#       copia las BDs encima y lo rearranca. Sin esta flag, si el unit
+#       nuevo está activo el script ABORTA (copiar sobre BDs vivas las
+#       corrompería).
 #
 # Rollback: ver deploy/README.md (los units viejos solo se DESHABILITAN,
 # no se borran, y /var/lib/ocnews|ocnotes|ocphotos quedan intactos).
@@ -46,7 +51,17 @@ EXPECTED_NOTES_UV=2
 EXPECTED_PHOTOS_UV=1
 
 DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+FORCE_REDEPLOY=0
+for arg in "$@"; do
+	case "$arg" in
+		--dry-run) DRY_RUN=1 ;;
+		--force-redeploy) FORCE_REDEPLOY=1 ;;
+		*)
+			printf 'XX  ERROR: flag desconocida: %s (uso: migrate.sh [--dry-run] [--force-redeploy])\n' "$arg" >&2
+			exit 2
+			;;
+	esac
+done
 
 # ── helpers ─────────────────────────────────────────────────────────────
 log()  { printf '==> %s\n' "$*"; }
@@ -171,12 +186,25 @@ done
 if [ "$DRY_RUN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
 	die "ejecuta como root (systemctl, install -o y cp -a a $OCAPPS_DATA_DIR lo requieren), o usa --dry-run"
 fi
-# Idempotencia: si las BDs ya están en destino y el servicio nuevo activo,
-# la migración probablemente ya se hizo; seguimos (cada paso es re-seguro).
+# I4: si el servicio nuevo está ACTIVO, sus BDs están en uso y copiar las
+# viejas encima las corrompería. Por defecto se ABORTA; --force-redeploy es
+# la vía explícita de re-despliegue: para el unit, copia y el paso 6 lo
+# rearranca (enable --now).
 if [ "$DRY_RUN" -eq 0 ] && systemctl is-active --quiet "$NEW_UNIT"; then
-	warn "$NEW_UNIT ya está activo: la migración parece ya aplicada."
-	warn "  Los pasos siguientes son idempotentes, pero plantéate abortar (Ctrl-C) si no es intencionado."
-	sleep 5
+	if [ "$FORCE_REDEPLOY" -eq 1 ]; then
+		warn "$NEW_UNIT está activo y se pasó --force-redeploy: se para, se copia encima y se rearranca en el paso 6."
+		run systemctl stop "$NEW_UNIT"
+		if systemctl is-active --quiet "$NEW_UNIT"; then
+			die "$NEW_UNIT sigue activo tras stop; resuélvelo antes de copiar BDs"
+		fi
+		log "parado para re-despliegue: $NEW_UNIT"
+	else
+		die "$NEW_UNIT está ACTIVO: copiar las BDs encima de las vivas las corrompería.
+  Si la migración ya se aplicó, no hace falta repetirla.
+  Para re-desplegar encima a propósito: reejecuta con --force-redeploy
+  (para el unit, copia y rearranca); o para el unit antes:
+  systemctl stop $NEW_UNIT"
+	fi
 fi
 
 # ── 0b. Parar servicios viejos (orden indiferente; esperar a inactive) ───
@@ -219,7 +247,7 @@ copy_db "$OCPHOTOS_DIR" memories.db "$OCAPPS_DATA_DIR/photos"
 log "Paso 3/7: copiando datos auxiliares (secretos, cachés, adjuntos)"
 copy_aux "$OCNEWS_DIR" "$OCAPPS_DATA_DIR/news" favicons imgcache imgsecret feedsecret
 copy_aux "$OCNOTES_DIR" "$OCAPPS_DATA_DIR/notes" attachments imgcache imgsecret
-copy_aux "$OCPHOTOS_DIR" "$OCAPPS_DATA_DIR/photos" thumbs hls mediasecret
+copy_aux "$OCPHOTOS_DIR" "$OCAPPS_DATA_DIR/photos" thumbs mediasecret
 # Propiedad recursiva del árbol copiado (cp -a preserva los owners viejos).
 run chown -R "$OCAPPS_USER:$OCAPPS_GROUP" "$OCAPPS_DATA_DIR"
 
