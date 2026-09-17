@@ -1,0 +1,63 @@
+# Snippet Caddy para el proxy delante de ocapps (SPEC §9.3).
+# Equivalente al deploy/proxy/nginx.conf: incluir dentro del bloque de sitio
+# que sirve la instancia OpenCloud (mismo origen que la web).
+#
+# ═══════════════════════════════════════════════════════════════════════
+# ⚠  EL CAMBIO DE PROXY DE ESTA MIGRACIÓN: /ocphotos-api/ SIN STRIP
+#
+# Antes el proxy strip-peaba /ocphotos-api/ (ocphotos veía `/api/...`).
+# En el binario unificado `/api/` pertenece a news y photos registra sus
+# rutas como `/ocphotos-api/api/...`: el proxy debe pasar el prefijo
+# INTACTO (en Caddy, `reverse_proxy` no reescribe nada por defecto —
+# basta con NO usar `handle_path` ni `uri strip_prefix`).
+# Cero cambios en frontends: la extensión ya llama `/ocphotos-api/api/...`.
+# ═══════════════════════════════════════════════════════════════════════
+
+# Upstream único del servicio unificado (un solo listener, SPEC §3.2).
+# Caddy preserva por defecto Host y todas las cabeceras de la petición
+# (incluida Authorization, donde viajan las credenciales Basic/Bearer),
+# y añade X-Forwarded-For/Proto automáticamente.
+
+# news: contrato News API v1.3 + API propia /api/me|users (la extensión la
+# llama a la raíz del host; patrones exactos, NO un catch-all /api/).
+handle /index.php/apps/news/* {
+	reverse_proxy 127.0.0.1:8096
+}
+handle /api/me {
+	reverse_proxy 127.0.0.1:8096
+}
+handle /api/me/* {
+	reverse_proxy 127.0.0.1:8096
+}
+handle /api/users {
+	reverse_proxy 127.0.0.1:8096
+}
+handle /api/users/* {
+	reverse_proxy 127.0.0.1:8096
+}
+
+# notes: contrato Notes API + OCS (capabilities y cloud/user los sirve el
+# módulo notes, SPEC §4.2).
+handle /index.php/apps/notes/* {
+	reverse_proxy 127.0.0.1:8096
+}
+handle /ocs/* {
+	reverse_proxy 127.0.0.1:8096
+}
+
+# photos: /ocphotos-api/ SIN STRIP (ver aviso destacado arriba). NO usar
+# `handle_path` aquí: quitaría el prefijo y rompería el contrato.
+# Streaming de vídeo firmado (/ocphotos-api/api/video/{id}): timeouts
+# largos por Range/streaming; flush_interval -1 desactiva el buffer.
+handle /ocphotos-api/api/video/* {
+	reverse_proxy 127.0.0.1:8096 {
+		flush_interval -1
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+}
+handle /ocphotos-api/* {
+	reverse_proxy 127.0.0.1:8096
+}
