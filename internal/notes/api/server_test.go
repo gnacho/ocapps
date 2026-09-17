@@ -255,3 +255,113 @@ func TestPruneBeforeReturnsStubs(t *testing.T) {
 		t.Fatalf("Last-Modified = %q, want %q", got, want)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// /ocs/v2.php/cloud/user extendido (SPEC §4.2, H5): único handler de la ruta
+// en el servicio unificado. Modo XML por defecto (Iotas) + modo JSON para
+// news-android (id=username, displayname, display-name; 401 sin auth).
+// ---------------------------------------------------------------------------
+
+// newTestServerConGraph builds a Server whose validator talks to a fake
+// Graph that only admits Basic nacho:app-token.
+func newTestServerConGraph(t *testing.T) *Server {
+	t.Helper()
+	graph := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok || u != "nacho" || p != "app-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"id": "uuid-nacho", "displayName": "Nacho",
+			"onPremisesSamAccountName": "nacho",
+		})
+	}))
+	t.Cleanup(graph.Close)
+
+	path := filepath.Join(t.TempDir(), "notes.db")
+	db, err := commonstore.Open(path)
+	if err != nil {
+		t.Fatalf("common store.Open: %v", err)
+	}
+	s, err := store.Open(db, path, "")
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	v := auth.NewGraphValidator(graph.URL, auth.MultiTenant(), nil)
+	return NewServer(Base, s, v, nil, nil)
+}
+
+func TestUserInfoJSONConAuth(t *testing.T) {
+	s := newTestServerConGraph(t)
+	for _, variant := range []string{"?format=json", "accept"} {
+		req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user", nil)
+		if variant == "?format=json" {
+			req = httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user?format=json", nil)
+		} else {
+			req.Header.Set("Accept", "application/json")
+			req.Header.Set("OCS-APIRequest", "true")
+		}
+		req.SetBasicAuth("nacho", "app-token")
+		w := httptest.NewRecorder()
+		s.handleUserInfo(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d (%s)", variant, w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		for _, want := range []string{`"ocs"`, `"status":"ok"`, `"statuscode":200`,
+			`"id":"nacho"`, `"displayname":"Nacho"`, `"display-name":"Nacho"`} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s: falta %s en %s", variant, want, body)
+			}
+		}
+	}
+}
+
+func TestUserInfoJSONSinAuth(t *testing.T) {
+	s := newTestServerConGraph(t)
+	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user?format=json", nil)
+	w := httptest.NewRecorder()
+	s.handleUserInfo(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("JSON sin auth: status = %d, want 401", w.Code)
+	}
+	if w.Header().Get("WWW-Authenticate") == "" {
+		t.Fatal("JSON sin auth: falta WWW-Authenticate")
+	}
+	if !strings.Contains(w.Body.String(), `"statuscode":401`) {
+		t.Fatalf("JSON sin auth: body = %s", w.Body.String())
+	}
+}
+
+func TestUserInfoXMLModoPorDefecto(t *testing.T) {
+	s := newTestServerConGraph(t)
+
+	// sin auth: comportamiento histórico (Iotas) → 200 "User"
+	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user", nil)
+	w := httptest.NewRecorder()
+	s.handleUserInfo(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("XML sin auth: status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "<id>User</id>") || !strings.Contains(body, "<displayname>User</displayname>") {
+		t.Fatalf("XML sin auth: body = %s", body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/xml") {
+		t.Fatalf("XML sin auth: Content-Type = %q", ct)
+	}
+
+	// con auth: id/displayname = display name del usuario Graph
+	req2 := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user", nil)
+	req2.SetBasicAuth("nacho", "app-token")
+	w2 := httptest.NewRecorder()
+	s.handleUserInfo(w2, req2)
+	if w2.Code != http.StatusOK || !strings.Contains(w2.Body.String(), "<id>Nacho</id>") {
+		t.Fatalf("XML con auth: %d %s", w2.Code, w2.Body.String())
+	}
+}

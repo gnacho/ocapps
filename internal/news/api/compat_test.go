@@ -108,9 +108,13 @@ func TestAndroidCompat(t *testing.T) {
 	}
 }
 
-// TestOCSUserStub: /ocs/v2.php/cloud/user con formato OCS v2 para el drawer
-// del cliente Android (id + displayname).
-func TestOCSUserStub(t *testing.T) {
+// TestOCSUserNoRegistradoEnNews (SPEC §4.2): el stub OCS se eliminó en H5 —
+// /ocs/v2.php/cloud/user lo registra SOLO el módulo notes. Las aserciones
+// del contrato JSON para news-android (envelope ocs, id=username,
+// displayname, display-name, 401 sin auth) viven ahora en los tests del
+// handler extendido de notes (internal/notes/api/server_test.go,
+// TestUserInfoJSON*) y en la integración de cmd/ocapps.
+func TestOCSUserNoRegistradoEnNews(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 	req, _ := http.NewRequest("GET", e.ts.URL+"/ocs/v2.php/cloud/user?format=json", nil)
 	req.SetBasicAuth(e.user, e.pass)
@@ -118,16 +122,8 @@ func TestOCSUserStub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := readBody(t, resp)
-	s := string(body)
-	if resp.StatusCode != 200 || !strings.Contains(s, `"ocs"`) ||
-		!strings.Contains(s, `"displayname":"Nacho"`) || !strings.Contains(s, `"id":"nacho"`) {
-		t.Fatalf("ocs stub: %d %s", resp.StatusCode, body)
-	}
-	// sin auth → 401
-	req2, _ := http.NewRequest("GET", e.ts.URL+"/ocs/v2.php/cloud/user", nil)
-	resp2, _ := e.client.Do(req2)
-	if resp2.StatusCode != 401 {
-		t.Fatalf("ocs stub sin auth: %d", resp2.StatusCode)
+	_ = readBody(t, resp)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("news no debe registrar /ocs/v2.php/cloud/user: %d (want 404)", resp.StatusCode)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -108,7 +107,6 @@ func TestRegisterContractPaths(t *testing.T) {
 		{"POST", "/api/users"},
 		{"PUT", "/api/users/1"},
 		{"DELETE", "/api/users/1"},
-		{"GET", "/ocs/v2.php/cloud/user"},
 		{"OPTIONS", api.Base + "/folders"}, // preflight sin auth
 		{"OPTIONS", "/api/me"},             // preflight sin auth
 	}
@@ -160,21 +158,19 @@ func TestRegisterContractPaths(t *testing.T) {
 	check("OPTIONS", "/api/me", "preflight → 204", http.StatusNoContent, false)
 	check("GET", api.Base+"/img", "público: firma mala → 403", http.StatusForbidden, false)
 
-	// OCS stub: con auth → 200 y payload OCS JSON (news-android pide JSON).
+	// SPEC §4.2: news ya NO registra /ocs/v2.php/cloud/user (lo sirve notes
+	// con su handler extendido desde H5).
 	req2, err := http.NewRequest("GET", srv.URL+"/ocs/v2.php/cloud/user?format=json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req2.SetBasicAuth("admin", "pass1234")
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = resp2.Body.Close() }()
-	body, _ := io.ReadAll(resp2.Body)
-	if resp2.StatusCode != http.StatusOK || !strings.Contains(string(body), `"ocs"`) ||
-		!strings.Contains(string(body), `"displayname"`) {
-		t.Fatalf("ocs stub: %d %s", resp2.StatusCode, body)
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("news no debe registrar /ocs/v2.php/cloud/user: %d (want 404)", resp2.StatusCode)
 	}
 }
 

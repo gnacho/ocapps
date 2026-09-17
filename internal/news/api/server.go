@@ -65,8 +65,9 @@ func (s *Server) Handler() http.Handler {
 // RegisterOn registra las rutas del módulo news en un mux compartido
 // (SPEC §4.1): la base del contrato News API v1.3 con auth (salvo las
 // excepciones públicas /img, /favicon/, /share/, /websub/), la API propia
-// /api/me|users con PATRONES EXACTOS (no catch-all /api/), el stub OCS y
-// los preflight OPTIONS. NO registra /healthz (es de common).
+// /api/me|users con PATRONES EXACTOS (no catch-all /api/) y los preflight
+// OPTIONS. NO registra /healthz (es de common) ni /ocs/v2.php/cloud/user
+// (colisión §4.2: lo sirve notes).
 func (s *Server) RegisterOn(mux *http.ServeMux) {
 	api := http.NewServeMux()
 	s.routes(api)
@@ -100,10 +101,9 @@ func (s *Server) RegisterOn(mux *http.ServeMux) {
 			mux.Handle("OPTIONS "+rt.path, pre)
 		}
 	}
-	// Stub OCS user para clientes Nextcloud (news-android lee el display name
-	// de /ocs/v2.php/cloud/user con ?format=json; OpenCloud no lo sirve y el
-	// handler de notes solo emite XML — colisión §4.2, ver docs del módulo).
-	mux.Handle("/ocs/v2.php/cloud/user", auth.Middleware(s.validator, httpx.CORS(http.HandlerFunc(s.ocsUser))))
+	// /ocs/v2.php/cloud/user NO se registra aquí (colisión SPEC §4.2): desde
+	// H5 lo sirve solo notes con su handler extendido (XML por defecto, JSON
+	// OCS para news-android con ?format=json).
 	// Preflight de CORS antes de auth (no lleva credenciales).
 	mux.Handle("OPTIONS "+Base+"/", http.StripPrefix(Base, httpx.CORS(httpx.Preflight())))
 }
