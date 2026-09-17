@@ -170,17 +170,26 @@ func (m *Module) Register(mux *http.ServeMux) {
 	}))
 }
 
-// Healthy: nil si el backend está operativo; el error de init si está failed.
+// Healthy: el error de init si el módulo está failed (o "inicializando" si
+// aún no terminó el primer init); con el backend operativo, ping a la
+// SQLite del módulo como news/notes (M5).
 func (m *Module) Healthy() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.apiSrv != nil {
-		return nil
+	ready := m.apiSrv != nil
+	initErr := m.initErr
+	m.mu.Unlock()
+	if !ready {
+		if initErr != nil {
+			return fmt.Errorf("failed: %w", initErr)
+		}
+		return errors.New("inicializando")
 	}
-	if m.initErr != nil {
-		return fmt.Errorf("failed: %w", m.initErr)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := m.st.Ping(ctx); err != nil {
+		return fmt.Errorf("sqlite: %w", err)
 	}
-	return errors.New("inicializando")
+	return nil
 }
 
 func (m *Module) handler() http.Handler {
