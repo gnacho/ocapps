@@ -92,16 +92,27 @@ func (r *registry) Touch(_ context.Context, u *auth.User, cred auth.Credential) 
 	}
 }
 
-// get devuelve la sesión del owner (o nil).
+// get devuelve una COPIA de la sesión del owner (o nil), tomada bajo lock:
+// los lectores (scheduler, API) nunca tocan los campos mutables del struct
+// almacenado fuera del mutex (race Touch-vs-DavFor/scanOne, H8 review).
 func (r *registry) get(owner string) *session {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.sessions[owner]
+	if sess, ok := r.sessions[owner]; ok {
+		cp := *sess
+		return &cp
+	}
+	return nil
 }
 
-// DavFor devuelve el cliente DAV de la sesión del owner (nil si no hay).
+// DavFor devuelve el cliente DAV de la sesión del owner: nil si no hay
+// sesión o si está marcada como caducada (un scan detectó 401/403; la API
+// responde 503 hasta que el próximo request del usuario la refresque vía
+// Touch con su token nuevo).
 func (r *registry) DavFor(_ context.Context, owner string) *webdav.Client {
-	if sess := r.get(owner); sess != nil {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sess, ok := r.sessions[owner]; ok && !sess.expired {
 		return sess.dav
 	}
 	return nil
@@ -109,12 +120,11 @@ func (r *registry) DavFor(_ context.Context, owner string) *webdav.Client {
 
 // resolveSpace resuelve (y cachea) el webDavUrl del espacio personal del
 // owner con SU credencial (driveType == "personal", fallback: el primero).
+// sess es la copia snapshot de get(): la caché se escribe en la sesión
+// ALMACENADA bajo lock.
 func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string) (string, error) {
-	r.mu.Lock()
-	cached := sess.webdavURL
-	r.mu.Unlock()
-	if cached != "" {
-		return cached, nil
+	if sess.webdavURL != "" {
+		return sess.webdavURL, nil
 	}
 	drives, err := sess.dav.ListDrives(ctx)
 	if err != nil {
@@ -134,7 +144,9 @@ func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string
 		return "", errors.New("ningún espacio con webDavUrl disponible")
 	}
 	r.mu.Lock()
-	sess.webdavURL = webdavURL
+	if cur, ok := r.sessions[owner]; ok {
+		cur.webdavURL = webdavURL
+	}
 	r.mu.Unlock()
 	r.log.Info("espacio OpenCloud localizado", "owner", owner, "webdav", webdavURL)
 	return webdavURL, nil
@@ -208,7 +220,7 @@ func (r *registry) seed(ctx context.Context, user, appToken string) (string, err
 	r.mu.Lock()
 	r.sessions[owner] = sess
 	r.mu.Unlock()
-	if _, err := r.resolveSpace(sctx, sess, owner); err != nil {
+	if _, err := r.resolveSpace(sctx, r.get(owner), owner); err != nil {
 		return owner, fmt.Errorf("espacio de %q: %w", user, err)
 	}
 	return owner, nil
