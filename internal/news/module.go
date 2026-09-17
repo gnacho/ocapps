@@ -85,23 +85,30 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 	if err != nil {
 		return nil, err
 	}
+	// I2: todo fallo tras abrir la BD debe cerrarla antes de devolver
+	// (patrón de internal/notes/module.go); si no, el *sql.DB queda
+	// abierto y fugado cuando el wiring registra el módulo failed.
+	fail := func(err error) (*Module, error) {
+		_ = st.Close()
+		return nil, err
+	}
 	m.store = st
 
 	favicons, err := favicon.NewCache(filepath.Join(dataDir, "favicons"), log)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	imgs, err := imgproxy.New(dataDir, log)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	feedKey, err := cred.LoadOrCreateSecret(filepath.Join(dataDir, "feedsecret"))
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	creds, err := cred.NewCipher(feedKey)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 
 	// validador: opencloud (Graph común COMPARTIDO + shadow users) o local
@@ -110,7 +117,7 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 	switch cfg.AuthMode {
 	case "opencloud":
 		if gv == nil {
-			return nil, errors.New("modo opencloud requiere el validador Graph compartido (gv nil)")
+			return fail(errors.New("modo opencloud requiere el validador Graph compartido (gv nil)"))
 		}
 		validator = auth.NewShadowValidator(gv, st, log)
 		log.Info("auth: opencloud", "server", cfg.OpenCloudURL)
@@ -119,11 +126,11 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 		if cfg.News.AuthUser != "" && cfg.News.AuthPass != "" {
 			hash, err := auth.HashPassword(cfg.News.AuthPass)
 			if err != nil {
-				return nil, err
+				return fail(err)
 			}
 			created, err := st.BootstrapUser(cfg.News.AuthUser, hash)
 			if err != nil {
-				return nil, err
+				return fail(err)
 			}
 			if created {
 				log.Info("usuario admin bootstrap", "username", cfg.News.AuthUser)
@@ -131,10 +138,10 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 		} else {
 			var count int
 			if err := st.BootstrapCount(&count); err != nil {
-				return nil, err
+				return fail(err)
 			}
 			if count == 0 {
-				return nil, errors.New("sin usuarios en BD: define OCAPPS_NEWS_AUTH_USER y OCAPPS_NEWS_AUTH_PASS para el bootstrap del primer admin")
+				return fail(errors.New("sin usuarios en BD: define OCAPPS_NEWS_AUTH_USER y OCAPPS_NEWS_AUTH_PASS para el bootstrap del primer admin"))
 			}
 		}
 	}
