@@ -5,6 +5,7 @@ package exif
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -22,38 +23,46 @@ import (
 const rangeBytes = 256 * 1024
 
 type Worker struct {
-	dav   *webdav.Client
 	store *store.Store
 	log   *slog.Logger
 }
 
-func NewWorker(c *webdav.Client, st *store.Store, log *slog.Logger) *Worker {
-	return &Worker{dav: c, store: st, log: log}
+// NewWorker: el worker es stateless respecto al usuario (H8); el cliente DAV
+// del owner llega por parámetro a Run.
+func NewWorker(st *store.Store, log *slog.Logger) *Worker {
+	return &Worker{store: st, log: log}
 }
 
-// Run procesa la cola de EXIF pendiente hasta que el contexto se cancele
-// o no queden pendientes. Pensado para lanzarse tras cada scan.
-func (w *Worker) Run(ctx context.Context) {
+// Run procesa la cola de EXIF pendiente DEL OWNER hasta que el contexto se
+// cancele o no queden pendientes. Pensado para lanzarse tras cada scan con el
+// cliente DAV de la sesión del owner. Devuelve nil al terminar (o por ctx);
+// si la credencial está caducada (webdav.ErrUnauthorized) ABORTA el lote y lo
+// propaga: el scheduler pospone el trabajo a la próxima actividad del
+// usuario en vez de quemar toda la cola de EXIF contra un 401.
+func (w *Worker) Run(ctx context.Context, owner string, dav *webdav.Client) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		default:
 		}
-		batch, err := w.store.PendingExif(ctx, 50)
+		batch, err := w.store.PendingExif(ctx, owner, 50)
 		if err != nil {
-			w.log.Error("pending exif", "err", err)
-			return
+			w.log.Error("pending exif", "owner", owner, "err", err)
+			return nil
 		}
 		if len(batch) == 0 {
-			return
+			return nil
 		}
 		for _, a := range batch {
 			if ctx.Err() != nil {
-				return
+				return nil
 			}
-			if err := w.processOne(ctx, a.ID, a.Path); err != nil {
-				w.log.Warn("exif falló", "path", a.Path, "err", err)
+			if err := w.processOne(ctx, dav, a.ID, a.Path); err != nil {
+				if errors.Is(err, webdav.ErrUnauthorized) {
+					return err
+				}
+				w.log.Warn("exif falló", "owner", owner, "path", a.Path, "err", err)
 				// marca como procesado para no reintentar en bucle
 				_ = w.store.SaveExif(ctx, a.ID, store.ExifResult{})
 			}
@@ -61,8 +70,8 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-func (w *Worker) processOne(ctx context.Context, id int64, href string) error {
-	data, err := w.dav.GetRange(ctx, href, 0, rangeBytes)
+func (w *Worker) processOne(ctx context.Context, dav *webdav.Client, id int64, href string) error {
+	data, err := dav.GetRange(ctx, href, 0, rangeBytes)
 	if err != nil {
 		return err
 	}
