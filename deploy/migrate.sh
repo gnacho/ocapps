@@ -247,7 +247,7 @@ copy_db "$OCPHOTOS_DIR" memories.db "$OCAPPS_DATA_DIR/photos"
 log "Paso 3/7: copiando datos auxiliares (secretos, cachés, adjuntos)"
 copy_aux "$OCNEWS_DIR" "$OCAPPS_DATA_DIR/news" favicons imgcache imgsecret feedsecret
 copy_aux "$OCNOTES_DIR" "$OCAPPS_DATA_DIR/notes" attachments imgcache imgsecret
-copy_aux "$OCPHOTOS_DIR" "$OCAPPS_DATA_DIR/photos" thumbs hls mediasecret
+copy_aux "$OCPHOTOS_DIR" "$OCAPPS_DATA_DIR/photos" thumbs mediasecret
 # Propiedad recursiva del árbol copiado (cp -a preserva los owners viejos).
 run chown -R "$OCAPPS_USER:$OCAPPS_GROUP" "$OCAPPS_DATA_DIR"
 

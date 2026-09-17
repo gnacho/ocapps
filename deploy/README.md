@@ -21,9 +21,9 @@ Referencia: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) y §9.
   El binario es estático (`CGO_ENABLED=0`, modernc.org/sqlite): no necesita
   libc ni ninguna otra librería de sistema.
 - **ffmpeg es la ÚNICA dependencia de sistema en runtime** (SPEC Q4):
-  pósters de vídeo y HLS del módulo photos. Sin ffmpeg el servicio arranca
-  igualmente y photos lo loguea como degradado (`ffmpeg no encontrado:
-  pósters de vídeo y HLS degradados`), pero instálalo:
+  pósters de vídeo del módulo photos (HLS se eliminó en Q7). Sin ffmpeg el
+  servicio arranca igualmente y photos lo loguea como degradado (`ffmpeg no
+  encontrado: pósters de vídeo degradados`), pero instálalo:
   `apt install ffmpeg` / `apk add ffmpeg`.
 - **Go solo para compilar** (≥ 1.26, ver `go.mod`). No hace falta en el
   host de producción si usas el artefacto de release o la imagen Docker.
@@ -87,7 +87,7 @@ systemctl daemon-reload
 /var/lib/ocapps/
 ├── news/     ocnews.db  (+ favicons/, imgcache/, imgsecret, feedsecret)
 ├── notes/    notes.db   (+ attachments/, imgcache/, imgsecret)
-└── photos/   memories.db(+ thumbs/, hls/, mediasecret)
+└── photos/   memories.db(+ thumbs/, mediasecret)
 ```
 
 ## Cambio de proxy
@@ -150,7 +150,7 @@ Pasos que ejecuta:
 2. **Copia las BDs** al nuevo layout con `cp -a` (incluye `-wal`/`-shm` si
    existieran). Nunca `mv`.
 3. **Copia los datos auxiliares** por módulo (favicons, imgcache,
-   imgsecret, feedsecret, attachments, thumbs, hls, mediasecret) y fija la
+   imgsecret, feedsecret, attachments, thumbs, mediasecret) y fija la
    propiedad `ocapps:ocapps`.
 4. **Verifica el destino**: `integrity_check` en las tres BDs copiadas.
 5. **Auditoría de versiones**: registra `PRAGMA user_version` — esperado
