@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +45,53 @@ func TestRegistryConcurrenciaTouchDavFor(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestTouchNoDegradaSesionSembrada: un usuario de OCAPPS_PHOTOS_USERS que
+// abre la web (Touch con Bearer OIDC efímero) NO pierde su app-token: el
+// background scan del ticker sigue usando Basic tras caducar el Bearer
+// (H8 review FIX 2).
+func TestTouchNoDegradaSesionSembrada(t *testing.T) {
+	// OpenCloud cuyo PROPFIND SOLO acepta el app-token Basic (el Bearer
+	// caducado recibe 401): si el scan usara el Bearer, fallaría.
+	srv := fakeOpenCloudReq(t, func(r *http.Request) (int, string) {
+		u, p, ok := r.BasicAuth()
+		if !ok || u != "admin" || p != "app-token" {
+			return http.StatusUnauthorized, ""
+		}
+		return propfindUnaFoto(r.URL.Path)
+	})
+	m, err := New(testConfig(config.Common{OpenCloudURL: srv.URL, PhotosDataDir: t.TempDir()},
+		config.PhotosConfig{ScanRoot: "Fotos", ScanEvery: time.Hour}), slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	owner, err := m.reg.seed(ctx, "admin", "app-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	davSembrado := m.reg.DavFor(ctx, owner)
+	if davSembrado == nil {
+		t.Fatal("sin dav tras sembrar")
+	}
+	// el usuario abre la web: Touch con su Bearer OIDC
+	m.reg.Touch(ctx, &auth.User{ID: owner}, auth.Credential{Bearer: "oidc-efimero"})
+
+	// la sesión conserva el cliente Basic con app-token
+	sess := m.reg.get(owner)
+	if sess == nil || !sess.isBasic || !sess.seeded {
+		t.Fatalf("sesión tras Touch Bearer: %+v, debe seguir sembrada y Basic", sess)
+	}
+	if got := m.reg.DavFor(ctx, owner); got != davSembrado {
+		t.Fatal("Touch reemplazó el dav sembrado por el Bearer efímero")
+	}
+	// y el scan (ticker) sigue indexando con el app-token
+	m.sched.scanOne(ctx, owner)
+	stats, err := m.st.Stats(ctx, owner)
+	if err != nil || stats["assets"].(int64) != 1 {
+		t.Fatalf("scan con app-token tras Touch Bearer: %v %v", stats, err)
+	}
 }
 
 // TestDavForOcultaSesionesCaducadas: DavFor devuelve nil para una sesión

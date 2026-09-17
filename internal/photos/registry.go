@@ -67,6 +67,13 @@ func newRegistry(baseURL, legacyUser, legacyToken string, log *slog.Logger) *reg
 // actualiza su sesión (el cliente DAV se reconstruye con la credencial
 // FRESCA — un Bearer caducado se reemplaza por el nuevo token) y avisa al
 // scheduler para que encole un scan si toca.
+//
+// EXCEPCIÓN (H8 review): una sesión SEMBRADA (OCAPPS_PHOTOS_USERS) conserva
+// siempre su cliente Basic con app-token: si Touch lo reemplazara por el
+// Bearer OIDC efímero del request, el background scan del ticker moriría al
+// caducar ese token. Los requests del usuario usan entonces el app-token de
+// su sesión (misma identidad) — es la variante más simple y no degrada el
+// background scan.
 func (r *registry) Touch(_ context.Context, u *auth.User, cred auth.Credential) {
 	if u == nil || u.ID == "" {
 		return
@@ -77,12 +84,14 @@ func (r *registry) Touch(_ context.Context, u *auth.User, cred auth.Credential) 
 		sess = &session{}
 		r.sessions[u.ID] = sess
 	}
-	if cred.Bearer != "" {
-		sess.dav = webdav.NewBearer(r.baseURL, cred.Bearer)
-		sess.isBasic = false
-	} else {
-		sess.dav = webdav.New(r.baseURL, cred.Username, cred.Password)
-		sess.isBasic = true
+	if !(sess.seeded && sess.isBasic) {
+		if cred.Bearer != "" {
+			sess.dav = webdav.NewBearer(r.baseURL, cred.Bearer)
+			sess.isBasic = false
+		} else {
+			sess.dav = webdav.New(r.baseURL, cred.Username, cred.Password)
+			sess.isBasic = true
+		}
 	}
 	sess.expired = false
 	sess.lastSeen = time.Now()

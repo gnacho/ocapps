@@ -51,6 +51,33 @@ func fakeOpenCloud(t *testing.T, propfind func(path string) (int, string)) *http
 	return srv
 }
 
+// fakeOpenCloudReq es fakeOpenCloud con acceso al *http.Request (p. ej.
+// para exigir Basic en los PROPFIND).
+func fakeOpenCloudReq(t *testing.T, propfind func(r *http.Request) (int, string)) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/graph/v1.0/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "user-1", "onPremisesSamAccountName": "admin"})
+		case r.URL.Path == "/graph/v1.0/me/drives":
+			_ = json.NewEncoder(w).Encode(map[string]any{"value": []map[string]any{{
+				"id": "d1", "name": "Personal", "driveType": "personal",
+				"root": map[string]any{"webDavUrl": srv.URL + "/dav/spaces/1"},
+			}}})
+		case r.Method == "PROPFIND":
+			code, body := propfind(r)
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(code)
+			fmt.Fprint(w, body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 const unaFotoXML = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
 <d:response><d:href>/dav/spaces/1/Fotos/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 <d:response><d:href>/dav/spaces/1/Fotos/IMG.jpg</d:href><d:propstat><d:prop><d:resourcetype/><d:getetag>"e1"</d:getetag><d:getlastmodified>Mon, 02 Jan 2006 15:04:05 GMT</d:getlastmodified><d:getcontentlength>100</d:getcontentlength><d:getcontenttype>image/jpeg</d:getcontenttype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
