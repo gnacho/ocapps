@@ -120,6 +120,34 @@ En ambos snippets se preservan `Authorization` y `Host`, y
 (Range requests). Tras recargar el proxy, valida con
 `nginx -t` / `caddy validate` antes de `reload`.
 
+## Cambios de comportamiento respecto a los backends separados
+
+Además del enrutado (§Cambio de proxy), el servicio unificado cambia tres
+detalles observables por clientes/proxy. Revísalos en staging antes del
+corte:
+
+1. **El 401 de photos es ahora JSON con `WWW-Authenticate`.** ocphotos
+   respondía `401 Unauthorized` en texto plano; ocapps responde
+   `401 {"error":{"code":"unauthorized","message":"..."}}`
+   (`Content-Type: application/json`) con la cabecera
+   `WWW-Authenticate: Bearer realm="ocphotos"`. Los clientes que parseaban
+   el cuerpo de texto plano deben pasar al JSON; los que solo miran el
+   status no se ven afectados.
+2. **Photos ya no tiene modo LAN abierto sin auth.** Todo el namespace
+   `/ocphotos-api/` exige credenciales (Bearer de sesión OpenCloud
+   validado contra Graph con política single-tenant, o el token estático
+   `OCAPPS_PHOTOS_TOKEN`); las únicas exenciones son el preflight CORS y
+   el stream de vídeo firmado (`/ocphotos-api/api/video/`). Un despliegue
+   que confiara en el acceso abierto desde la LAN deja de funcionar: hay
+   que dar credenciales a esos clientes.
+3. **`/ocs/v2.php/cloud/user` solo sirve JSON si se pide explícitamente**:
+   `?format=json` o cabecera `Accept: application/json` (la heurística OCS
+   estándar de ocnotes, que es quien sirve ahora el endpoint). El stub que
+   llevaba news servía JSON siempre, sin negociación. Si tu proxy o algun
+   cliente llamaba al stub de news sin esas cabeceras y esperaba JSON,
+   añade `?format=json` o el `Accept` — **verifícalo en la configuración
+   de proxy de staging** antes del corte.
+
 ## Migración desde los 3 servicios antiguos
 
 `deploy/migrate.sh` implementa el procedimiento del SPEC §5.4 paso a paso
