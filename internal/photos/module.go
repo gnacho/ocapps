@@ -205,10 +205,14 @@ func (m *Module) backfill(ctx context.Context) {
 		m.log.Error("backfill: no se pudo resolver el oc_id del usuario legacy; se reintentará en el próximo arranque", "err", err)
 		return
 	}
-	nAssets, nAlbums, err := m.st.BackfillOwner(ctx, owner)
+	nAssets, nAlbums, rmAssets, rmAlbums, err := m.st.BackfillOwner(ctx, owner)
 	if err != nil {
 		m.log.Error("backfill", "err", err)
 		return
+	}
+	if rmAssets > 0 || rmAlbums > 0 {
+		m.log.Warn("backfill multi-owner: filas huérfanas conflictivas descartadas (ya existían re-escaneadas para el owner)",
+			"owner", owner, "assets", rmAssets, "albums", rmAlbums)
 	}
 	m.log.Info("backfill multi-owner: filas de la era single-tenant adoptadas",
 		"owner", owner, "assets", nAssets, "albums", nAlbums)

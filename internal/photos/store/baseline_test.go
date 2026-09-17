@@ -209,9 +209,9 @@ func TestMigracion002ConservaIDsYFKs(t *testing.T) {
 	if err != nil || oa != 2 || ob != 1 {
 		t.Fatalf("orphans: %d assets %d albums %v", oa, ob, err)
 	}
-	nA, nB, err := st.BackfillOwner(ctx, "oc-id-legacy")
-	if err != nil || nA != 2 || nB != 1 {
-		t.Fatalf("backfill: %d %d %v", nA, nB, err)
+	nA, nB, rmA, rmB, err := st.BackfillOwner(ctx, "oc-id-legacy")
+	if err != nil || nA != 2 || nB != 1 || rmA != 0 || rmB != 0 {
+		t.Fatalf("backfill: adoptados %d/%d eliminados %d/%d %v", nA, nB, rmA, rmB, err)
 	}
 	if got, err := st.AssetByID(ctx, "oc-id-legacy", 7); err != nil || got.Path != "/dav/x/a.jpg" {
 		t.Fatalf("asset adoptado: %+v %v", got, err)
@@ -220,7 +220,7 @@ func TestMigracion002ConservaIDsYFKs(t *testing.T) {
 		t.Fatalf("orphans tras backfill: %d %d", oa, ob)
 	}
 	// backfill con owner vacío es error
-	if _, _, err := st.BackfillOwner(ctx, ""); err == nil {
+	if _, _, _, _, err := st.BackfillOwner(ctx, ""); err == nil {
 		t.Fatal("backfill con owner vacío debería fallar")
 	}
 }

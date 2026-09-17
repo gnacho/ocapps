@@ -193,26 +193,47 @@ func (s *Store) OrphanCounts(ctx context.Context) (assets, albums int64, err err
 	return assets, albums, nil
 }
 
-// BackfillOwner asigna owner a todas las filas huérfanas (owner=”) de assets
-// y albums. Devuelve cuántas filas adoptó de cada tabla. No puede ser una
+// BackfillOwner asigna owner a las filas huérfanas (owner=”) de assets y
+// albums. Devuelve (adoptados, eliminados) por tabla. No puede ser una
 // migración SQL: el oc_id hay que resolverlo contra Graph con el app-token
 // (SPEC §5.3); lo invoca el módulo al arrancar si OCAPPS_PHOTOS_USER +
 // OCAPPS_PHOTOS_APP_TOKEN están configurados.
-func (s *Store) BackfillOwner(ctx context.Context, owner string) (assets, albums int64, err error) {
+//
+// Tolerante a colisiones con UNIQUE(owner, path) (H8 review): si el backfill
+// se saltó en un arranque (OpenCloud caído) y el usuario re-escaneó, puede
+// haber a la vez (”,path) y (owner,path). Un UPDATE a ciegas reventaría
+// entero con error 2067 y las filas legacy quedarían invisibles para
+// siempre. Por eso primero se BORRAN las huérfanas conflictivas (las filas
+// nuevas del owner ya las representan; sus album_assets/asset_tags mueren
+// por el ON DELETE CASCADE) y solo se adoptan las no conflictivas. Álbumes
+// (sin UNIQUE): mismo criterio por (owner, name). Idempotente.
+func (s *Store) BackfillOwner(ctx context.Context, owner string) (adoptedAssets, adoptedAlbums, removedAssets, removedAlbums int64, err error) {
 	if owner == "" {
-		return 0, 0, fmt.Errorf("backfill con owner vacío")
+		return 0, 0, 0, 0, fmt.Errorf("backfill con owner vacío")
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE assets SET owner=? WHERE owner=''`, owner)
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM assets WHERE owner='' AND path IN (SELECT path FROM assets WHERE owner=?)`, owner)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, 0, err
 	}
-	assets, _ = res.RowsAffected()
+	removedAssets, _ = res.RowsAffected()
+	res, err = s.db.ExecContext(ctx, `UPDATE assets SET owner=? WHERE owner=''`, owner)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	adoptedAssets, _ = res.RowsAffected()
+	res, err = s.db.ExecContext(ctx,
+		`DELETE FROM albums WHERE owner='' AND name IN (SELECT name FROM albums WHERE owner=?)`, owner)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	removedAlbums, _ = res.RowsAffected()
 	res, err = s.db.ExecContext(ctx, `UPDATE albums SET owner=? WHERE owner=''`, owner)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, 0, err
 	}
-	albums, _ = res.RowsAffected()
-	return assets, albums, nil
+	adoptedAlbums, _ = res.RowsAffected()
+	return adoptedAssets, adoptedAlbums, removedAssets, removedAlbums, nil
 }
 
 // AssetOwner devuelve el owner de un asset por id. Uso EXCLUSIVO del

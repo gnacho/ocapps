@@ -230,3 +230,87 @@ func TestPendingExifPorOwner(t *testing.T) {
 		t.Fatalf("pending tras exif: alice=%d bob=%d", len(pA2), len(pB))
 	}
 }
+
+// TestBackfillColisiones: si el backfill se saltó un arranque (OpenCloud
+// caído) y el usuario re-escaneó, coexisten (”,path) y (owner,path). El
+// backfill NO debe reventar por UNIQUE(owner,path): adopta las huérfanas no
+// conflictivas, borra las conflictivas (las nuevas del owner ya las
+// representan, con cascada de album_assets/asset_tags) y es idempotente
+// (H8 review FIX 3).
+func TestBackfillColisiones(t *testing.T) {
+	st, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	now := time.Now()
+	add := func(owner, path, etag string) int64 {
+		t.Helper()
+		id, _, err := st.UpsertByETag(ctx, owner, path, etag, path[len(path)-5:], "image", now, 100)
+		if err != nil {
+			t.Fatalf("upsert %s %s: %v", owner, path, err)
+		}
+		return id
+	}
+	// era single-tenant: 3 assets huérfanos y 2 álbumes huérfanos
+	orphanA := add("", "/dav/x/a.jpg", "e1")
+	orphanB := add("", "/dav/x/b.jpg", "e2")
+	add("", "/dav/x/c.jpg", "e3")
+	alOrfanV, _ := st.CreateAlbum(ctx, "", "Vacaciones")
+	if _, err := st.CreateAlbum(ctx, "", "Retro"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddToAlbum(ctx, "", alOrfanV, []int64{orphanA, orphanB}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddTag(ctx, "", orphanB, "playa"); err != nil {
+		t.Fatal(err)
+	}
+	// el usuario re-escaneó antes del backfill: /b.jpg y /c.jpg ya son suyos
+	add("oc1", "/dav/x/b.jpg", "e2-new")
+	add("oc1", "/dav/x/c.jpg", "e3-new")
+	alV, _ := st.CreateAlbum(ctx, "oc1", "Vacaciones")
+
+	// escenario previo al fix: el UPDATE a ciegas reventaba con error 2067
+	nA, nAl, rmA, rmAl, err := st.BackfillOwner(ctx, "oc1")
+	if err != nil {
+		t.Fatalf("backfill con colisiones no debe fallar: %v", err)
+	}
+	if nA != 1 || nAl != 1 || rmA != 2 || rmAl != 1 {
+		t.Fatalf("adoptados %d/%d eliminados %d/%d, quiero 1/1 y 2/1", nA, nAl, rmA, rmAl)
+	}
+	// sin huérfanos y con todo lo esperado para oc1
+	if oa, ob, _ := st.OrphanCounts(ctx); oa != 0 || ob != 0 {
+		t.Fatalf("orphans tras backfill: %d %d", oa, ob)
+	}
+	stats, _ := st.Stats(ctx, "oc1")
+	if stats["assets"].(int64) != 3 {
+		t.Fatalf("oc1 debe tener 3 assets: %v", stats)
+	}
+	// el asset huérfano NO conflictivo se adoptó conservando su id
+	if a, err := st.AssetByID(ctx, "oc1", orphanA); err != nil || a.Path != "/dav/x/a.jpg" {
+		t.Fatalf("asset adoptado: %+v %v", a, err)
+	}
+	// los conflictivos huérfanos se borraron (id ya no existe ni para "")
+	if _, err := st.AssetByID(ctx, "", orphanB); err == nil {
+		t.Fatal("el huérfano conflictivo debe desaparecer")
+	}
+	// cascada: el tag y los enlaces del álbum huérfano borrado también
+	if albums, _ := st.ListAlbums(ctx, ""); len(albums) != 0 {
+		t.Fatalf("álbumes huérfanos: %+v", albums)
+	}
+	if tags, _ := st.ListTags(ctx, "oc1"); len(tags) != 0 {
+		t.Fatalf("el tag del conflictivo debió morir en cascada: %v", tags)
+	}
+	// el álbum del owner conserva su identidad (sin duplicado por nombre)
+	albums, _ := st.ListAlbums(ctx, "oc1")
+	if len(albums) != 2 || (albums[0].ID != alV && albums[1].ID != alV) {
+		t.Fatalf("álbumes de oc1: %+v", albums)
+	}
+	// idempotente: segundo backfill (rearranque) no toca nada
+	nA, nAl, rmA, rmAl, err = st.BackfillOwner(ctx, "oc1")
+	if err != nil || nA != 0 || nAl != 0 || rmA != 0 || rmAl != 0 {
+		t.Fatalf("segundo backfill debe ser no-op: %d/%d -%d/-%d %v", nA, nAl, rmA, rmAl, err)
+	}
+}
