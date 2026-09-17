@@ -13,53 +13,54 @@ func TestAlbumsAndPlaces(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
+	owner := "user-a"
 
 	now := time.Now()
-	id1, _, err := st.UpsertByETag(ctx, "/dav/spaces/x/A.jpg", "e1", "A.jpg", "image", now, 100)
+	id1, _, err := st.UpsertByETag(ctx, owner, "/dav/spaces/x/A.jpg", "e1", "A.jpg", "image", now, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, _, err := st.UpsertByETag(ctx, "/dav/spaces/x/B.jpg", "e2", "B.jpg", "image", now.Add(-time.Hour), 100)
+	id2, _, err := st.UpsertByETag(ctx, owner, "/dav/spaces/x/B.jpg", "e2", "B.jpg", "image", now.Add(-time.Hour), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// --- álbumes ---
-	al, err := st.CreateAlbum(ctx, "Vacaciones")
+	al, err := st.CreateAlbum(ctx, owner, "Vacaciones")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AddToAlbum(ctx, al, []int64{id1, id2}); err != nil {
+	if err := st.AddToAlbum(ctx, owner, al, []int64{id1, id2}); err != nil {
 		t.Fatal(err)
 	}
-	albums, err := st.ListAlbums(ctx)
+	albums, err := st.ListAlbums(ctx, owner)
 	if err != nil || len(albums) != 1 || albums[0].Count != 2 || albums[0].CoverID != id1 {
 		t.Fatalf("albums: %+v %v", albums, err)
 	}
-	if a, _ := st.AlbumAssets(ctx, al); len(a) != 2 {
+	if a, _ := st.AlbumAssets(ctx, owner, al); len(a) != 2 {
 		t.Fatalf("album assets: %d", len(a))
 	}
 	// añadir duplicado es idempotente
-	_ = st.AddToAlbum(ctx, al, []int64{id1})
-	if a, _ := st.AlbumAssets(ctx, al); len(a) != 2 {
+	_ = st.AddToAlbum(ctx, owner, al, []int64{id1})
+	if a, _ := st.AlbumAssets(ctx, owner, al); len(a) != 2 {
 		t.Fatalf("add duplicado: %d", len(a))
 	}
-	if err := st.RemoveFromAlbum(ctx, al, id1); err != nil {
+	if err := st.RemoveFromAlbum(ctx, owner, al, id1); err != nil {
 		t.Fatal(err)
 	}
-	if a, _ := st.AlbumAssets(ctx, al); len(a) != 1 {
+	if a, _ := st.AlbumAssets(ctx, owner, al); len(a) != 1 {
 		t.Fatalf("remove: %d", len(a))
 	}
-	if err := st.RenameAlbum(ctx, al, "Playa"); err != nil {
+	if err := st.RenameAlbum(ctx, owner, al, "Playa"); err != nil {
 		t.Fatal(err)
 	}
-	if albums, _ := st.ListAlbums(ctx); albums[0].Name != "Playa" {
+	if albums, _ := st.ListAlbums(ctx, owner); albums[0].Name != "Playa" {
 		t.Fatal("rename no aplicado")
 	}
-	if err := st.DeleteAlbum(ctx, al); err != nil {
+	if err := st.DeleteAlbum(ctx, owner, al); err != nil {
 		t.Fatal(err)
 	}
-	if albums, _ := st.ListAlbums(ctx); len(albums) != 0 {
+	if albums, _ := st.ListAlbums(ctx, owner); len(albums) != 0 {
 		t.Fatal("delete no aplicado")
 	}
 
@@ -72,7 +73,7 @@ func TestAlbumsAndPlaces(t *testing.T) {
 	if err := st.SaveExif(ctx, id2, ExifResult{Lat: &lat2, Lon: &lon2}); err != nil {
 		t.Fatal(err)
 	}
-	places, err := st.PlaceClusters(ctx, 2)
+	places, err := st.PlaceClusters(ctx, owner, 2)
 	if err != nil || len(places) != 1 || places[0].Count != 2 {
 		t.Fatalf("places: %+v %v", places, err)
 	}

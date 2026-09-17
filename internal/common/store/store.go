@@ -52,6 +52,14 @@ func Open(path string) (*sql.DB, error) {
 // que PRAGMA user_version. Cada migración corre en su propia transacción y
 // fija user_version al final de ella; si falla, hace rollback y deja
 // user_version intacto.
+//
+// Las migraciones corren con foreign_keys OFF: PRAGMA foreign_keys es no-op
+// dentro de una transacción, así que se desactiva ANTES del Begin y se
+// restaura tras el Commit. Es la práctica estándar de SQLite para rebuilds
+// de tabla (H8, photos 002): con FK ON, el DROP TABLE de un rebuild ejecuta
+// un DELETE implícito que dispara los ON DELETE CASCADE de las tablas hija
+// (album_assets/asset_tags perderían sus filas). Fuera de la transacción de
+// migración la BD sigue con FK ON (DSN de Open).
 func Migrate(db *sql.DB, fsys fs.FS, dir string) error {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
@@ -81,22 +89,43 @@ func Migrate(db *sql.DB, fsys fs.FS, dir string) error {
 		if err != nil {
 			return err
 		}
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(string(body)); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("migración %s: %w", name, err)
-		}
-		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", num)); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("fijar user_version=%d: %w", num, err)
-		}
-		if err := tx.Commit(); err != nil {
+		if err := migrateOne(db, num, string(body)); err != nil {
 			return fmt.Errorf("migración %s: %w", name, err)
 		}
 	}
+	return nil
+}
+
+// migrateOne ejecuta una migración en su transacción con foreign_keys OFF
+// (ver Migrate). Restaura FK ON siempre, también en error.
+func migrateOne(db *sql.DB, num int, body string) error {
+	if _, err := db.Exec("PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("desactivar foreign_keys: %w", err)
+	}
+	restore := func() {
+		// best effort: si la BD está rota el error ya se reporta por otro lado
+		_, _ = db.Exec("PRAGMA foreign_keys = ON")
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		restore()
+		return err
+	}
+	if _, err := tx.Exec(body); err != nil {
+		_ = tx.Rollback()
+		restore()
+		return err
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", num)); err != nil {
+		_ = tx.Rollback()
+		restore()
+		return fmt.Errorf("fijar user_version=%d: %w", num, err)
+	}
+	if err := tx.Commit(); err != nil {
+		restore()
+		return err
+	}
+	restore()
 	return nil
 }
 
