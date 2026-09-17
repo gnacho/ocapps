@@ -28,6 +28,7 @@ var allVars = []string{
 	"OCAPPS_NOTES_OWNER", "OCNOTES_OWNER",
 	"OCAPPS_PHOTOS_USER", "OC_USER",
 	"OCAPPS_PHOTOS_APP_TOKEN", "OC_APP_TOKEN",
+	"OCAPPS_PHOTOS_USERS",
 	"OCAPPS_PHOTOS_TOKEN", "MEMORIES_TOKEN",
 	"OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT",
 	"OCAPPS_PHOTOS_SCAN_EVERY", "SCAN_EVERY",
@@ -590,7 +591,9 @@ func TestErroresDeModuloNoFatales(t *testing.T) {
 			t.Fatal("esperaba ModuleErr(news)")
 		}
 	})
-	t.Run("photos sin user/token", func(t *testing.T) {
+	// H8: photos es multi-tenant; OCAPPS_PHOTOS_USER/APP_TOKEN ya no son
+	// obligatorios y su ausencia NO degrada el módulo.
+	t.Run("photos sin user/token es válido (H8)", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_PHOTOS_USER", "")
 		t.Setenv("OCAPPS_PHOTOS_APP_TOKEN", "")
@@ -598,11 +601,45 @@ func TestErroresDeModuloNoFatales(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load no debe ser fatal: %v", err)
 		}
-		if cfg.ModuleErr("photos") == nil {
-			t.Fatal("esperaba ModuleErr(photos)")
+		if cfg.ModuleErr("photos") != nil {
+			t.Fatalf("sin user/token ya no degrada el módulo (H8): %v", cfg.ModuleErr("photos"))
+		}
+		if len(cfg.Photos.Users) != 0 {
+			t.Errorf("Users sin nada configurado: %+v", cfg.Photos.Users)
 		}
 		if cfg.ModuleErr("news") != nil {
 			t.Error("news no debe degradarse")
+		}
+	})
+	// H8: el Bearer estático DEPRECATED sin USER no tiene identidad -> error.
+	t.Run("photos token estático sin user (H8)", func(t *testing.T) {
+		base(t)
+		t.Setenv("OCAPPS_PHOTOS_USER", "")
+		t.Setenv("OCAPPS_PHOTOS_APP_TOKEN", "")
+		t.Setenv("OCAPPS_PHOTOS_TOKEN", "static-tok")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load no debe ser fatal: %v", err)
+		}
+		merr := cfg.ModuleErr("photos")
+		if merr == nil || !strings.Contains(merr.Error(), "OCAPPS_PHOTOS_TOKEN") {
+			t.Fatalf("ModuleErr(photos): %v", merr)
+		}
+		if cfg.ModuleErr("news") != nil {
+			t.Error("news no debe degradarse")
+		}
+	})
+	// H8: OCAPPS_PHOTOS_USERS malformado -> error del módulo (D3).
+	t.Run("photos users malformado (H8)", func(t *testing.T) {
+		base(t)
+		t.Setenv("OCAPPS_PHOTOS_USERS", "alice:tok1,bob-sin-token")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load no debe ser fatal: %v", err)
+		}
+		merr := cfg.ModuleErr("photos")
+		if merr == nil || !strings.Contains(merr.Error(), "OCAPPS_PHOTOS_USERS") {
+			t.Fatalf("ModuleErr(photos): %v", merr)
 		}
 	})
 	t.Run("photos disabled no exige credenciales", func(t *testing.T) {
@@ -630,6 +667,59 @@ func TestErroresDeModuloNoFatales(t *testing.T) {
 		}
 		if cfg.ModuleErr("photos") == nil {
 			t.Fatal("esperaba ModuleErr(photos)")
+		}
+	})
+}
+
+// TestPhotosUsers: parseo de OCAPPS_PHOTOS_USERS y pliegue del par legacy
+// USER+APP_TOKEN en la misma lista (H8 §6.2).
+func TestPhotosUsers(t *testing.T) {
+	t.Run("varios usuarios", func(t *testing.T) {
+		base(t)
+		t.Setenv("OCAPPS_PHOTOS_USER", "")
+		t.Setenv("OCAPPS_PHOTOS_APP_TOKEN", "")
+		t.Setenv("OCAPPS_PHOTOS_USERS", "alice:apptoken1, bob:apptoken2")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ModuleErr("photos") != nil {
+			t.Fatalf("ModuleErr: %v", cfg.ModuleErr("photos"))
+		}
+		want := []AppUser{{User: "alice", Token: "apptoken1"}, {User: "bob", Token: "apptoken2"}}
+		if len(cfg.Photos.Users) != 2 || cfg.Photos.Users[0] != want[0] || cfg.Photos.Users[1] != want[1] {
+			t.Fatalf("Users: %+v", cfg.Photos.Users)
+		}
+	})
+	t.Run("pliegue legacy", func(t *testing.T) {
+		base(t) // define OCAPPS_PHOTOS_USER=alice + APP_TOKEN=tok
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(cfg.Photos.Users) != 1 || cfg.Photos.Users[0] != (AppUser{User: "alice", Token: "tok"}) {
+			t.Fatalf("pliegue legacy: %+v", cfg.Photos.Users)
+		}
+	})
+	t.Run("legacy ya listado no se duplica", func(t *testing.T) {
+		base(t)
+		t.Setenv("OCAPPS_PHOTOS_USERS", "alice:apptoken1,bob:apptoken2")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(cfg.Photos.Users) != 2 {
+			t.Fatalf("alice ya estaba listada: %+v", cfg.Photos.Users)
+		}
+	})
+	t.Run("entradas malformadas", func(t *testing.T) {
+		for _, raw := range []string{"alice", ":tok", "alice:", "alice:tok,bob"} {
+			if _, err := parsePhotosUsers(raw); err == nil {
+				t.Errorf("parsePhotosUsers(%q) debería fallar", raw)
+			}
+		}
+		if got, err := parsePhotosUsers(""); err != nil || got != nil {
+			t.Errorf("vacío: %v %v", got, err)
 		}
 	})
 }
