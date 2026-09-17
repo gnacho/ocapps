@@ -179,10 +179,15 @@ func (m *Module) Register(mux *http.ServeMux) {
 // retención y suscripciones/renovaciones WebSub — las notificaciones ntfy
 // las emite el refresher dentro de esos ciclos). Bloquea hasta que ctx se
 // cancela (shutdown gracioso: el scheduler drena sus goroutines) y devuelve
-// nil en apagado normal.
+// nil en apagado normal. Un pánico recuperado en el loop principal del
+// scheduler (I3) vuelve como error: queda en runErr (Healthy) y el wiring
+// marca el módulo failed sin tumbar el proceso (D3).
 func (m *Module) Run(ctx context.Context) error {
-	m.sched.Run(ctx)
-	return nil
+	err := m.sched.Run(ctx)
+	if err != nil && ctx.Err() == nil {
+		m.runErr.Store(err)
+	}
+	return err
 }
 
 // Close cierra la SQLite del módulo (apagado ordenado; el wiring lo invoca
