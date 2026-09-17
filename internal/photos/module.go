@@ -68,21 +68,31 @@ type Module struct {
 	initErr   error // último error de init (Graph/ListDrives)
 }
 
-// New cablea el módulo. cfg es la sección photos de la config unificada,
-// common la común (OpenCloudURL + PhotosDataDir) y gv el validador Graph
-// COMPARTIDO del proceso (desde H5; el módulo deriva el suyo con
+// New cablea el módulo. cfg es la config unificada completa (se usa la
+// sección Photos, la Common y ModuleErr("photos"): un error de config del
+// módulo — p. ej. OCAPPS_PHOTOS_SCAN_EVERY inválido — es error de New y el
+// módulo queda failed en init, patrón D3 como news, I1) y gv el validador
+// Graph COMPARTIDO del proceso (desde H5; el módulo deriva el suyo con
 // gv.WithPolicy(SingleTenant(meID)) — misma caché, tenancy propia, SPEC
 // §6.2). Si gv es nil se crea uno independiente (tests/standalone). Errores
-// de wiring duro (BD, mediasecret, credenciales vacías) → error: el módulo
-// no se construye y el wiring debe registrar su namespace como failed
-// (SPEC §4.5/D3). Un fallo de Graph/ListDrives NO es error de New: el
-// módulo arranca en estado failed y reintenta en background desde Run.
+// de wiring duro (config inválida, BD, mediasecret, credenciales vacías) →
+// error: el módulo no se construye y el wiring debe registrar su namespace
+// como failed (SPEC §4.5/D3). Un fallo de Graph/ListDrives NO es error de
+// New: el módulo arranca en estado failed y reintenta en background desde
+// Run.
 //
 // OJO (SPEC §6.2): el Bearer estático OCAPPS_PHOTOS_TOKEN se comprueba en
 // internal/photos/api ANTES de cualquier validación Graph; este cambio de
 // validador no altera ese orden.
-func New(cfg config.PhotosConfig, common config.Common, log *slog.Logger, gv *auth.GraphValidator) (*Module, error) {
-	if cfg.User == "" || cfg.AppToken == "" {
+func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module, error) {
+	// I1: sin este chequeo, una config de módulo inválida que PARSEA bien
+	// (p. ej. SCAN_EVERY=0s) construía un módulo "sano" que paniqueaba en
+	// time.NewTicker(≤0) tras el scan inicial.
+	if err := cfg.ModuleErr("photos"); err != nil {
+		return nil, fmt.Errorf("config de photos inválida: %w", err)
+	}
+	pcfg, common := cfg.Photos, cfg.Common
+	if pcfg.User == "" || pcfg.AppToken == "" {
 		return nil, fmt.Errorf("photos: OCAPPS_PHOTOS_USER / OCAPPS_PHOTOS_APP_TOKEN son obligatorios con el módulo enabled")
 	}
 	dataDir := common.PhotosDataDir
@@ -105,9 +115,9 @@ func New(cfg config.PhotosConfig, common config.Common, log *slog.Logger, gv *au
 		log.Warn("ffmpeg no encontrado: pósters de vídeo degradados (se servirá el original)", "err", err)
 	}
 
-	dc := webdav.New(common.OpenCloudURL, cfg.User, cfg.AppToken)
+	dc := webdav.New(common.OpenCloudURL, pcfg.User, pcfg.AppToken)
 	m := &Module{
-		cfg: cfg, dataDir: dataDir, log: log,
+		cfg: pcfg, dataDir: dataDir, log: log,
 		st: st, secret: secret, dav: dc,
 	}
 
@@ -295,7 +305,16 @@ func (m *Module) scanLoop(ctx context.Context) {
 	}
 
 	runScan("inicial")
-	ticker := time.NewTicker(m.cfg.ScanEvery)
+	// Segunda línea de defensa de I1: New ya rechaza ScanEvery ≤ 0 vía
+	// ModuleErr, pero un Module construido a mano no debe paniquear en
+	// time.NewTicker(≤0). Se degrada al default con log, no se tumba.
+	scanEvery := m.cfg.ScanEvery
+	if scanEvery <= 0 {
+		m.log.Error("OCAPPS_PHOTOS_SCAN_EVERY <= 0 (config inválida); se usa el default",
+			"got", scanEvery, "default", config.DefaultScanEvery)
+		scanEvery = config.DefaultScanEvery
+	}
+	ticker := time.NewTicker(scanEvery)
 	defer ticker.Stop()
 	for {
 		select {
