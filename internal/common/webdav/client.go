@@ -1,7 +1,8 @@
 // Package webdav: cliente WebDAV/Graph de OpenCloud generalizado (port de
 // ocphotos internal/dav, SPEC §2.1). Patrón validado por PhotoSort: Graph
 // para descubrir espacios, PROPFIND para recorrer, GET/Range para contenido.
-// Auth: usuario + app-token (Basic).
+// Auth: usuario + app-token (Basic, New) o access token OIDC (Bearer,
+// NewBearer — multi-tenant de photos, H8 §6.2).
 //
 // Las listas de extensiones image/video NO viven en el cliente: salen a
 // Options (las consume el scanner de photos, §2.1).
@@ -12,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +22,16 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrUnauthorized: el servidor rechazó la credencial (401/403). Va envuelto
+// con %w en el error de la operación; el scanner/worker de photos lo
+// distinguen con errors.Is para abortar sin tocar el índice (H8).
+var ErrUnauthorized = errors.New("webdav: credencial rechazada (401/403)")
+
+// sharedHTTP es el *http.Client de todos los Client: en multi-tenant se
+// crea un Client por sesión de usuario y compartir el transporte evita
+// fugas de pools de conexiones (H8).
+var sharedHTTP = &http.Client{Timeout: 120 * time.Second}
 
 const propfindBody = `<?xml version="1.0"?>
 <d:propfind xmlns:d="DAV:">
@@ -91,20 +103,45 @@ type Drive struct {
 }
 
 type Client struct {
-	base  string
-	user  string
-	token string
-	http  *http.Client
+	base string
+	http *http.Client
+	// authorize fija la credencial de la petición (Basic o Bearer). Nunca se
+	// persiste: vive solo en memoria mientras viva el Client (H8 §6.2).
+	authorize func(req *http.Request)
 }
 
-// New crea el cliente contra la raíz del servidor OpenCloud.
+// New crea el cliente contra la raíz del servidor OpenCloud con auth Basic
+// (usuario + app-token de OpenCloud).
 func New(baseURL, user, appToken string) *Client {
 	return &Client{
-		base:  strings.TrimRight(baseURL, "/"),
-		user:  user,
-		token: appToken,
-		http:  &http.Client{Timeout: 120 * time.Second},
+		base: strings.TrimRight(baseURL, "/"),
+		http: sharedHTTP,
+		authorize: func(req *http.Request) {
+			req.SetBasicAuth(user, appToken)
+		},
 	}
+}
+
+// NewBearer crea el cliente con auth Bearer (access token OIDC de la sesión
+// web de OpenCloud). Es el cliente por usuario del photos multi-tenant (H8):
+// el token solo vive en memoria y caduca con la sesión.
+func NewBearer(baseURL, token string) *Client {
+	return &Client{
+		base: strings.TrimRight(baseURL, "/"),
+		http: sharedHTTP,
+		authorize: func(req *http.Request) {
+			req.Header.Set("Authorization", "Bearer "+token)
+		},
+	}
+}
+
+// statusErr envuelve ErrUnauthorized ante un 401/403 para que el llamador
+// (scanner/worker de photos) pueda abortar sin soft-deletes (H8).
+func statusErr(op, what, status string, code int) error {
+	if code == http.StatusUnauthorized || code == http.StatusForbidden {
+		return fmt.Errorf("%s %s: %s: %w", op, what, status, ErrUnauthorized)
+	}
+	return fmt.Errorf("%s %s: %s", op, what, status)
 }
 
 // FileURL resuelve un href DAV (ruta absoluta del servidor) a URL completa.
@@ -115,18 +152,18 @@ func (c *Client) FileURL(href string) string {
 	return c.base + href
 }
 
-// MeID devuelve el id del usuario configurado (Basic user:app-token). Photos
-// lo usa para su política SingleTenant.
+// MeID devuelve el id del usuario de la credencial del cliente (Basic o
+// Bearer). Photos lo usa para resolver el owner multi-tenant (H8).
 func (c *Client) MeID(ctx context.Context) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/graph/v1.0/me", nil)
-	req.SetBasicAuth(c.user, c.token)
+	c.authorize(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("graph /me: %s", resp.Status)
+		return "", statusErr("graph", "/me", resp.Status, resp.StatusCode)
 	}
 	var out struct {
 		ID string `json:"id"`
@@ -141,14 +178,14 @@ func (c *Client) MeID(ctx context.Context) (string, error) {
 // usuario.
 func (c *Client) ListDrives(ctx context.Context) ([]Drive, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/graph/v1.0/me/drives", nil)
-	req.SetBasicAuth(c.user, c.token)
+	c.authorize(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("graph /me/drives: %s", resp.Status)
+		return nil, statusErr("graph", "/me/drives", resp.Status, resp.StatusCode)
 	}
 	var out struct {
 		Value []struct {
@@ -220,7 +257,7 @@ func (c *Client) Propfind(ctx context.Context, href string, depth int) ([]Entry,
 	u := c.FileURL(href)
 
 	req, _ := http.NewRequestWithContext(ctx, "PROPFIND", u, bytes.NewBufferString(propfindBody))
-	req.SetBasicAuth(c.user, c.token)
+	c.authorize(req)
 	req.Header.Set("Depth", fmt.Sprintf("%d", depth))
 	req.Header.Set("Content-Type", "application/xml")
 
@@ -233,7 +270,7 @@ func (c *Client) Propfind(ctx context.Context, href string, depth int) ([]Entry,
 		return nil, fmt.Errorf("recurso no encontrado: %s", href)
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("propfind %s: %s", href, resp.Status)
+		return nil, statusErr("propfind", href, resp.Status, resp.StatusCode)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -275,7 +312,7 @@ func (c *Client) GetRange(ctx context.Context, href string, off, n int64) ([]byt
 		return nil, fmt.Errorf("rango inválido: off=%d n=%d", off, n)
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.FileURL(href), nil)
-	req.SetBasicAuth(c.user, c.token)
+	c.authorize(req)
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", off, off+n-1))
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -283,7 +320,7 @@ func (c *Client) GetRange(ctx context.Context, href string, off, n int64) ([]byt
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("range %s: %s", href, resp.Status)
+		return nil, statusErr("range", href, resp.Status, resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
 }
@@ -292,7 +329,7 @@ func (c *Client) GetRange(ctx context.Context, href string, off, n int64) ([]byt
 // Devuelve el body, las cabeceras y el código de estado (200 o 206).
 func (c *Client) DownloadRange(ctx context.Context, href, rangeHeader string) (io.ReadCloser, http.Header, int, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.FileURL(href), nil)
-	req.SetBasicAuth(c.user, c.token)
+	c.authorize(req)
 	if rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
 	}
@@ -302,7 +339,7 @@ func (c *Client) DownloadRange(ctx context.Context, href, rangeHeader string) (i
 	}
 	if resp.StatusCode >= 400 {
 		_ = resp.Body.Close()
-		return nil, nil, resp.StatusCode, fmt.Errorf("range %s: %s", href, resp.Status)
+		return nil, nil, resp.StatusCode, statusErr("range", href, resp.Status, resp.StatusCode)
 	}
 	return resp.Body, resp.Header, resp.StatusCode, nil
 }
@@ -310,14 +347,14 @@ func (c *Client) DownloadRange(ctx context.Context, href, rangeHeader string) (i
 // Download abre un stream del fichero completo (caller cierra el body).
 func (c *Client) Download(ctx context.Context, href string) (io.ReadCloser, string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.FileURL(href), nil)
-	req.SetBasicAuth(c.user, c.token)
+	c.authorize(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, "", err
 	}
 	if resp.StatusCode >= 300 {
 		_ = resp.Body.Close()
-		return nil, "", fmt.Errorf("download %s: %s", href, resp.Status)
+		return nil, "", statusErr("download", href, resp.Status, resp.StatusCode)
 	}
 	ct := resp.Header.Get("Content-Type")
 	return resp.Body, ct, nil
