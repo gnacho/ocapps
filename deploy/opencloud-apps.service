@@ -1,0 +1,41 @@
+# opencloud-apps.service — unit único del backend unificado ocapps (SPEC §9.1).
+#
+# Instalación:
+#   install -m 644 deploy/opencloud-apps.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now opencloud-apps
+#
+# Requiere: usuario/grupo `ocapps` y /etc/ocapps/env (ver deploy/env.example).
+[Unit]
+Description=OpenCloud Apps (news+notes+photos unified backend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ocapps
+Group=ocapps
+EnvironmentFile=/etc/ocapps/env
+ExecStart=/usr/local/bin/ocapps
+
+# Restart=on-failure solo actúa si muere el PROCESO ENTERO. Un módulo caído
+# (p. ej. la BD de photos corrupta) NO reinicia nada: por diseño (D3,
+# SPEC §4.5) el módulo queda en estado failed, su namespace sirve 503 y los
+# demás módulos siguen operativos — un reinicio no arreglaría la causa y un
+# bucle de reinicios tumbaría también los módulos sanos. La señal operativa
+# de un módulo caído es `GET /readyz` → 503 (más el log "módulo failed"):
+# monitoriza/alerta sobre readyz, no sobre reinicios de systemd.
+Restart=on-failure
+RestartSec=5s
+
+# /var/lib/ocapps creado y gestionado por systemd (0700, propiedad ocapps).
+StateDirectory=ocapps
+StateDirectoryMode=0700
+
+# Hardening.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ocapps
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
