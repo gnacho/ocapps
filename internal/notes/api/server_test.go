@@ -32,7 +32,7 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	return NewServer(Base, s, nil, nil, nil)
+	return NewServer(Base, "", s, nil, nil, nil)
 }
 
 // authedRequest builds a request whose context carries the authenticated user,
@@ -291,7 +291,7 @@ func newTestServerConGraph(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	v := auth.NewGraphValidator(graph.URL, auth.MultiTenant(), nil)
-	return NewServer(Base, s, v, nil, nil)
+	return NewServer(Base, "", s, v, nil, nil)
 }
 
 func TestUserInfoJSONConAuth(t *testing.T) {
@@ -363,5 +363,104 @@ func TestUserInfoXMLModoPorDefecto(t *testing.T) {
 	s.handleUserInfo(w2, req2)
 	if w2.Code != http.StatusOK || !strings.Contains(w2.Body.String(), "<id>Nacho</id>") {
 		t.Fatalf("XML con auth: %d %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestCapabilitiesMergeCoreJSON(t *testing.T) {
+	var gotAuth, gotFormat string
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotFormat = r.URL.Query().Get("format")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":200,"message":"OK"},`+
+			`"data":{"capabilities":{"core":{"status":{"productversion":"8.0.1","versionstring":"0.1.0"}},`+
+			`"files":{"bigfilechunking":true}}}}}`)
+	}))
+	defer core.Close()
+
+	s := NewServer(Base, core.URL, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/capabilities?format=json", nil)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("OCS-APIRequest", "true")
+	req.SetBasicAuth("nacho", "app-token")
+	w := httptest.NewRecorder()
+	s.handleCapabilities(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	if gotAuth == "" {
+		t.Fatal("el core no recibio la cabecera Authorization")
+	}
+	if gotFormat != "json" {
+		t.Fatalf("el core recibio format=%q, want json", gotFormat)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	caps := doc["ocs"].(map[string]any)["data"].(map[string]any)["capabilities"].(map[string]any)
+	if _, ok := caps["core"]; !ok {
+		t.Fatalf("falta el bloque core: %s", w.Body.String())
+	}
+	notes, ok := caps["notes"].(map[string]any)
+	if !ok {
+		t.Fatalf("falta el bloque notes: %s", w.Body.String())
+	}
+	if notes["version"] != Version {
+		t.Fatalf("notes.version = %v, want %s", notes["version"], Version)
+	}
+}
+
+func TestCapabilitiesMergeCoreXML(t *testing.T) {
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		_, _ = io.WriteString(w, `<?xml version="1.0"?><ocs><meta><status>ok</status>`+
+			`<statuscode>100</statuscode><message>OK</message></meta><data><capabilities>`+
+			`<core><status><productversion>8.0.1</productversion></status></core>`+
+			`</capabilities></data></ocs>`)
+	}))
+	defer core.Close()
+
+	s := NewServer(Base, core.URL, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/capabilities", nil)
+	w := httptest.NewRecorder()
+	s.handleCapabilities(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "<core>") || !strings.Contains(body, "8.0.1") {
+		t.Fatalf("falta el bloque core: %s", body)
+	}
+	if !strings.Contains(body, "<notes>") || !strings.Contains(body, Version) {
+		t.Fatalf("falta el bloque notes: %s", body)
+	}
+	if i := strings.Index(body, "</capabilities>"); i < 0 || strings.Index(body, "<notes>") > i {
+		t.Fatalf("notes debe ir dentro de capabilities: %s", body)
+	}
+}
+
+func TestCapabilitiesFallbackWhenCoreFails(t *testing.T) {
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer core.Close()
+
+	s := NewServer(Base, core.URL, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/capabilities?format=json", nil)
+	w := httptest.NewRecorder()
+	s.handleCapabilities(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp capabilitiesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Ocs.Data.Capabilities.Notes.Version != Version {
+		t.Fatalf("fallback no devolvio notes: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"core"`) {
+		t.Fatalf("el fallback no debe incluir core: %s", w.Body.String())
 	}
 }

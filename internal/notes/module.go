@@ -97,7 +97,7 @@ func New(cfg *config.Config, logger *slog.Logger, validator *auth.GraphValidator
 	}
 
 	m.db = db
-	m.server = api.NewServer(api.Base, st, validator, images, atts)
+	m.server = api.NewServer(api.Base, cfg.OpenCloudURL, st, validator, images, atts)
 	return m, nil
 }
 
