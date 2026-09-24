@@ -80,14 +80,26 @@ func (b *jsonBool) UnmarshalJSON(data []byte) error {
 
 type Server struct {
 	base        string
+	coreURL     string
 	store       *store.Store
 	validator   *auth.GraphValidator
 	images      *imgproxy.Proxy
 	attachments *attachments.Store
 }
 
-func NewServer(base string, s *store.Store, v *auth.GraphValidator, images *imgproxy.Proxy, attachments *attachments.Store) *Server {
-	return &Server{base: base, store: s, validator: v, images: images, attachments: attachments}
+// NewServer builds the notes API server. coreURL is the root of the OpenCloud
+// server (OCAPPS_OPENCLOUD_URL); it is used to merge the real core capabilities
+// into the OCS response so modern clients can read the server version. When it
+// is empty the capabilities handler falls back to the notes-only response.
+func NewServer(base, coreURL string, s *store.Store, v *auth.GraphValidator, images *imgproxy.Proxy, attachments *attachments.Store) *Server {
+	return &Server{
+		base:        base,
+		coreURL:     strings.TrimRight(coreURL, "/"),
+		store:       s,
+		validator:   v,
+		images:      images,
+		attachments: attachments,
+	}
 }
 
 func (s *Server) Router() http.Handler {
@@ -651,6 +663,18 @@ type capabilitiesNotes struct {
 	Version    string   `json:"version"`
 }
 
+// coreHTTPClient performs the upstream capabilities request. The short timeout
+// keeps a stalled core from holding the caller's request.
+var coreHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+// handleCapabilities serves /ocs/v2.php/cloud/capabilities.
+//
+// Modern OpenCloud clients read the server version from this endpoint (the
+// core.status block). Because ocapps owns the route, it must not answer with
+// the notes capability ALONE: it forwards the request to the OpenCloud core
+// (preserving the caller's credentials) and injects the notes block on top of
+// the core capabilities. When the core is not configured, is unreachable or
+// returns a non-200, it falls back to the previous notes-only response.
 func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -659,6 +683,10 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 
 	wantsJSON := strings.Contains(r.Header.Get("Accept"), "application/json") ||
 		r.URL.Query().Get("format") == "json"
+
+	if s.mergeCoreCapabilities(w, r, wantsJSON) {
+		return
+	}
 
 	if wantsJSON {
 		w.Header().Set("Content-Type", "application/json")
@@ -693,6 +721,126 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	fmt.Fprint(w, xml)
+}
+
+// notesCapabilityJSON is the notes block injected into the core capabilities.
+func notesCapabilityJSON() map[string]any {
+	return map[string]any{
+		"api_version": []string{"0.2", "1.4"},
+		"version":     Version,
+	}
+}
+
+// coreCapabilitiesURL builds the upstream URL, forcing the response format to
+// match what the caller asked for.
+func (s *Server) coreCapabilitiesURL(r *http.Request, wantsJSON bool) string {
+	q := r.URL.Query()
+	if wantsJSON {
+		q.Set("format", "json")
+	}
+	u := s.coreURL + "/ocs/v2.php/cloud/capabilities"
+	if enc := q.Encode(); enc != "" {
+		u += "?" + enc
+	}
+	return u
+}
+
+// mergeCoreCapabilities fetches the OpenCloud core capabilities and writes the
+// merged response (core + notes). It returns false, without writing anything,
+// when the merge is not possible so the caller can answer with the fallback.
+func (s *Server) mergeCoreCapabilities(w http.ResponseWriter, r *http.Request, wantsJSON bool) bool {
+	if s.coreURL == "" {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.coreCapabilitiesURL(r, wantsJSON), nil)
+	if err != nil {
+		return false
+	}
+	// Forward the caller's credentials and OCS headers so the core can
+	// authenticate the request: the upstream endpoint requires auth.
+	for k, vs := range r.Header {
+		switch http.CanonicalHeaderKey(k) {
+		case "Host", "Connection", "Content-Length", "Accept-Encoding", "Transfer-Encoding", "Te", "Trailer", "Upgrade":
+			continue
+		}
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+
+	resp, err := coreHTTPClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false
+	}
+
+	if wantsJSON {
+		merged, ok := injectNotesJSON(body)
+		if !ok {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(merged)
+		return true
+	}
+
+	merged, ok := injectNotesXML(body)
+	if !ok {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(merged))
+	return true
+}
+
+// injectNotesJSON adds the notes block to a JSON capabilities document.
+func injectNotesJSON(body []byte) ([]byte, bool) {
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, false
+	}
+	ocs, ok := doc["ocs"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	data, ok := ocs["data"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	caps, ok := data["capabilities"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	caps["notes"] = notesCapabilityJSON()
+	merged, err := json.Marshal(doc)
+	if err != nil {
+		return nil, false
+	}
+	return merged, true
+}
+
+// injectNotesXML inserts the notes block before the closing </capabilities> tag
+// of an XML capabilities document.
+func injectNotesXML(body []byte) (string, bool) {
+	idx := strings.LastIndex(string(body), "</capabilities>")
+	if idx < 0 {
+		return "", false
+	}
+	notes := fmt.Sprintf(`<notes><api_version>["0.2","1.4"]</api_version><version>%s</version></notes>`, Version)
+	return string(body)[:idx] + notes + string(body)[idx:], true
 }
 
 // ocsUserJSON es el payload OCS v2 en JSON de /ocs/v2.php/cloud/user que
