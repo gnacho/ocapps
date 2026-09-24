@@ -189,6 +189,14 @@ corte:
    cliente llamaba al stub de news sin esas cabeceras y esperaba JSON,
    añade `?format=json` o el `Accept` — **verifícalo en la configuración
    de proxy de staging** antes del corte.
+4. **`/ocs/v2.php/cloud/capabilities` fusiona el core de OpenCloud.** El
+   backend de notes respondía solo con el bloque `notes`; ocapps reenvía la
+   petición al core (`OCAPPS_OPENCLOUD_URL`, con la credencial del cliente) y
+   le inyecta el bloque `notes`, para que los clientes lean `core.status`
+   (versión del servidor). Si el core no está configurado, no responde o
+   devuelve un código distinto de 200, responde solo con `notes` (mismo
+   comportamiento que el backend separado). Si un cliente reporta que el
+   servidor es antiguo o no soportado, comprueba este endpoint.
 
 ## Migración desde los 3 servicios antiguos
 
