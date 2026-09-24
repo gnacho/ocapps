@@ -1,6 +1,6 @@
 module github.com/gnacho/ocapps
 
-go 1.26.4
+go 1.26.8
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
@@ -11,8 +11,8 @@ require (
 	github.com/mmcdole/gofeed v1.4.1
 	github.com/rwcarlsen/goexif v0.0.0-20190401152319-9e8de2bddbd4
 	golang.org/x/crypto v0.55.0
-	golang.org/x/image v0.30.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/image v0.46.0
+	golang.org/x/sync v0.23.0
 	modernc.org/sqlite v1.59.0
 )
 
@@ -29,8 +29,8 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
