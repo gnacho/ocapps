@@ -454,6 +454,27 @@ func (s *Store) AssetByPath(ctx context.Context, owner, davPath string) (Asset, 
 	return scanAsset(row)
 }
 
+// AssetBySpaceItem es el fallback de AssetByPath para cuando el host manda
+// driveAliasAndItem en forma <tipo>/<nombre>/<ruta> (observado en OpenCloud
+// 8.0.1) en vez de <tipo>$<spaceId>/<ruta>: el alias no se puede construir
+// directamente, pero fileId lleva el spaceId (storageId$spaceId!opaqueId) y
+// el path indexado siempre contiene "$<spaceId>/<ruta>". El LIKE ancla el
+// prefijo "$<spaceId>/" para no cruzar spaceIds que compartan sufijo.
+func (s *Store) AssetBySpaceItem(ctx context.Context, owner, spaceID, itemPath string) (Asset, error) {
+	pattern := "%$" + likeEscape(spaceID) + "/" + likeEscape(itemPath)
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+assetCols+` FROM assets WHERE owner=? AND deleted_at IS NULL AND path LIKE ? ESCAPE '\'`,
+		owner, pattern)
+	return scanAsset(row)
+}
+
+// likeEscape escapa los comodines de LIKE (y la propia barra) para comparar
+// literales con ESCAPE '\'.
+func likeEscape(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
 // updateOwned ejecuta un UPDATE acotado al owner y devuelve sql.ErrNoRows si
 // no tocó ninguna fila (id inexistente O ajeno: regla IDOR, H8).
 func updateOwned(res sql.Result, err error) error {

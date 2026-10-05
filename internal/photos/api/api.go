@@ -258,15 +258,19 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "driveAliasAndItem requerido", http.StatusBadRequest)
 		return
 	}
-	p, err := url.PathUnescape(dai)
+	unescaped, err := url.PathUnescape(dai)
 	if err != nil {
 		http.Error(w, "driveAliasAndItem inválido", http.StatusBadRequest)
 		return
 	}
+	p := unescaped
 	if !strings.HasPrefix(p, "/dav/") {
 		p = "/dav/spaces/" + strings.TrimPrefix(p, "/")
 	}
 	asset, err := s.st.AssetByPath(r.Context(), OwnerFrom(r.Context()), p)
+	if errors.Is(err, sql.ErrNoRows) {
+		asset, err = s.resolveByFileID(r, unescaped)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, map[string]any{"asset": nil})
 		return
@@ -276,6 +280,52 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"asset": asset})
+}
+
+// resolveByFileID es el fallback cuando el alias viene en forma
+// <tipo>/<nombre>/<ruta> (OpenCloud 8.0.1): fileId = storageId$spaceId!opaqueId
+// y el path indexado contiene "$<spaceId>/<ruta>", así que se extrae el
+// spaceId y la ruta relativa (YA desescapada) y se busca por ambos.
+// E2E drive.domatix.cloud:
+// personal/uitest/Fotos/IMG_x.jpg + 7d443b01…$7b251a66…!41b22c35…
+func (s *Server) resolveByFileID(r *http.Request, unescaped string) (store.Asset, error) {
+	fileID := r.URL.Query().Get("fileId")
+	dollar := strings.Index(fileID, "$")
+	bang := strings.Index(fileID, "!")
+	if dollar < 0 {
+		return store.Asset{}, sql.ErrNoRows
+	}
+	spaceID := fileID[dollar+1:]
+	if bang > dollar {
+		spaceID = fileID[dollar+1 : bang]
+	}
+	if spaceID == "" {
+		return store.Asset{}, sql.ErrNoRows
+	}
+	itemPath := itemPathFromAlias(unescaped)
+	if itemPath == "" {
+		return store.Asset{}, sql.ErrNoRows
+	}
+	return s.st.AssetBySpaceItem(r.Context(), OwnerFrom(r.Context()), spaceID, itemPath)
+}
+
+// itemPathFromAlias extrae la ruta relativa del item de un driveAliasAndItem:
+// "personal$uuid/Fotos/x.jpg" -> "Fotos/x.jpg" (1 segmento de alias) y
+// "personal/uitest/Fotos/x.jpg" -> "Fotos/x.jpg" (2 segmentos, sin "$").
+func itemPathFromAlias(dai string) string {
+	rest := strings.TrimPrefix(dai, "/")
+	first, rest, found := strings.Cut(rest, "/")
+	if !found {
+		return ""
+	}
+	if !strings.Contains(first, "$") {
+		// forma tipo/nombre: salta también el segmento del nombre
+		_, rest, found = strings.Cut(rest, "/")
+		if !found {
+			return ""
+		}
+	}
+	return rest
 }
 
 func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
