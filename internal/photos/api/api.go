@@ -28,6 +28,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -105,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+PublicPrefix+"/api/stats", s.stats)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/assets", s.assets)
+	mux.HandleFunc("GET "+PublicPrefix+"/api/assets/resolve", s.resolve)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/assets/{id}/favorite", s.favorite)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/assets/{id}/archive", s.archive)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/duplicates", s.duplicates)
@@ -238,6 +240,42 @@ func (s *Server) assets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"assets": list})
+}
+
+// resolve implementa GET /api/assets/resolve, el destino del flujo "Abrir
+// con" de Files (gnacho/ocphotos #17): el host navega a la ruta de la
+// extensión con driveAliasAndItem (<alias><ruta relativa>, p.ej.
+// "personal$<uuid>/Fotos/a.jpg") y fileId. El path indexado es el href DAV
+// absoluto, "/dav/spaces/" + driveAliasAndItem, así que la resolución es una
+// búsqueda directa por (owner, path) y funciona con los índices existentes
+// (sin rescan). fileId se acepta pero aún no se usa: indexar el oc:id
+// exigiría migración de esquema y rescaneo; queda para cuando el path no
+// baste. No indexado o ajeno → {"asset": null} (200), el estado honesto que
+// la extensión muestra como "Photo not found".
+func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
+	dai := r.URL.Query().Get("driveAliasAndItem")
+	if dai == "" {
+		http.Error(w, "driveAliasAndItem requerido", http.StatusBadRequest)
+		return
+	}
+	p, err := url.PathUnescape(dai)
+	if err != nil {
+		http.Error(w, "driveAliasAndItem inválido", http.StatusBadRequest)
+		return
+	}
+	if !strings.HasPrefix(p, "/dav/") {
+		p = "/dav/spaces/" + strings.TrimPrefix(p, "/")
+	}
+	asset, err := s.st.AssetByPath(r.Context(), OwnerFrom(r.Context()), p)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, map[string]any{"asset": nil})
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"asset": asset})
 }
 
 func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
