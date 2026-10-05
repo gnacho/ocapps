@@ -66,3 +66,50 @@ func TestAssetByPathEscapado(t *testing.T) {
 		t.Fatalf("hit con path desescapado -> %v", err)
 	}
 }
+
+// TestAssetBySpaceItem: fallback por spaceId + ruta relativa para aliases en
+// forma <tipo>/<nombre>/<ruta> (OpenCloud 8.0.1, gnacho/ocapps #11). El path
+// indexado lleva el alias real "$<spaceId>"; el lookup no conoce el tipo.
+func TestAssetBySpaceItem(t *testing.T) {
+	st, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+
+	id, _, err := st.UpsertByETag(ctx, "id-alice",
+		"/dav/spaces/personal$7b251a66-5d40-4f4d-b1d0-01266acea88d/Fotos/la playa.jpg",
+		"e1", "la playa.jpg", "image", time.Now(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := st.AssetBySpaceItem(ctx, "id-alice", "7b251a66-5d40-4f4d-b1d0-01266acea88d", "Fotos/la playa.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ID != id {
+		t.Fatalf("id %d != %d", a.ID, id)
+	}
+
+	// miss: ruta distinta o spaceId distinto, misma respuesta
+	for _, tc := range [][2]string{
+		{"7b251a66-5d40-4f4d-b1d0-01266acea88d", "Fotos/otra.jpg"},
+		{"11111111-2222-3333-4444-555555555555", "Fotos/la playa.jpg"},
+	} {
+		if _, err := st.AssetBySpaceItem(ctx, "id-alice", tc[0], tc[1]); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("miss %v -> %v", tc, err)
+		}
+	}
+
+	// comodines literales: un itemPath con % no se comporta como wildcard
+	if _, _, err := st.UpsertByETag(ctx, "id-alice",
+		"/dav/spaces/personal$7b251a66-5d40-4f4d-b1d0-01266acea88d/Fotos/100%.jpg",
+		"e2", "100%.jpg", "image", time.Now(), 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AssetBySpaceItem(ctx, "id-alice", "7b251a66-5d40-4f4d-b1d0-01266acea88d", "Fotos/100%.jpg"); err != nil {
+		t.Fatalf("hit con %% literal -> %v", err)
+	}
+}

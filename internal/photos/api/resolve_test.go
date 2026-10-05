@@ -82,3 +82,40 @@ func assertAssetNull(t *testing.T, rr *httptest.ResponseRecorder) {
 		t.Fatalf("se esperaba asset null, got %+v", body.Asset)
 	}
 }
+
+// TestResolveNameAlias: fallback por spaceId del fileId cuando el host manda
+// driveAliasAndItem en forma <tipo>/<nombre>/<ruta> (E2E OpenCloud 8.0.1,
+// gnacho/ocapps #11). Shape real observado en drive.domatix.cloud.
+func TestResolveNameAlias(t *testing.T) {
+	s, st, _ := newMultiServer(t)
+	h := s.Handler()
+	ctx := context.Background()
+
+	idA, _, err := st.UpsertByETag(ctx, "id-alice",
+		"/dav/spaces/personal$7b251a66-5d40-4f4d-b1d0-01266acea88d/Fotos/IMG_20240510_131000.jpg",
+		"e1", "IMG_20240510_131000.jpg", "image", time.Now(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fileID := "7d443b01-21d3-484d-bf73-a2681d670fa1$7b251a66-5d40-4f4d-b1d0-01266acea88d!41b22c35-2b5d-4998-94f6-4db877fa2993"
+	dai := url.QueryEscape("personal/uitest/Fotos/IMG_20240510_131000.jpg")
+	rr := do(t, h, http.MethodGet, PublicPrefix+"/api/assets/resolve?driveAliasAndItem="+dai+"&fileId="+url.QueryEscape(fileID), "Bearer tok-alice")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resolve -> %d", rr.Code)
+	}
+	var body struct {
+		Asset *store.Asset `json:"asset"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Asset == nil || body.Asset.ID != idA {
+		t.Fatalf("asset: %+v", body.Asset)
+	}
+
+	// miss: mismo shape pero el spaceId del fileId no está indexado
+	otherFileID := "7d443b01-21d3-484d-bf73-a2681d670fa1$11111111-2222-3333-4444-555555555555!41b22c35-2b5d-4998-94f6-4db877fa2993"
+	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/assets/resolve?driveAliasAndItem="+dai+"&fileId="+url.QueryEscape(otherFileID), "Bearer tok-alice")
+	assertAssetNull(t, rr)
+}
