@@ -55,7 +55,7 @@ func TestAssetByPathEscapado(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	ctx := context.Background()
 
 	p := "/dav/spaces/sa/Fotos/verano 2026/la playa (1).jpg"
