@@ -441,6 +441,19 @@ func (s *Store) AssetByID(ctx context.Context, owner string, id int64) (Asset, e
 	return scanAsset(row)
 }
 
+// AssetByPath busca un asset por su href DAV absoluto (el path indexado).
+// Es la base del endpoint /api/assets/resolve ("Abrir con" desde Files):
+// el host pasa driveAliasAndItem (<alias><ruta>) y el path indexado es
+// "/dav/spaces/" + driveAliasAndItem. Filtra deleted_at: un fichero borrado
+// no debe resolverse. sql.ErrNoRows = no indexado o ajeno (misma respuesta,
+// regla IDOR H8).
+func (s *Store) AssetByPath(ctx context.Context, owner, davPath string) (Asset, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+assetCols+` FROM assets WHERE owner=? AND path=? AND deleted_at IS NULL`,
+		owner, davPath)
+	return scanAsset(row)
+}
+
 // updateOwned ejecuta un UPDATE acotado al owner y devuelve sql.ErrNoRows si
 // no tocó ninguna fila (id inexistente O ajeno: regla IDOR, H8).
 func updateOwned(res sql.Result, err error) error {
