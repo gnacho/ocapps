@@ -1,0 +1,47 @@
+# Snippet Traefik para el proxy delante de ocapps (SPEC §9.3).
+# File provider: guardarlo como fichero dinámico (p. ej.
+# /etc/traefik/dynamic/ocapps.yml) con el directorio declarado en la
+# configuración estática (providers.file). Equivalente a
+# deploy/proxy/nginx.conf y deploy/proxy/Caddyfile.
+#
+# ═══════════════════════════════════════════════════════════════════════
+# Dos detalles que NO son opcionales:
+#
+# 1. Host() en la regla: sin él, las rutas /api/me y /api/users se comerían
+#    esos paths de TODOS los sitios servidos por el mismo Traefik. Cambia
+#    cloud.example.com por el dominio público de tu instancia.
+#
+# 2. Sin strip de prefijos: /ocphotos-api/ debe llegar INTACTO al backend
+#    (en el binario unificado /api/ pertenece a news y photos registra sus
+#    rutas como /ocphotos-api/api/...). Traefik no reescribe rutas por
+#    defecto: basta con NO añadir un middleware stripprefix.
+#
+# La prioridad de Traefik se deriva de la longitud de la regla, así que este
+# router gana a un catch-all Host() equivalente sin prioridad explícita.
+# ═══════════════════════════════════════════════════════════════════════
+
+http:
+  routers:
+    ocapps:
+      # news: contrato News API v1.3 + OCS y notes (capabilities, cloud/user).
+      # /api/me y /api/users: API propia en la RAÍZ del host (settings y
+      # gestión de usuarios de la extensión). Patrones exactos: NO enrutar
+      # un catch-all /api/ — chocaría con cualquier otro /api/ del host.
+      rule: "Host(`cloud.example.com`) && (PathPrefix(`/index.php/apps/news/`) || PathPrefix(`/index.php/apps/notes/`) || PathPrefix(`/ocs/`) || PathPrefix(`/ocphotos-api/`) || Path(`/api/me`) || PathPrefix(`/api/me/`) || Path(`/api/users`) || PathPrefix(`/api/users/`))"
+      service: ocapps
+
+  services:
+    ocapps:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8096"
+        # Traefik preserva Host y TODAS las cabeceras (incluida Authorization,
+        # donde viajan las credenciales Basic/Bearer del contrato News), y
+        # añade X-Forwarded-For/Proto automáticamente.
+        #
+        # flushInterval 1ms: casi flush inmediato para el streaming de vídeo
+        # firmado (/ocphotos-api/api/video/{id}, Range/206), el equivalente
+        # del proxy_buffering off / flush_interval -1 de los snippets
+        # nginx/Caddy.
+        responseForwarding:
+          flushInterval: 1ms

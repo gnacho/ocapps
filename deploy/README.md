@@ -10,14 +10,15 @@ Referencia: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) y §9.
 |---|---|
 | [`opencloud-apps.service`](opencloud-apps.service) | Unit systemd único (SPEC §9.1) |
 | [`env.example`](env.example) | Plantilla de `/etc/ocapps/env` con cada variable y su legacy (SPEC §9.2/§3.2) |
-| [`proxy/nginx.conf`](proxy/nginx.conf) · [`proxy/Caddyfile`](proxy/Caddyfile) | Snippets de proxy (SPEC §9.3) |
+| [`proxy/nginx.conf`](proxy/nginx.conf) · [`proxy/Caddyfile`](proxy/Caddyfile) · [`proxy/traefik.yml`](proxy/traefik.yml) | Snippets de proxy (SPEC §9.3) |
 | [`migrate.sh`](migrate.sh) | Migración de datos 3→1, idempotente, con `--dry-run` y `--force-redeploy` (SPEC §5.4) |
 | [`repo-notices/`](repo-notices/) | Borradores de aviso para los README de los repos de app |
 
 ## Requisitos
 
 - **Runtime**: Linux con systemd, `sqlite3` (CLI, para las verificaciones de
-  la migración), `curl` (smoke checks) y un proxy reverso (nginx o Caddy).
+  la migración), `curl` (smoke checks) y un proxy reverso (nginx, Caddy o
+  Traefik).
   El binario es estático (`CGO_ENABLED=0`, modernc.org/sqlite): no necesita
   libc ni ninguna otra librería de sistema.
 - **ffmpeg es la ÚNICA dependencia de sistema en runtime** (SPEC Q4):
@@ -103,8 +104,9 @@ systemctl daemon-reload
 > systemd (aplicar el snippet nuevo al mismo tiempo que `migrate.sh`
 > habilita `opencloud-apps`, o inmediatamente después).
 
-Aplica [`proxy/nginx.conf`](proxy/nginx.conf) o
-[`proxy/Caddyfile`](proxy/Caddyfile) en el vhost que sirve la instancia
+Aplica [`proxy/nginx.conf`](proxy/nginx.conf),
+[`proxy/Caddyfile`](proxy/Caddyfile) o
+[`proxy/traefik.yml`](proxy/traefik.yml) en el vhost que sirve la instancia
 OpenCloud. Resumen:
 
 | Ruta | Antes | Ahora |
