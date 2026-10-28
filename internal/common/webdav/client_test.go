@@ -289,3 +289,81 @@ func TestErrUnauthorized(t *testing.T) {
 		t.Fatalf("404 no debe ser ErrUnauthorized: %v", err)
 	}
 }
+
+func TestPutEscribeContenido(t *testing.T) {
+	var gotMethod, gotType, gotBody, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotType = r.Header.Get("Content-Type")
+		gotAuth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "nacho", "token")
+	if err := c.Put(context.Background(), "/Fotos/IMG_1.jpg.xmp", "application/rdf+xml", []byte("<xmp/>")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("método: got %q, want PUT", gotMethod)
+	}
+	if gotType != "application/rdf+xml" {
+		t.Errorf("content-type: got %q", gotType)
+	}
+	if gotBody != "<xmp/>" {
+		t.Errorf("body: got %q", gotBody)
+	}
+	if gotAuth == "" {
+		t.Error("falta Authorization")
+	}
+}
+
+func TestPutError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "nacho", "token")
+	err := c.Put(context.Background(), "/Fotos/IMG_1.jpg.xmp", "application/rdf+xml", []byte("<xmp/>"))
+	if err == nil {
+		t.Fatal("esperaba error en 403")
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("esperaba ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestGetSmallNoEncontrado(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "nacho", "token")
+	data, found, err := c.GetSmall(context.Background(), "/Fotos/IMG_1.jpg.xmp")
+	if err != nil {
+		t.Fatalf("GetSmall: %v", err)
+	}
+	if found || data != nil {
+		t.Errorf("esperaba found=false sin datos, got found=%v data=%q", found, data)
+	}
+}
+
+func TestGetSmallLeeContenido(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<xmp>hola</xmp>"))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "nacho", "token")
+	data, found, err := c.GetSmall(context.Background(), "/Fotos/IMG_1.jpg.xmp")
+	if err != nil {
+		t.Fatalf("GetSmall: %v", err)
+	}
+	if !found || string(data) != "<xmp>hola</xmp>" {
+		t.Errorf("got found=%v data=%q", found, data)
+	}
+}

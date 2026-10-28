@@ -41,6 +41,7 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/phash"
 	"github.com/gnacho/ocapps/internal/photos/store"
 	"github.com/gnacho/ocapps/internal/photos/thumb"
+	"github.com/gnacho/ocapps/internal/xmp"
 )
 
 // PublicPrefix es el namespace público del módulo photos (SPEC §4.3). Se usa
@@ -341,6 +342,7 @@ func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	s.writeXMP(r.Context(), OwnerFrom(r.Context()), id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -693,6 +695,7 @@ func (s *Server) addTag(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	s.writeXMP(r.Context(), OwnerFrom(r.Context()), id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -702,7 +705,38 @@ func (s *Server) removeTag(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	s.writeXMP(r.Context(), OwnerFrom(r.Context()), id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeXMP proyecta las etiquetas y el favorito del asset a un sidecar .xmp
+// junto a la foto, para que sobrevivan fuera del índice (reindexado, cambio de
+// ruta o pérdida de la BD). El índice sigue siendo la fuente de verdad: el
+// sidecar es estado derivado y su escritura es best effort, así que un fallo
+// solo se registra y nunca tumba la operación principal.
+func (s *Server) writeXMP(ctx context.Context, owner string, id int64) {
+	a, err := s.st.AssetByID(ctx, owner, id)
+	if err != nil {
+		s.log.Warn("xmp: asset no encontrado", "owner", owner, "id", id, "err", err)
+		return
+	}
+	tags, err := s.st.AssetTags(ctx, owner, id)
+	if err != nil {
+		s.log.Warn("xmp: no se pudieron leer las etiquetas", "owner", owner, "id", id, "err", err)
+		return
+	}
+	dav := s.provider.DavFor(ctx, owner)
+	if dav == nil {
+		s.log.Warn("xmp: sin sesión DAV para el owner", "owner", owner)
+		return
+	}
+	href := xmp.SidecarPath(a.Path)
+	// Contexto propio: la respuesta HTTP puede terminar antes que la escritura.
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := dav.Put(cctx, href, "application/rdf+xml", xmp.Build(xmp.Meta{Tags: tags, Favorite: a.IsFavorite})); err != nil {
+		s.log.Warn("xmp: no se pudo escribir el sidecar", "owner", owner, "path", href, "err", err)
+	}
 }
 
 // --- Carpetas ---
