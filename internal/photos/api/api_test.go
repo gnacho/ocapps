@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -429,5 +430,74 @@ func TestFoldersSinEspacio(t *testing.T) {
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/folders", "Bearer tok-alice")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("folders con espacio -> %d", rr.Code)
+	}
+}
+
+// TestFavoriteYTagEscribenSidecar: tras cambiar el favorito o una etiqueta, el
+// handler escribe el paquete XMP junto a la foto (estado derivado del índice).
+func TestFavoriteYTagEscribenSidecar(t *testing.T) {
+	s, st, fp := newMultiServer(t)
+	var mu sync.Mutex
+	var puts []struct{ path, body string }
+	davSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.NotFound(w, r)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		puts = append(puts, struct{ path, body string }{r.URL.Path, string(b)})
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer davSrv.Close()
+	fp.dav = webdav.New(davSrv.URL, "user", "token")
+
+	h := s.Handler()
+	id, _, err := st.UpsertByETag(context.Background(), "id-alice", "/dav/spaces/sa/Fotos/a.jpg", "e1", "a.jpg", "image", time.Now(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := strconv.FormatInt(id, 10)
+	post := func(route, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, PublicPrefix+route, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer tok-alice")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+
+	if rr := post("/api/assets/"+asset+"/favorite", `{"favorite":true}`); rr.Code != http.StatusNoContent {
+		t.Fatalf("favorite -> %d", rr.Code)
+	}
+	mu.Lock()
+	if len(puts) != 1 {
+		mu.Unlock()
+		t.Fatalf("PUTs tras favorito: %d, quiero 1", len(puts))
+	}
+	first := puts[0]
+	mu.Unlock()
+	if first.path != "/dav/spaces/sa/Fotos/a.jpg.xmp" {
+		t.Errorf("ruta del sidecar: %q", first.path)
+	}
+	if !strings.Contains(first.body, "<xmp:Rating>5</xmp:Rating>") {
+		t.Errorf("falta Rating 5: %s", first.body)
+	}
+
+	if rr := post("/api/assets/"+asset+"/tags", `{"tag":"playa"}`); rr.Code != http.StatusNoContent {
+		t.Fatalf("addTag -> %d", rr.Code)
+	}
+	mu.Lock()
+	if len(puts) != 2 {
+		mu.Unlock()
+		t.Fatalf("PUTs tras etiqueta: %d, quiero 2", len(puts))
+	}
+	second := puts[1]
+	mu.Unlock()
+	if !strings.Contains(second.body, "<rdf:li>playa</rdf:li>") {
+		t.Errorf("falta la etiqueta en el sidecar: %s", second.body)
+	}
+	if !strings.Contains(second.body, "<xmp:Rating>5</xmp:Rating>") {
+		t.Errorf("el favorito se perdió al escribir la etiqueta: %s", second.body)
 	}
 }
