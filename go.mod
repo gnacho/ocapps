@@ -1,6 +1,6 @@
 module github.com/gnacho/ocapps
 
-go 1.27.3
+go 1.26.10
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
