@@ -375,7 +375,7 @@ func (c *Client) Put(ctx context.Context, href, contentType string, body []byte)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return statusErr("put", href, resp.Status, resp.StatusCode)
 	}
@@ -394,7 +394,7 @@ func (c *Client) GetSmall(ctx context.Context, href string) (data []byte, found 
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, false, nil
 	}
