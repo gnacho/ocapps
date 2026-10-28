@@ -13,6 +13,7 @@ import (
 
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"github.com/gnacho/ocapps/internal/photos/store"
+	"github.com/gnacho/ocapps/internal/xmp"
 )
 
 type Scanner struct {
@@ -75,7 +76,7 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 	start := time.Now()
 	queue := []string{root}
 	seen := map[string]bool{}
-	var scanned, changed, attempts, failures int
+	var scanned, changed, attempts, failures, xmpApplied int
 
 	for len(queue) > 0 {
 		select {
@@ -102,9 +103,22 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 			s.log.Warn("propfind falló, se omite", "owner", owner, "path", cur, "err", err)
 			continue
 		}
+		// Los sidecars .xmp vienen en el mismo listado que las fotos, así que
+		// saber cuáles hay no cuesta ninguna petición extra. Se descargan por
+		// separado, y solo cuando su etag cambió desde el último scan.
+		sidecars := make(map[string]webdav.Entry)
 		for _, e := range entries {
 			if e.IsDir {
 				queue = append(queue, e.Href) // href absoluto; resolveHref lo usa tal cual
+				continue
+			}
+			if strings.HasSuffix(strings.ToLower(e.Href), ".xmp") {
+				p, _ := url.PathUnescape(e.Href)
+				sidecars[p[:len(p)-4]] = e
+			}
+		}
+		for _, e := range entries {
+			if e.IsDir {
 				continue
 			}
 			if !s.opts.IsMedia(e.Href) {
@@ -121,13 +135,16 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 				mtime = time.Now()
 			}
 			p, _ := url.PathUnescape(e.Href)
-			_, ch, err := s.store.UpsertByETag(ctx, owner, p, e.ETag, path.Base(p), mt, mtime, e.Size)
+			id, ch, err := s.store.UpsertByETag(ctx, owner, p, e.ETag, path.Base(p), mt, mtime, e.Size)
 			if err != nil {
 				s.log.Error("upsert", "owner", owner, "path", p, "err", err)
 				continue
 			}
 			if ch {
 				changed++
+			}
+			if sc, ok := sidecars[p]; ok && s.applyXMP(ctx, owner, id, sc) {
+				xmpApplied++
 			}
 		}
 	}
@@ -143,6 +160,81 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 	}
 	s.log.Info("scan completado",
 		"owner", owner, "escaneados", scanned, "cambiados", changed, "eliminados", removed,
+		"xmp", xmpApplied,
 		"duracion", time.Since(start).Round(time.Second))
 	return nil
+}
+
+// applyXMP proyecta sobre el índice el sidecar XMP de un asset, si cambió desde
+// el último scan. Se aplica de forma conservadora para no destruir metadatos
+// locales con un sidecar ajeno: el favorito solo se toca cuando el paquete trae
+// xmp:Rating, y las etiquetas solo se reemplazan cuando trae al menos una.
+// Devuelve true si ha cambiado algo en el índice.
+func (s *Scanner) applyXMP(ctx context.Context, owner string, id int64, sidecar webdav.Entry) bool {
+	prev, err := s.store.SidecarETag(ctx, owner, id)
+	if err != nil {
+		s.log.Warn("xmp: no se pudo leer el etag aplicado", "owner", owner, "id", id, "err", err)
+		return false
+	}
+	if prev != "" && prev == sidecar.ETag {
+		return false
+	}
+	data, found, err := s.dav.GetSmall(ctx, sidecar.Href)
+	if err != nil {
+		s.log.Warn("xmp: no se pudo leer el sidecar", "owner", owner, "href", sidecar.Href, "err", err)
+		return false
+	}
+	if !found {
+		return false
+	}
+	meta := xmp.Extract(data)
+	a, err := s.store.AssetByID(ctx, owner, id)
+	if err != nil {
+		s.log.Warn("xmp: no se pudo leer el asset", "owner", owner, "id", id, "err", err)
+		return false
+	}
+	applied := false
+	if meta.HasRating && a.IsFavorite != meta.Favorite {
+		if err := s.store.SetFavorite(ctx, owner, id, meta.Favorite); err != nil {
+			s.log.Warn("xmp: no se pudo aplicar el favorito", "owner", owner, "id", id, "err", err)
+			return applied
+		}
+		applied = true
+	}
+	if len(meta.Tags) > 0 {
+		cur, err := s.store.AssetTags(ctx, owner, id)
+		if err != nil {
+			s.log.Warn("xmp: no se pudieron leer las etiquetas", "owner", owner, "id", id, "err", err)
+			return applied
+		}
+		if !sameTags(cur, meta.Tags) {
+			if err := s.store.SetTags(ctx, owner, id, meta.Tags); err != nil {
+				s.log.Warn("xmp: no se pudieron aplicar las etiquetas", "owner", owner, "id", id, "err", err)
+				return applied
+			}
+			applied = true
+		}
+	}
+	if err := s.store.SetSidecarETag(ctx, owner, id, sidecar.ETag); err != nil {
+		s.log.Warn("xmp: no se pudo guardar el etag del sidecar", "owner", owner, "id", id, "err", err)
+	}
+	return applied
+}
+
+// sameTags compara dos conjuntos de etiquetas sin importar el orden (el índice
+// las devuelve ordenadas y el sidecar las trae en su orden de escritura).
+func sameTags(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]bool, len(a))
+	for _, t := range a {
+		seen[t] = true
+	}
+	for _, t := range b {
+		if !seen[t] {
+			return false
+		}
+	}
+	return true
 }
