@@ -81,6 +81,48 @@ OCAPPS_PHOTOS_USER=<usuario> OCAPPS_PHOTOS_APP_TOKEN=<app-token> \
 Docker (incluye ffmpeg en la etapa runtime): `docker build -t ocapps .`.
 Releases: `.goreleaser.yaml` (linux/amd64+arm64, ldflags de versión).
 
+## Instalación desde una release
+
+Cada tag produce binarios estáticos para `linux/amd64` y `linux/arm64` más
+un `checksums.txt` (`.goreleaser.yaml`). El archivo trae el binario `ocapps`
+y una copia de este README. Las releases se generan como borrador, así que
+hay que publicarlas a mano antes de que los enlaces funcionen.
+
+```bash
+VERSION=0.1.4
+BASE=https://github.com/gnacho/ocapps/releases/download/v${VERSION}
+curl -fsSLO ${BASE}/ocapps_${VERSION}_linux_amd64.tar.gz
+curl -fsSLO ${BASE}/checksums.txt
+sha256sum --ignore-missing -c checksums.txt
+tar xzf ocapps_${VERSION}_linux_amd64.tar.gz ocapps
+```
+
+Instalación del servicio. El unit y `deploy/env.example` están en el repo,
+no dentro del archivo de la release:
+
+```bash
+sudo install -m 755 ocapps /usr/local/bin/ocapps
+sudo id -u ocapps >/dev/null 2>&1 || \
+  sudo useradd --system --user-group --home-dir /var/lib/ocapps --shell /usr/sbin/nologin ocapps
+sudo install -d -m 750 /etc/ocapps
+sudo install -m 640 deploy/env.example /etc/ocapps/env
+sudoedit /etc/ocapps/env
+sudo install -m 644 deploy/opencloud-apps.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now opencloud-apps
+curl -s localhost:8096/healthz
+```
+
+`/var/lib/ocapps` no hay que crearlo a mano: el unit lo declara con
+`StateDirectory` y systemd lo prepara con sus permisos al arrancar.
+
+El binario es estático (`CGO_ENABLED=0`). La única dependencia de sistema
+en runtime es `ffmpeg`, y sólo la usa el módulo photos para pósters de vídeo
+y HLS.
+
+Proxy, migración de datos desde los servicios antiguos y rollback:
+[`deploy/README.md`](deploy/README.md).
+
 ## Configuración
 
 Todo por variables de entorno `OCAPPS_*`. Precedencia: `OCAPPS_*` >
@@ -131,3 +173,7 @@ unificado con degradación D3 (H5) y artefactos de despliegue/migración
 `go test -race -shuffle=on ./...` verdes. Pendiente antes de producción:
 ensayo en staging con copias de las BDs reales y del rollback (checklist
 SPEC §9.4) — ver `deploy/README.md`.
+
+## Licencia
+
+AGPL-3.0-only. El texto completo está en [`LICENSE`](LICENSE).
