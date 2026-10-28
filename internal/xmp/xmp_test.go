@@ -76,3 +76,45 @@ func TestSidecarPath(t *testing.T) {
 		t.Fatalf("path: %s", p)
 	}
 }
+
+// TestExtractHasRating: distinguir "sin xmp:Rating" de "rating 0 explícito" es
+// lo que permite al scanner no borrar un favorito local con un sidecar ajeno
+// que no habla de puntuaciones.
+func TestExtractHasRating(t *testing.T) {
+	cases := []struct {
+		name    string
+		rating  string
+		wantHas bool
+		wantFav bool
+	}{
+		{name: "sin rating", rating: "", wantHas: false, wantFav: false},
+		{name: "cero explícito", rating: `<xmp:Rating>0</xmp:Rating>`, wantHas: true, wantFav: false},
+		{name: "tres estrellas", rating: `<xmp:Rating>3</xmp:Rating>`, wantHas: true, wantFav: false},
+		{name: "cinco estrellas", rating: `<xmp:Rating>5</xmp:Rating>`, wantHas: true, wantFav: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			packet := `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">` +
+				`<rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/">` + tc.rating +
+				`</rdf:Description></rdf:RDF></x:xmpmeta>`
+			got := Extract([]byte(packet))
+			if got.HasRating != tc.wantHas {
+				t.Errorf("HasRating=%v, quiero %v", got.HasRating, tc.wantHas)
+			}
+			if got.Favorite != tc.wantFav {
+				t.Errorf("Favorite=%v, quiero %v", got.Favorite, tc.wantFav)
+			}
+		})
+	}
+}
+
+// TestBuildSeLeeConRating: un sidecar propio siempre declara el rating, así que
+// al releerlo HasRating es true tanto si es favorita como si no.
+func TestBuildSeLeeConRating(t *testing.T) {
+	for _, fav := range []bool{true, false} {
+		got := Extract(Build(Meta{Tags: []string{"x"}, Favorite: fav}))
+		if !got.HasRating || got.Favorite != fav {
+			t.Fatalf("fav=%v: HasRating=%v Favorite=%v", fav, got.HasRating, got.Favorite)
+		}
+	}
+}

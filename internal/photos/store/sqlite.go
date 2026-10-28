@@ -858,6 +858,48 @@ func (s *Store) AssetTags(ctx context.Context, owner string, assetID int64) ([]s
 	return out, rows.Err()
 }
 
+// SetTags reemplaza el conjunto de etiquetas de un asset del owner en una sola
+// transacción. Lo usa el scanner al proyectar un sidecar XMP: sin el reemplazo
+// una etiqueta borrada fuera de la web seguiría viva en el índice. IDOR →
+// ErrNoRows.
+func (s *Store) SetTags(ctx context.Context, owner string, assetID int64, tags []string) error {
+	var one int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM assets WHERE id=? AND owner=?`, assetID, owner).Scan(&one); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM asset_tags WHERE asset_id=?`, assetID); err != nil {
+		return err
+	}
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO asset_tags (asset_id, tag) VALUES (?,?)`, assetID, t); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// SidecarETag devuelve el etag del último sidecar XMP aplicado a un asset
+// (vacío = nunca se aplicó). IDOR → ErrNoRows.
+func (s *Store) SidecarETag(ctx context.Context, owner string, assetID int64) (string, error) {
+	var etag string
+	err := s.db.QueryRowContext(ctx, `SELECT sidecar_etag FROM assets WHERE id=? AND owner=?`, assetID, owner).Scan(&etag)
+	return etag, err
+}
+
+// SetSidecarETag marca el sidecar aplicado para no volver a descargarlo.
+func (s *Store) SetSidecarETag(ctx context.Context, owner string, assetID int64, etag string) error {
+	return updateOwned(s.db.ExecContext(ctx, `UPDATE assets SET sidecar_etag=? WHERE id=? AND owner=?`, etag, assetID, owner))
+}
+
 // ListTags: etiquetas del owner con recuento de fotos vivas.
 func (s *Store) ListTags(ctx context.Context, owner string) ([]Tag, error) {
 	rows, err := s.db.QueryContext(ctx, `

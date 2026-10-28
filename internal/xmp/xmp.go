@@ -13,10 +13,14 @@ import (
 // RatingFavorite es la puntuación que representa "favorita" en xmp:Rating.
 const RatingFavorite = 5
 
-// Meta son los campos que el servicio proyecta al sidecar.
+// Meta son los campos que el servicio proyecta al sidecar. HasRating distingue
+// "el sidecar no trae xmp:Rating" de "trae un 0 explícito": al leer un paquete
+// ajeno, sin esa diferencia no se puede saber si el favorito debe borrarse o
+// dejarse como esté.
 type Meta struct {
-	Tags     []string
-	Favorite bool
+	Tags      []string
+	Favorite  bool
+	HasRating bool
 }
 
 // SidecarPath devuelve la ruta del sidecar de una foto (misma carpeta, nombre + .xmp).
@@ -64,7 +68,7 @@ func Extract(data []byte) Meta {
 						Li []string `xml:"li"`
 					} `xml:"Bag"`
 				} `xml:"subject"`
-				Rating int `xml:"Rating"`
+				Rating *int `xml:"Rating"`
 			} `xml:"Description"`
 		} `xml:"RDF"`
 	}
@@ -78,8 +82,11 @@ func Extract(data []byte) Meta {
 				m.Tags = append(m.Tags, t)
 			}
 		}
-		if d.Rating >= RatingFavorite {
-			m.Favorite = true
+		if d.Rating != nil {
+			m.HasRating = true
+			if *d.Rating >= RatingFavorite {
+				m.Favorite = true
+			}
 		}
 	}
 	return m

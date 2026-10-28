@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// lastVersion es la última migración de migrations/: al añadir una nueva hay
+// que subir este número. Los tests de adopción comparan contra él para no
+// tocar tres literales cada vez.
+const lastVersion = 3
+
 // liveSchemaSQL reproduce una memories.db VIVA pre-H8 tal y como la deja el
 // servicio histórico: los CREATE TABLE originales (sin is_archived/phash ni
 // owner) más los dos ALTER idempotentes que se aplicaban en caliente al abrir.
@@ -115,8 +120,8 @@ func TestBaselineAdoptaBDViva(t *testing.T) {
 		t.Fatalf("adopción de BD viva: %v", err)
 	}
 	defer st.Close()
-	if v := userVersion(t, path); v != 2 {
-		t.Fatalf("user_version tras baseline+002 = %d, quiero 2", v)
+	if v := userVersion(t, path); v != lastVersion {
+		t.Fatalf("user_version tras baseline+migraciones = %d, quiero %d", v, lastVersion)
 	}
 	// el dato preexistente queda con owner='' a la espera del backfill (H8)
 	stats, err := st.Stats(context.Background(), "")
@@ -129,8 +134,8 @@ func TestBaselineAdoptaBDViva(t *testing.T) {
 		t.Fatalf("re-apertura: %v", err)
 	}
 	st2.Close()
-	if v := userVersion(t, path); v != 2 {
-		t.Fatalf("user_version tras re-apertura = %d", v)
+	if v := userVersion(t, path); v != lastVersion {
+		t.Fatalf("user_version tras re-apertura = %d, quiero %d", v, lastVersion)
 	}
 }
 
@@ -143,8 +148,8 @@ func TestBaselineBDNueva(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if v := userVersion(t, path); v != 2 {
-		t.Fatalf("user_version = %d, quiero 2", v)
+	if v := userVersion(t, path); v != lastVersion {
+		t.Fatalf("user_version = %d, quiero %d", v, lastVersion)
 	}
 	// el esquema funciona de verdad (con owner, H8)
 	ctx := context.Background()
