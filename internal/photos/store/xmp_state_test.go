@@ -15,7 +15,7 @@ func TestSetTagsReemplaza(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 
 	id, _, err := st.UpsertByETag(ctx, "alice", "/dav/x/a.jpg", "e1", "a.jpg", "image", time.Now(), 10)
@@ -57,7 +57,7 @@ func TestSetTagsIDOR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 
 	id, _, err := st.UpsertByETag(ctx, "alice", "/dav/x/a.jpg", "e1", "a.jpg", "image", time.Now(), 10)
@@ -79,7 +79,7 @@ func TestSidecarETag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 
 	id, _, err := st.UpsertByETag(ctx, "alice", "/dav/x/a.jpg", "e1", "a.jpg", "image", time.Now(), 10)

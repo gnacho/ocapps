@@ -26,7 +26,7 @@ func davFakeXMP(t *testing.T, folder, version string, entries []string, sidecars
 				return
 			}
 			w.Header().Set("Content-Type", "application/xml")
-			fmt.Fprint(w, multistatusV(folder, version, entries...))
+			_, _ = fmt.Fprint(w, multistatusV(folder, version, entries...))
 		case "GET":
 			body, ok := sidecars[r.URL.Path]
 			if !ok {
@@ -35,7 +35,7 @@ func davFakeXMP(t *testing.T, folder, version string, entries []string, sidecars
 			}
 			atomic.AddInt32(gets, 1)
 			w.Header().Set("Content-Type", "application/rdf+xml")
-			fmt.Fprint(w, body)
+			_, _ = fmt.Fprint(w, body)
 		default:
 			http.NotFound(w, r)
 		}
@@ -84,7 +84,7 @@ func TestScanAplicaSidecarAjeno(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 
 	const folder = "/dav/spaces/x/Fotos/"
@@ -139,7 +139,7 @@ func TestScanSidecarSinRatingNoBorraFavorito(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 	const folder = "/dav/spaces/x/Fotos/"
 
