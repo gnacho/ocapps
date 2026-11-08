@@ -7,7 +7,14 @@
 #
 # The app id must be the directory name under /etc/opencloud/web/assets/apps
 # and the key used in /etc/opencloud/apps.yaml.
+#
+# agenda and opencloud-contacts do not share the ocapps backend: they are pure
+# web extensions that talk CalDAV/CardDAV to Radicale. They are listed here
+# because our mirrors publish their build as a release asset. Drop them on a
+# host without Radicale.
 
 news|gnacho/ocnews|^news-[0-9.]+\.zip$
 notes|gnacho/ocnotes|^notes-[0-9.]+\.zip$
 ocphotos|gnacho/ocphotos|^ocphotos-[0-9.]+\.zip$
+agenda|gnacho/opencloud-agenda|^agenda-[0-9.]+\.zip$
+opencloud-contacts|gnacho/opencloud-contacts|^contacts-[0-9.]+\.zip$

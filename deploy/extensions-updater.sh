@@ -169,19 +169,30 @@ backup_app() {
 install_archive() {
     local id=$1 file=$2 tag=$3 tmp
     tmp=$(mktemp -d)
-    python3 - "$file" "$tmp" "$id" <<'PY'
+    local root manifest entry
+    root=$(python3 - "$file" "$tmp" "$id" <<'PY'
 import os, sys, zipfile
 src, dst, app_id = sys.argv[1], sys.argv[2], sys.argv[3]
 with zipfile.ZipFile(src) as z:
     z.extractall(dst)
-root = os.path.join(dst, app_id)
-if not os.path.isfile(os.path.join(root, "manifest.json")):
-    sys.exit(f"archive does not contain {app_id}/manifest.json")
+# The archive may wrap the build in a directory named after the project
+# instead of the app id, so locate the manifest instead of assuming a name.
+candidates = [os.path.join(dst, app_id)]
+for base, _dirs, files in os.walk(dst):
+    if "manifest.json" in files:
+        candidates.append(base)
+for base in candidates:
+    if os.path.isfile(os.path.join(base, "manifest.json")):
+        print(base)
+        break
+else:
+    sys.exit("archive does not contain a manifest.json")
 PY
-    local manifest="$tmp/$id/manifest.json" entry
+) || die "cannot read $id archive"
+    manifest="$root/manifest.json"
     entry=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("entrypoint",""))' "$manifest")
     [ -n "$entry" ] || die "manifest without entrypoint in $id"
-    [ -f "$tmp/$id/$entry" ] || die "manifest entrypoint $entry missing in $id"
+    [ -f "$root/$entry" ] || die "manifest entrypoint $entry missing in $id"
 
     if [ -d "$APPS_DIR/$id" ]; then
         local b
@@ -189,7 +200,7 @@ PY
         banner "  backup: $b"
     fi
     rm -rf "${APPS_DIR:?}/$id"
-    cp -a "$tmp/$id" "$APPS_DIR/$id"
+    cp -a "$root" "$APPS_DIR/$id"
     chown -R 1000:1000 "$APPS_DIR/$id"
     write_stamp "$id" "release:$tag"
     rm -rf "$tmp"
