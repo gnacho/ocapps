@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Extensiones de OpenCloud</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f8fa; --fg:#191c1d; --muted:#40484c; --line:#bfc8cc; --accent:#e2baff; --on-accent:#20434f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161616; --fg:#e5e5e5; --muted:#a8b0b4; --line:#3a3f41; --accent:#e2baff; --on-accent:#20434f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; font: 14px/1.5 Inter, system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 20px; color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  input[type=password], input[type=text] { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; min-width: 260px; font: inherit; }
+  button { padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  td.mono { font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
+  .tag.ok { border-color: #7bbf8a; }
+  .tag.new { border-color: #d9a441; }
+  .tag.local { border-color: #7aa7d9; }
+  .tag.err { border-color: #d97a7a; }
+  pre { background: rgba(127,127,127,.12); padding: 12px; border-radius: 8px; overflow: auto; max-height: 260px; font-size: 12.5px; }
+  .muted { color: var(--muted); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <h1>Extensiones de OpenCloud</h1>
+  <p class="lead">Instala y actualiza las extensiones desde sus releases de GitHub. El panel llama a <code>ocapps-ext</code> en el servidor; OpenCloud se reinicia al terminar.</p>
+
+  <div class="row">
+    <input id="token" type="password" placeholder="Token de administración" autocomplete="off">
+    <button id="save" class="primary">Guardar token</button>
+    <button id="reload">Recargar</button>
+    <span id="msg" class="muted"></span>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>App</th><th>Instalado</th><th>Publicado</th><th>Estado</th><th></th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <div id="lastWrap" class="hidden">
+    <h2 style="font-size:14px;margin:24px 0 8px">Última ejecución</h2>
+    <pre id="last"></pre>
+  </div>
+
+<script>
+const TOKEN_KEY = 'ocappsAdminToken';
+const tokenInput = document.getElementById('token');
+const rows = document.getElementById('rows');
+const msg = document.getElementById('msg');
+const lastWrap = document.getElementById('lastWrap');
+const lastPre = document.getElementById('last');
+
+tokenInput.value = localStorage.getItem(TOKEN_KEY) || '';
+document.getElementById('save').onclick = () => {
+  localStorage.setItem(TOKEN_KEY, tokenInput.value.trim());
+  msg.textContent = 'Token guardado';
+  load();
+};
+document.getElementById('reload').onclick = load;
+
+function headers() {
+  return { 'X-Ocapps-Admin-Token': localStorage.getItem(TOKEN_KEY) || '' };
+}
+
+const LABEL = {
+  up_to_date: ['Al día', 'ok'],
+  update_available: ['Actualizable', 'new'],
+  local_build: ['Build local', 'local'],
+  error: ['Error', 'err']
+};
+
+async function load() {
+  msg.textContent = 'Cargando…';
+  try {
+    const res = await fetch('api/extensions', { headers: headers() });
+    if (res.status === 401) { msg.textContent = 'Token incorrecto o vacío'; rows.innerHTML = ''; return; }
+    const data = await res.json();
+    render(data);
+    msg.textContent = '';
+  } catch (e) {
+    msg.textContent = 'No se pudo consultar: ' + e.message;
+  }
+}
+
+function render(data) {
+  rows.innerHTML = '';
+  for (const app of data.apps || []) {
+    const [label, cls] = LABEL[app.status] || [app.status, ''];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono">${app.id}<div class="muted" style="font-size:11px">${app.repo}</div></td>
+      <td class="mono">${app.installed || '—'}</td>
+      <td class="mono">${app.latest || '—'}</td>
+      <td><span class="tag ${cls}">${label}</span>${app.error ? `<div class="muted" style="font-size:11px">${app.error}</div>` : ''}</td>
+      <td></td>`;
+    const cell = tr.lastElementChild;
+
+    if (app.status === 'update_available') {
+      const b = document.createElement('button');
+      b.className = 'primary';
+      b.textContent = 'Actualizar';
+      b.onclick = () => run(app.id, false, b);
+      cell.appendChild(b);
+    } else if (app.status === 'local_build') {
+      const b = document.createElement('button');
+      b.textContent = 'Reemplazar por la release';
+      b.onclick = () => {
+        if (confirm(`Esto sustituye el build local de ${app.id} por la release ${app.latest}. ¿Seguir?`)) run(app.id, true, b);
+      };
+      cell.appendChild(b);
+    } else if (app.status === 'error' && app.installed === '') {
+      const b = document.createElement('button');
+      b.textContent = 'Instalar';
+      b.onclick = () => run(app.id, false, b);
+      cell.appendChild(b);
+    }
+    rows.appendChild(tr);
+  }
+  if (data.last) {
+    lastWrap.classList.remove('hidden');
+    lastPre.textContent = `$ ocapps-ext update ${data.last.app}\n\n${data.last.output}`;
+  }
+}
+
+async function run(id, force, btn) {
+  btn.disabled = true;
+  msg.textContent = `Actualizando ${id}… puede tardar y OpenCloud se reiniciará`;
+  try {
+    const url = `api/extensions/${encodeURIComponent(id)}/update${force ? '?force=1' : ''}`;
+    const res = await fetch(url, { method: 'POST', headers: headers() });
+    const data = await res.json();
+    lastWrap.classList.remove('hidden');
+    lastPre.textContent = `$ ocapps-ext update ${force ? '--force ' : ''}${id}\n\n${(data.result && data.result.output) || data.error || ''}`;
+    msg.textContent = res.ok ? 'Hecho' : 'Terminó con error (ver salida)';
+  } catch (e) {
+    msg.textContent = 'Fallo de red: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    setTimeout(load, 1500);
+  }
+}
+
+load();
+</script>
+</body>
+</html>

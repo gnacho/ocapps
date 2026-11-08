@@ -24,6 +24,7 @@ import (
 	"github.com/gnacho/ocapps/internal/common/httpx"
 	oclog "github.com/gnacho/ocapps/internal/common/log"
 	commonmodule "github.com/gnacho/ocapps/internal/common/module"
+	"github.com/gnacho/ocapps/internal/extensions"
 	"github.com/gnacho/ocapps/internal/news"
 	newsapi "github.com/gnacho/ocapps/internal/news/api"
 	"github.com/gnacho/ocapps/internal/notes"
@@ -253,7 +254,38 @@ func wire(cfg *config.Config, log *slog.Logger) *app {
 
 	a.mux.HandleFunc("GET /healthz", a.handleHealthz)
 	a.mux.HandleFunc("GET /readyz", a.handleReadyz)
+	a.wireExtensions(log)
 	return a
+}
+
+// wireExtensions mounts the extension installer panel. It stays off unless an
+// admin token is configured: the panel can install code and restart OpenCloud,
+// so an unset token must mean "not available", never "available to anyone".
+func (a *app) wireExtensions(log *slog.Logger) {
+	token := os.Getenv("OCAPPS_ADMIN_TOKEN")
+	if token == "" {
+		return
+	}
+	confPath := envOr("OCAPPS_EXT_CONF", "/etc/ocapps/extensions.conf")
+	appsDir := envOr("OCAPPS_EXT_APPS_DIR", "/etc/opencloud/web/assets/apps")
+	helper := envOr("OCAPPS_EXT_HELPER", "/usr/local/sbin/ocapps-ext")
+
+	conf, err := extensions.LoadConf(confPath)
+	if err != nil {
+		log.Warn("panel de extensiones deshabilitado", "err", err, "conf", confPath)
+		return
+	}
+	gh := extensions.NewGitHub(nil, os.Getenv("GITHUB_TOKEN"), 10*time.Minute)
+	svc := extensions.NewService(appsDir, helper, true, conf, gh)
+	extensions.Register(a.mux, svc, token)
+	log.Info("panel de extensiones activo", "apps", len(conf), "helper", helper)
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func (a *app) wireNews(gv *commonauth.GraphValidator) *entry {

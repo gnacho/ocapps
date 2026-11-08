@@ -52,6 +52,52 @@ install -m 644 deploy/ocapps-ext-update.service deploy/ocapps-ext-update.timer /
 systemctl daemon-reload && systemctl enable --now ocapps-ext-update.timer
 ```
 
+## Panel de extensiones dentro de la app
+
+`ocapps` puede servir un panel en `/ocapps-admin/` para instalar y actualizar
+las extensiones sin entrar por SSH. Está desactivado salvo que se configure un
+token:
+
+```sh
+# 1. token (guardado en el fichero, nunca en la línea de comandos del shell)
+head -c 32 /dev/urandom | base64 | tr -d '\n=+/' | cut -c1-40 > /etc/ocapps/admin-token
+chmod 600 /etc/ocapps/admin-token
+printf 'OCAPPS_ADMIN_TOKEN=%s\n' "$(cat /etc/ocapps/admin-token)" >> /etc/ocapps/env
+
+# 2. el servicio corre como usuario ocapps: necesita poder llamar al helper
+cat > /etc/sudoers.d/ocapps-ext <<'EOF'
+ocapps ALL=(root) NOPASSWD: /usr/local/sbin/ocapps-ext
+EOF
+chmod 440 /etc/sudoers.d/ocapps-ext
+```
+
+Con `NoNewPrivileges=true` sudo no funciona, así que el unit lo pone en `false`
+(`install.sh` ya lo deja así). El resto del hardening no cambia: el proceso
+sigue con `ProtectSystem=strict` y sólo escribe en `/var/lib/ocapps`.
+
+Qué expone:
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /ocapps-admin/` | Panel HTML, sin estado en servidor |
+| `GET /ocapps-admin/api/extensions` | Inventario: app, sello instalado, última release, estado |
+| `POST /ocapps-admin/api/extensions/{id}/update` | Ejecuta `ocapps-ext update <id>` (con `?force=1` reemplaza también un build local) |
+
+Reglas de seguridad que aplica el código, no la documentación:
+
+- **Sin `OCAPPS_ADMIN_TOKEN` las rutas no se registran**: un fallo de
+  configuración deja el panel inexistente, no abierto.
+- La comparación del token es en tiempo constante y va en la cabecera
+  `X-Ocapps-Admin-Token`.
+- El `{id}` debe existir en `extensions.conf`; no se pueden pasar argumentos
+  al helper, así que la superficie HTTP no sirve para ejecutar otra cosa.
+- Sólo se instala lo que publican los repos configurados, y el helper valida
+  el asset por patrón y el `manifest.json` + `entrypoint` antes de reemplazar.
+
+Tras reiniciar `opencloud`, el panel queda accesible en
+`https://<dominio>/ocapps-admin/` (necesita su ruta en el proxy hacia
+`127.0.0.1:8096`).
+
 
 ## Requisitos
 
