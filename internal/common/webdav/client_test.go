@@ -367,3 +367,21 @@ func TestGetSmallLeeContenido(t *testing.T) {
 		t.Errorf("got found=%v data=%q", found, data)
 	}
 }
+
+// TestFileURL: los caracteres que rompen la URL se escapan y lo que ya viene
+// percent-encoded se respeta (un doble escape daría 404 en todo).
+func TestFileURL(t *testing.T) {
+	c := &Client{base: "https://cloud.example"}
+	cases := map[string]string{
+		"/dav/spaces/s/Fotos/a.jpg":         "https://cloud.example/dav/spaces/s/Fotos/a.jpg",
+		"/dav/spaces/s/Fotos/Bug #14_1.png": "https://cloud.example/dav/spaces/s/Fotos/Bug%20%2314_1.png",
+		"/dav/spaces/s/Fotos/a%20b.jpg":     "https://cloud.example/dav/spaces/s/Fotos/a%20b.jpg",
+		"/dav/spaces/s/Fotos/100%.png":      "https://cloud.example/dav/spaces/s/Fotos/100%25.png",
+		"/dav/spaces/s/Fotos/qué tal.jpg":   "https://cloud.example/dav/spaces/s/Fotos/qué%20tal.jpg",
+	}
+	for in, want := range cases {
+		if got := c.FileURL(in); got != want {
+			t.Errorf("FileURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
