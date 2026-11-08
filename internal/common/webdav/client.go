@@ -149,7 +149,41 @@ func (c *Client) FileURL(href string) string {
 	if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
 		return href
 	}
-	return c.base + href
+	return c.base + escapeHref(href)
+}
+
+// escapeHref escapa los caracteres que rompen una URL pero respeta lo que ya
+// viene percent-encoded de PROPFIND. Sin esto, un fichero llamado
+// "Bug #14_1.png" corta la URL en el '#' (el resto se interpreta como
+// fragmento) y el servidor responde 404: ni miniatura ni EXIF.
+func escapeHref(href string) string {
+	var b strings.Builder
+	b.Grow(len(href) + 8)
+	for i := 0; i < len(href); i++ {
+		ch := href[i]
+		switch ch {
+		case '#':
+			b.WriteString("%23")
+		case '?':
+			b.WriteString("%3F")
+		case ' ':
+			b.WriteString("%20")
+		case '%':
+			// '%' ya válido (dos dígitos hex detrás) se deja tal cual
+			if i+2 < len(href) && isHex(href[i+1]) && isHex(href[i+2]) {
+				b.WriteByte(ch)
+			} else {
+				b.WriteString("%25")
+			}
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	return b.String()
+}
+
+func isHex(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 // MeID devuelve el id del usuario de la credencial del cliente (Basic o
