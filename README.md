@@ -83,6 +83,37 @@ Releases: `.goreleaser.yaml` (linux/amd64+arm64, ldflags de versión).
 
 ## Instalación desde una release
 
+### Instalador de un comando
+
+En un servidor con OpenCloud ya funcionando:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gnacho/ocapps/main/install.sh \
+  | sudo sh -s -- --url https://cloud.example.com
+```
+
+Hace todo: usuario `ocapps`, binario, `/etc/ocapps/env`, unit systemd, servicio
+activo y, salvo `--no-extensions`, el actualizador `ocapps-ext` más las tres
+extensiones (`--apps news,notes` para elegir). Es idempotente.
+
+```bash
+# solo el backend, sin extensiones
+... | sudo sh -s -- --url https://cloud.example.com --no-extensions
+# con el panel de extensiones dentro de la app
+... | sudo sh -s -- --url https://cloud.example.com --admin-token <token>
+# ver qué haría, sin tocar nada
+... | sh -s -- --url https://cloud.example.com --dry-run
+# desinstalar (conserva /var/lib/ocapps) o borrarlo todo
+... | sudo sh -s -- --uninstall
+... | sudo sh -s -- --purge
+```
+
+Después solo falta publicar las rutas en el proxy (`/ocphotos-api/`,
+`/index.php/apps/news/`, `/index.php/apps/notes/`, los dos
+`/ocs/v2.php/cloud/*` y `/ocapps-admin/`) hacia `127.0.0.1:8096`.
+
+### A mano
+
 Cada tag produce binarios estáticos para `linux/amd64` y `linux/arm64` más
 un `checksums.txt` (`.goreleaser.yaml`). El archivo trae el binario `ocapps`
 y una copia de este README. Las releases se generan como borrador, así que
