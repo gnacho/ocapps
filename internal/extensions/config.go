@@ -32,7 +32,7 @@ func LoadConf(path string) ([]AppConf, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var out []AppConf
 	sc := bufio.NewScanner(f)

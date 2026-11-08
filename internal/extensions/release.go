@@ -83,7 +83,7 @@ func (g *GitHub) fetch(ctx context.Context, repo string, re *regexp.Regexp) (Rel
 	if err != nil {
 		return Release{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return Release{}, fmt.Errorf("github: %s", resp.Status)
 	}
