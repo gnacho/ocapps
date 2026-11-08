@@ -111,7 +111,11 @@ func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module
 	}
 	validator := gv.WithPolicy(auth.MultiTenant())
 
-	thumbs, err := thumb.New(filepath.Join(dataDir, "thumbs"))
+	cacheDir := pcfg.CacheDir
+	if cacheDir == "" {
+		cacheDir = filepath.Join(dataDir, "thumbs")
+	}
+	thumbs, err := thumb.New(cacheDir)
 	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("photos: thumb cache: %w", err)

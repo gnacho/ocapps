@@ -101,6 +101,10 @@ type PhotosConfig struct {
 	Token     string    // Bearer estático DEPRECATED (exige User); "" = desactivado
 	ScanRoot  string
 	ScanEvery time.Duration
+	// CacheDir: raíz de la caché de miniaturas. Vacio = <DATA_DIR>/thumbs.
+	// Conviene apuntarla a un volumen con espacio (p. ej. el mismo donde vive
+	// OpenCloud) para no engordar el rootfs del contenedor.
+	CacheDir string
 }
 
 // LegacyUse registra una variable legacy usada en el arranque (§3.1).
@@ -374,6 +378,7 @@ func Load() (*Config, error) {
 		AppToken: l.get("OCAPPS_PHOTOS_APP_TOKEN", "OC_APP_TOKEN", ""),
 		Token:    l.get("OCAPPS_PHOTOS_TOKEN", "MEMORIES_TOKEN", ""),
 		ScanRoot: l.get("OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT", DefaultScanRoot),
+		CacheDir: l.get("OCAPPS_PHOTOS_CACHE_DIR", "", ""),
 	}
 	var photosErrs []error
 	var usersErr error
