@@ -12,7 +12,46 @@ Referencia: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) y §9.
 | [`env.example`](env.example) | Plantilla de `/etc/ocapps/env` con cada variable y su legacy (SPEC §9.2/§3.2) |
 | [`proxy/nginx.conf`](proxy/nginx.conf) · [`proxy/Caddyfile`](proxy/Caddyfile) · [`proxy/traefik.yml`](proxy/traefik.yml) | Snippets de proxy (SPEC §9.3) |
 | [`migrate.sh`](migrate.sh) | Migración de datos 3→1, idempotente, con `--dry-run` y `--force-redeploy` (SPEC §5.4) |
+| [`extensions-updater.sh`](extensions-updater.sh) | Instala, actualiza y revierte las extensiones web desde sus releases de GitHub (`list`, `check`, `install`, `update`, `rollback`) |
+| [`extensions.conf.example`](extensions.conf.example) | Plantilla de `/etc/ocapps/extensions.conf` (app, repo y patrón del asset) |
+| [`ocapps-ext-update.service`](ocapps-ext-update.service) · [`ocapps-ext-update.timer`](ocapps-ext-update.timer) | Actualización semanal opcional |
 | [`repo-notices/`](repo-notices/) | Borradores de aviso para los README de los repos de app |
+
+## Extensiones web: instalar y actualizar sin hacerlo a mano
+
+```sh
+install -m 755 deploy/extensions-updater.sh /usr/local/sbin/ocapps-ext
+install -d /etc/ocapps
+install -m 644 deploy/extensions.conf.example /etc/ocapps/extensions.conf
+
+ocapps-ext check                 # qué hay instalado y qué hay publicado
+ocapps-ext install news          # alta de una app que no está
+ocapps-ext update --dry-run      # simulación
+ocapps-ext update                # descarga, reemplaza, reinicia y verifica
+ocapps-ext rollback notes        # vuelve a la copia anterior
+```
+
+Reglas que aplica:
+
+- Cada app instalada lleva un sello `.ocapps-release` con `release:<tag>` o
+  `local:<fecha>`. El actualizador **no toca** un build local salvo `--force`,
+  así que un `dist` compilado a mano no se pisa con la última release.
+- Antes de reemplazar, copia la carpeta a `/var/backups/ocapps-ext/<fecha>/`
+  (se conservan las 5 últimas).
+- Reinicia el servicio **una sola vez** para todas las apps cambiadas y
+  verifica que `/config.json` las lista y que su `remoteEntry` responde. Si
+  algo falla, restaura las copias, reinicia y sale con código 3.
+- Comprueba que el servicio tiene `WEB_ASSET_APPS_PATH` apuntando al
+  directorio de apps; sin esa variable el host no lista las extensiones.
+- `install` añade la entrada en `/etc/opencloud/apps.yaml` si falta.
+
+El timer semanal (`ocapps-ext-update.timer`) es opcional y viene desactivado:
+
+```sh
+install -m 644 deploy/ocapps-ext-update.service deploy/ocapps-ext-update.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now ocapps-ext-update.timer
+```
+
 
 ## Requisitos
 

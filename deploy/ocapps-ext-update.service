@@ -1,0 +1,11 @@
+[Unit]
+Description=Update the OpenCloud web extensions from their GitHub releases
+Documentation=file:/usr/local/sbin/ocapps-ext
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ocapps-ext update
+# Local builds are never replaced, and a failed verification rolls back.
+Nice=10

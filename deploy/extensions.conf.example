@@ -1,0 +1,13 @@
+# /etc/ocapps/extensions.conf - apps that ship as GitHub release assets.
+#
+# One line per app: <app-id>|<github repo>|<asset name regex>
+# The regex is matched against each release asset, so a repo that publishes
+# more than one artifact (for example ocnews, which also ships the collector
+# binaries) resolves to the right zip.
+#
+# The app id must be the directory name under /etc/opencloud/web/assets/apps
+# and the key used in /etc/opencloud/apps.yaml.
+
+news|gnacho/ocnews|^news-[0-9.]+\.zip$
+notes|gnacho/ocnotes|^notes-[0-9.]+\.zip$
+ocphotos|gnacho/ocphotos|^ocphotos-[0-9.]+\.zip$
