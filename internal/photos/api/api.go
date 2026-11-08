@@ -32,11 +32,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gnacho/ocapps/internal/common/auth"
 	"github.com/gnacho/ocapps/internal/common/httpx"
 	"github.com/gnacho/ocapps/internal/common/webdav"
+	"github.com/gnacho/ocapps/internal/photos/exif"
 	"github.com/gnacho/ocapps/internal/photos/geo"
 	"github.com/gnacho/ocapps/internal/photos/phash"
 	"github.com/gnacho/ocapps/internal/photos/store"
@@ -91,6 +93,9 @@ func withOwner(ctx context.Context, owner string) context.Context {
 
 type Server struct {
 	st        *store.Store
+	exif      *exif.Worker // opcional: cola EXIF bajo demanda
+	exifMu    sync.Mutex
+	exifBusy  map[string]bool
 	thumbs    *thumb.Service
 	geo       *geo.Geocoder
 	validator *auth.GraphValidator // nil = solo token estático
@@ -100,8 +105,12 @@ type Server struct {
 }
 
 func New(st *store.Store, th *thumb.Service, gc *geo.Geocoder, v *auth.GraphValidator, sp SessionProvider, cfg Config, log *slog.Logger) *Server {
-	return &Server{st: st, thumbs: th, geo: gc, validator: v, provider: sp, cfg: cfg, log: log}
+	return &Server{st: st, thumbs: th, geo: gc, validator: v, provider: sp, cfg: cfg, log: log,
+		exifBusy: map[string]bool{}}
 }
+
+// SetExifWorker habilita POST /api/admin/exif. Sin worker la ruta responde 503.
+func (s *Server) SetExifWorker(w *exif.Worker) { s.exif = w }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -134,6 +143,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+PublicPrefix+"/api/albums/{id}/assets", s.addToAlbum)
 	mux.HandleFunc("DELETE "+PublicPrefix+"/api/albums/{id}/assets/{assetId}", s.removeFromAlbum)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/admin/rescan", s.rescan)
+	mux.HandleFunc("POST "+PublicPrefix+"/api/admin/exif", s.exifBacklog)
 	// CORS por fuera de auth: el preflight OPTIONS se responde 204 sin auth
 	// (SPEC §4.4).
 	return httpx.CORS(s.withAuth(mux))
@@ -861,6 +871,51 @@ func (s *Server) removeFromAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// exifBacklog procesa la cola de EXIF pendiente del owner en segundo plano.
+// Hace falta porque el worker normal solo corre DESPUES de un scan completo: en
+// bibliotecas grandes los scans se encadenan y la cola no avanza nunca.
+func (s *Server) exifBacklog(w http.ResponseWriter, r *http.Request) {
+	owner := OwnerFrom(r.Context())
+	if s.exif == nil {
+		http.Error(w, "exif no disponible", http.StatusServiceUnavailable)
+		return
+	}
+	s.exifMu.Lock()
+	if s.exifBusy[owner] {
+		s.exifMu.Unlock()
+		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "exif ya en curso"})
+		return
+	}
+	if s.exifBusy == nil {
+		s.exifBusy = map[string]bool{}
+	}
+	s.exifBusy[owner] = true
+	s.exifMu.Unlock()
+
+	dav := s.provider.DavFor(r.Context(), owner)
+	if dav == nil {
+		s.exifMu.Lock()
+		delete(s.exifBusy, owner)
+		s.exifMu.Unlock()
+		http.Error(w, "sesión del usuario no disponible", http.StatusServiceUnavailable)
+		return
+	}
+
+	go func() {
+		defer func() {
+			s.exifMu.Lock()
+			delete(s.exifBusy, owner)
+			s.exifMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		defer cancel()
+		if err := s.exif.Run(ctx, owner, dav); err != nil {
+			s.log.Warn("exif backlog", "owner", owner, "err", err)
+		}
+	}()
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "exif encolado"})
 }
 
 // rescan: encola un scan SOLO del owner del request (H8: ya no hay scan global).

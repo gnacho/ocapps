@@ -16,6 +16,7 @@ import (
 
 	"github.com/gnacho/ocapps/internal/common/auth"
 	"github.com/gnacho/ocapps/internal/common/webdav"
+	"github.com/gnacho/ocapps/internal/photos/exif"
 	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
@@ -499,5 +500,24 @@ func TestFavoriteYTagEscribenSidecar(t *testing.T) {
 	}
 	if !strings.Contains(second.body, "<xmp:Rating>5</xmp:Rating>") {
 		t.Errorf("el favorito se perdió al escribir la etiqueta: %s", second.body)
+	}
+}
+
+// TestExifBacklog: sin worker la ruta responde 503 y sin sesión DAV tampoco.
+func TestExifBacklog(t *testing.T) {
+	s, st2, fp := newTestServer(t)
+	h := s.Handler()
+	bearer := "Bearer test-token"
+
+	rr := do(t, h, http.MethodPost, "/ocphotos-api/api/admin/exif", bearer)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("sin worker: %d, want 503", rr.Code)
+	}
+
+	fp.dav = nil // sin sesión DAV: la ruta debe limpiar el estado y responder 503
+	s.SetExifWorker(exif.NewWorker(st2, slog.Default()))
+	rr = do(t, h, http.MethodPost, "/ocphotos-api/api/admin/exif", bearer)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("sin sesión: %d, want 503", rr.Code)
 	}
 }

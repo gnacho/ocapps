@@ -124,6 +124,7 @@ func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module
 	geocoder := geo.New(st, log)
 	srv := api.New(st, thumbs, geocoder, validator, reg,
 		api.Config{Token: pcfg.Token, Secret: secret}, log)
+	srv.SetExifWorker(exifW)
 
 	return &Module{
 		cfg: pcfg, dataDir: dataDir, log: log,
