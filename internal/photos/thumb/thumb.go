@@ -6,6 +6,7 @@
 package thumb
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -20,7 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	_ "github.com/gen2brain/h265/heic" // registra image.Decode para HEIC/HEIF
+	"github.com/gen2brain/h265/heic" // registra image.Decode para HEIC/HEIF
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
@@ -48,9 +49,16 @@ func New(cacheDir string) (*Service, error) {
 }
 
 func cacheKey(href, etag string, maxSize int) string {
-	h := sha1.Sum([]byte(fmt.Sprintf("%s|%s|%d", href, etag, maxSize)))
+	// thumbCacheVersion invalida la caché cuando cambia la generación de
+	// miniaturas (la v2 corrige la orientación): las v1 antiguas quedan como
+	// ficheros basura sin alcanzar — no hace falta purgarlas.
+	h := sha1.Sum([]byte(fmt.Sprintf("%s|%s|%s|%d", thumbCacheVersion, href, etag, maxSize)))
 	return hex.EncodeToString(h[:]) + ".jpg"
 }
+
+// thumbCacheVersion es la sal de la cache key; súbela al cambiar cómo se
+// genera la miniatura.
+const thumbCacheVersion = "v2"
 
 // VideoPoster extrae un fotograma del vídeo con ffmpeg y lo cachea como JPEG.
 // Descarga el vídeo a un temporal (ffmpeg necesita poder buscar en el fichero).
@@ -98,6 +106,23 @@ func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, eta
 	return "", errors.New("ffmpeg no pudo extraer un fotograma")
 }
 
+// isHEIC huele el box ftyp del offset 4 (todo ISOBMFF válido lo lleva ahí;
+// las brands heic/mif1 las maneja el decodificador de gen2brain/h265).
+func isHEIC(data []byte) bool {
+	return len(data) >= 8 && string(data[4:8]) == "ftyp"
+}
+
+// decode decodifica los bytes ya descargados. HEIC/HEIF va por heic.Decode
+// con AutoRotate (aplica las transformaciones irot/imir/clap del contenedor:
+// así guarda la rotación un iPhone); el resto por el registro de image.Decode.
+func decode(data []byte) (image.Image, error) {
+	if isHEIC(data) {
+		return heic.Decode(bytes.NewReader(data), heic.Options{AutoRotate: true})
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	return img, err
+}
+
 // Get devuelve la ruta del thumbnail en caché, generándolo si hace falta.
 // maxSize es el lado largo. Se sirve como JPEG progresivo calidad 80.
 // dav es el cliente de la sesión del owner del asset (H8).
@@ -114,11 +139,21 @@ func (s *Service) Get(ctx context.Context, dav *webdav.Client, href, etag string
 	}
 	defer rc.Close()
 
-	// límite defensivo: 60 MB por foto
-	img, _, err := image.Decode(io.LimitReader(rc, 60<<20))
+	// límite defensivo: 60 MB por foto. Va a memoria: para el HEIC hay que
+	// volver a leer los bytes (el decodificador busca por el contenedor) y
+	// para el JPEG hacen falta para extraer la orientación EXIF.
+	data, err := io.ReadAll(io.LimitReader(rc, 60<<20))
+	if err != nil {
+		return "", err
+	}
+
+	img, err := decode(data)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrUnsupported, err)
 	}
+	// el HEIC ya sale orientado (AutoRotate aplica irot/imir/clap); el JPEG
+	// hay que transformarlo según su orientación EXIF
+	img = applyOrientation(img, jpegOrientation(data))
 
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()

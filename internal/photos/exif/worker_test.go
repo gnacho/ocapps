@@ -241,6 +241,45 @@ func TestParseExifFields(t *testing.T) {
 	assertFields(t, res)
 }
 
+// TestParseExifOrientationSwap comprueba el intercambio de dimensiones para
+// las orientaciones 5–8 (transposiciones) y el no-intercambio para 1–4.
+func TestParseExifOrientationSwap(t *testing.T) {
+	for _, tc := range []struct {
+		o        int
+		w, h     int
+		wantSwap bool
+	}{
+		{1, 6, 4, false},
+		{2, 6, 4, false},
+		{3, 6, 4, false},
+		{4, 6, 4, false},
+		{5, 6, 4, true},
+		{6, 6, 4, true},
+		{7, 6, 4, true},
+		{8, 6, 4, true},
+	} {
+		fx := exifFix
+		fx.Orientation = tc.o
+		x, err := exif.Decode(bytes.NewReader(buildExifTiff(fx)))
+		if err != nil {
+			t.Fatalf("orientación %d: %v", tc.o, err)
+		}
+		res := store.ExifResult{}
+		parseExif(x, &res)
+		fillDims(&res, nil) // sin cabecera de imagen: quedan los del EXIF
+		if o := exifOrientation(x); o >= 5 && o <= 8 {
+			res.Width, res.Height = res.Height, res.Width
+		}
+		w, h := tc.w, tc.h
+		if tc.wantSwap {
+			w, h = h, w
+		}
+		if res.Width != w || res.Height != h {
+			t.Errorf("orientación %d: %dx%d, quiero %dx%d", tc.o, res.Width, res.Height, w, h)
+		}
+	}
+}
+
 // HEIC de prueba con el EXIF incrustado como item del contenedor.
 func buildHEIC(t *testing.T) []byte {
 	t.Helper()

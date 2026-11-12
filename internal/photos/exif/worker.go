@@ -98,6 +98,12 @@ func (w *Worker) processOne(ctx context.Context, dav *webdav.Client, id int64, h
 
 	parseExif(x, &res)
 	fillDims(&res, data)
+	// orientación 5–8 (variantes de transposición): las dimensiones de
+	// visualización quedan transpuestas respecto a las almacenadas
+	if o := exifOrientation(x); o >= 5 && o <= 8 {
+		res.Width, res.Height = res.Height, res.Width
+	}
+
 	return w.store.SaveExif(ctx, id, res)
 }
 
@@ -206,6 +212,17 @@ func parseExif(x *exif.Exif, res *store.ExifResult) {
 // las brands heic/mif1 las maneja el decodificador de gen2brain/h265).
 func isHEIC(data []byte) bool {
 	return len(data) >= 8 && string(data[4:8]) == "ftyp"
+}
+
+// exifOrientation devuelve la orientación EXIF (1–8); cualquier valor fuera
+// de rango o ausente cuenta como 1 (sin transformación).
+func exifOrientation(x *exif.Exif) int {
+	if v, err := x.Get(exif.Orientation); err == nil {
+		if n, err := v.Int(0); err == nil && n >= 1 && n <= 8 {
+			return n
+		}
+	}
+	return 1
 }
 
 // fillDims: si el EXIF no trae dimensiones, las saca de la cabecera de la imagen
