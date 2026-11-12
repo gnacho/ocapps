@@ -1,0 +1,43 @@
+# ocapps como un servicio más del proyecto Docker Compose de OpenCloud.
+#
+# NO es un proyecto aparte: se superpone al compose de OpenCloud para que los
+# dos contenedores compartan red y ocapps resuelva "opencloud" por DNS.
+#
+#   docker build -t ocapps https://github.com/gnacho/ocapps.git
+#   docker compose -f docker-compose.yml -f docker-compose.ocapps.yml up -d
+#
+# Extensiones web, rutas del proxy y verificación: deploy/README.md,
+# sección "Despliegue con Docker Compose".
+services:
+  ocapps:
+    image: ocapps
+    restart: unless-stopped
+    depends_on:
+      - opencloud
+    environment:
+      # El API de OpenCloud escucha en el 9200 interno de su contenedor: no
+      # hace falta publicar ese puerto para que ocapps lo alcance.
+      OCAPPS_OPENCLOUD_URL: http://opencloud:9200
+      # Apaga los módulos que no vayas a usar: menos configuración y menos
+      # superficie. Photos necesita además un app token de OpenCloud.
+      OCAPPS_NEWS_ENABLED: "false"
+      OCAPPS_PHOTOS_ENABLED: "false"
+    volumes:
+      - ocapps-data:/var/lib/ocapps
+    ports:
+      # Solo lo necesita el proxy del host. No lo expongas a Internet.
+      - "127.0.0.1:8096:8096"
+    networks:
+      - opencloud-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8096/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  ocapps-data:
+
+networks:
+  opencloud-net:
