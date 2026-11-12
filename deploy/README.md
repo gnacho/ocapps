@@ -207,6 +207,15 @@ En ambos snippets se preservan `Authorization` y `Host`, y
 (Range requests). Tras recargar el proxy, valida con
 `nginx -t` / `caddy validate` antes de `reload`.
 
+Las mismas rutas sirven a los **clientes Android** de las tres apps
+([ocnews-android](https://github.com/gnacho/ocnews-android),
+[ocnotes-android](https://github.com/gnacho/ocnotes-android),
+[ocphotos-android](https://github.com/gnacho/ocphotos-android)): entran por el
+mismo origen que el navegador con Basic usuario:app-token. Si una app funciona en
+la web y no en el móvil, el sospechoso es el `Authorization` (no llevan cookies),
+un redirect a la página de login delante de la ruta, o un WAF que corte tras
+varios 401.
+
 ## Multiusuario en photos (H8)
 
 Photos pasa de single-tenant (un solo usuario, el del app-token) a
