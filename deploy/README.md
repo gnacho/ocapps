@@ -14,6 +14,7 @@ Referencia: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) y §9.
 | [`migrate.sh`](migrate.sh) | Migración de datos 3→1, idempotente, con `--dry-run` y `--force-redeploy` (SPEC §5.4) |
 | [`extensions-updater.sh`](extensions-updater.sh) | Instala, actualiza y revierte las extensiones web desde sus releases de GitHub (`list`, `check`, `install`, `update`, `rollback`) |
 | [`extensions.conf.example`](extensions.conf.example) | Plantilla de `/etc/ocapps/extensions.conf` (app, repo y patrón del asset) |
+| [`docker-compose.example.yml`](docker-compose.example.yml) | Servicio `ocapps` para el proyecto compose de OpenCloud (§[Despliegue con Docker Compose](#despliegue-con-docker-compose)) |
 | [`ocapps-ext-update.service`](ocapps-ext-update.service) · [`ocapps-ext-update.timer`](ocapps-ext-update.timer) | Actualización semanal opcional |
 | [`repo-notices/`](repo-notices/) | Borradores de aviso para los README de los repos de app |
 
@@ -137,14 +138,107 @@ ldflags de versión). `goreleaser release` genera los tarballs + checksums.
 
 ```bash
 docker build -t ocapps .          # etapa runtime: alpine + ffmpeg (SPEC Q4/Q10)
-docker run -e OCAPPS_OPENCLOUD_URL=https://cloud.example.com \
-           -e OCAPPS_PHOTOS_USER=... -e OCAPPS_PHOTOS_APP_TOKEN=... \
-           -v ocapps-data:/var/lib/ocapps -p 127.0.0.1:8096:8096 ocapps
 ```
 
-La guía de systemd de abajo asume despliegue con binario; con Docker,
-adapta el unit a `docker run`/`docker compose` manteniendo las mismas
-variables de entorno y el volumen `/var/lib/ocapps`.
+Despliegue con Docker Compose, extensión web y rutas del proxy:
+[§Despliegue con Docker Compose](#despliegue-con-docker-compose).
+
+## Despliegue con Docker Compose
+
+Para una instancia de OpenCloud montada con el compose oficial
+([`opencloud-eu/opencloud-compose`](https://github.com/opencloud-eu/opencloud-compose)).
+`install.sh`, `opencloud-apps.service` y `ocapps-ext` son de la vía systemd y
+no se usan aquí: en Docker el servicio, la carpeta de extensiones y la ruta del
+proxy se resuelven con el compose y con el proxy que ya tengas delante.
+
+### 1. Imagen
+
+```bash
+docker build -t ocapps https://github.com/gnacho/ocapps.git
+```
+
+La imagen trae `ffmpeg` (pósters de vídeo de photos) y corre como uid 10001.
+`/var/lib/ocapps` viene creado y cedido a ese usuario en la propia imagen, así
+que un volumen nombrado funciona sin tocar permisos. Si usas un bind mount,
+cédelo tú: `sudo chown 10001 ./ocapps-data`.
+
+### 2. Servicio
+
+Copia [`docker-compose.example.yml`](docker-compose.example.yml) al directorio
+del compose de OpenCloud y levántalo superpuesto, para que los dos
+contenedores compartan `opencloud-net`. No lo uses como proyecto aparte:
+`ocapps` resuelve `opencloud` por DNS de esa red.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ocapps.yml up -d
+```
+
+El puerto `8096` se publica solo en `127.0.0.1` porque únicamente lo necesita el
+proxy del host. `OCAPPS_OPENCLOUD_URL=http://opencloud:9200` apunta al API
+interno del contenedor de OpenCloud: no hay que publicar el 9200. Deja
+activados solo los módulos que vayas a usar; `photos` necesita además un app
+token (`OCAPPS_PHOTOS_USERS`).
+
+### 3. Extensión web
+
+El compose oficial monta `./config/opencloud/apps` en
+`/var/lib/opencloud/web/assets/apps`, que es el `WEB_ASSET_APPS_PATH` por
+defecto. Si cambiaste `OC_APPS_DIR`, usa esa carpeta. No hay instalador: se
+descomprime el zip de la release en el host.
+
+```bash
+curl -fsSLO https://github.com/gnacho/ocnotes/releases/latest/download/notes-0.1.7.zip
+unzip -o notes-0.1.7.zip -d config/opencloud/apps
+```
+
+Alta en `config/opencloud/apps.yaml`, que es el fichero que monta el compose:
+
+```yaml
+notes:
+  config: {}
+```
+
+Y reinicia el contenedor: OpenCloud lee la lista de apps al arrancar.
+
+```bash
+docker compose restart opencloud
+```
+
+### 4. Proxy
+
+Las rutas van al puerto publicado, sin trailing slash en `proxy_pass` (con
+barra se reescribe el path y el backend no lo reconoce):
+
+```nginx
+location /index.php/apps/notes/ {
+    proxy_pass http://127.0.0.1:8096;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location = /ocs/v2.php/cloud/capabilities {
+    proxy_pass http://127.0.0.1:8096;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Las demás apps usan `/index.php/apps/news/` y `/ocphotos-api/`. El bloque
+completo está en [`proxy/nginx.conf`](proxy/nginx.conf), con equivalentes para
+Caddy y Traefik. El panel `/ocapps-admin/` es de la vía systemd: ejecuta
+`ocapps-ext` con sudo dentro del host, así que en Docker déjalo sin configurar
+(no definas `OCAPPS_ADMIN_TOKEN`).
+
+### 5. Verificación
+
+```bash
+docker compose exec ocapps wget -qO- http://127.0.0.1:8096/healthz
+docker compose logs --tail=50 ocapps
+```
+
+`/healthz` responde 200 siempre con el detalle por módulo; `/readyz` da 503 si
+un módulo habilitado falla. Si el backend responde y la web no, el log de
+acceso del proxy muestra la URL exacta que pidió el navegador.
 
 ## Instalación (binario + systemd)
 

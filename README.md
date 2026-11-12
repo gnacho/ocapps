@@ -98,6 +98,7 @@ OCAPPS_PHOTOS_USER=<usuario> OCAPPS_PHOTOS_APP_TOKEN=<app-token> \
 ```
 
 Docker (incluye ffmpeg en la etapa runtime): `docker build -t ocapps .`.
+Despliegue con Docker Compose: [`deploy/README.md`](deploy/README.md#despliegue-con-docker-compose).
 Releases: `.goreleaser.yaml` (linux/amd64+arm64, ldflags de versión).
 
 ## Instalación desde una release
