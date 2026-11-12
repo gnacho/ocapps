@@ -11,6 +11,25 @@ Especificación de diseño: [`docs/SPEC.md`](docs/SPEC.md).
 Despliegue y migración desde los servicios antiguos:
 [`deploy/README.md`](deploy/README.md).
 
+## Clientes móviles (Android)
+
+Las tres apps tienen cliente Android nativo propio (Kotlin + Jetpack Compose,
+AGPL-3.0), y los tres hablan el contrato que sirve este binario:
+
+| App | Cliente | API que consume |
+|---|---|---|
+| News | [ocnews-android](https://github.com/gnacho/ocnews-android) | `/index.php/apps/news/api/v1-3/` |
+| Notes | [ocnotes-android](https://github.com/gnacho/ocnotes-android) | `/index.php/apps/notes/api/v1.4/` |
+| Photos | [ocphotos-android](https://github.com/gnacho/ocphotos-android) | `/ocphotos-api/api/` |
+
+Consecuencias para desplegar: el cliente entra por el **mismo origen** que la web,
+así que las rutas del proxy del `deploy/README.md` son también las que usan las
+apps del móvil (notas necesita además `/ocs/v2.php/cloud/capabilities`). La
+autenticación es **Basic usuario:app token** de OpenCloud (frase de 6 palabras,
+`opencloud auth-app create`), nunca la contraseña de la cuenta, y las rutas no
+pueden ir detrás de una sesión de navegador (las peticiones del móvil no llevan
+cookies).
+
 ## Arquitectura
 
 Un único módulo Go (`github.com/gnacho/ocapps`) con tres módulos de
