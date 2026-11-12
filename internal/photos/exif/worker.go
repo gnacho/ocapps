@@ -1,5 +1,8 @@
 // Package exif — worker que extrae EXIF con Range requests (primeros 256 KB,
-// suficiente para la cabecera EXIF de la mayoría de JPEG/TIFF).
+// suficiente para la cabecera EXIF de la mayoría de JPEG/TIFF). Los
+// HEIC/HEIF llevan el item Exif en cualquier punto del contenedor: si no está
+// en el prefijo se reintenta con rangos escalonados (1 MB, 4 MB) y, si sigue
+// sin aparecer, el asset se registra como sin EXIF (comportamiento de siempre).
 package exif
 
 import (
@@ -13,7 +16,7 @@ import (
 	"log/slog"
 	"strconv"
 
-	_ "github.com/gen2brain/h265/heic"
+	"github.com/gen2brain/h265/heic"
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"github.com/gnacho/ocapps/internal/photos/store"
 	"github.com/rwcarlsen/goexif/exif"
@@ -21,6 +24,11 @@ import (
 )
 
 const rangeBytes = 256 * 1024
+
+// heicRanges son los prefijos que probamos para extraer el item Exif de un
+// HEIC: el primero es el estándar y los dos siguientes el reescalado si el
+// item cae más allá de 256 KB.
+var heicRanges = []int64{rangeBytes, 1 << 20, 4 << 20}
 
 type Worker struct {
 	store *store.Store
@@ -77,13 +85,82 @@ func (w *Worker) processOne(ctx context.Context, dav *webdav.Client, id int64, h
 	}
 	res := store.ExifResult{}
 
-	x, err := exif.Decode(bytes.NewReader(data))
+	x, data, err := w.decodeExif(ctx, dav, href, data)
 	if err != nil {
-		// sin EXIF (PNG, WebP...): no es error; al menos sacamos las dimensiones
+		if errors.Is(err, webdav.ErrUnauthorized) {
+			return err
+		}
+		// sin EXIF (PNG, WebP, HEIC sin item Exif o truncado tras el
+		// reescalado...): no es error; al menos sacamos las dimensiones
 		fillDims(&res, data)
 		return w.store.SaveExif(ctx, id, res)
 	}
 
+	parseExif(x, &res)
+	fillDims(&res, data)
+	// orientación 5–8 (variantes de transposición): las dimensiones de
+	// visualización quedan transpuestas respecto a las almacenadas
+	if o := exifOrientation(x); o >= 5 && o <= 8 {
+		res.Width, res.Height = res.Height, res.Width
+	}
+
+	return w.store.SaveExif(ctx, id, res)
+}
+
+// decodeExif devuelve el EXIF parseado y el prefijo con el que se hizo (para
+// fillDims; en HEIC puede ser mayor que el descargado al principio). Devuelve
+// error cuando no hay EXIF legible.
+func (w *Worker) decodeExif(ctx context.Context, dav *webdav.Client, href string, data []byte) (*exif.Exif, []byte, error) {
+	if !isHEIC(data) {
+		// JPEG: el APP1 con el EXIF no pasa de 64 KB, el prefijo de 256 KB
+		// sobra; goexif también parsea TIFF crudo
+		x, err := exif.Decode(bytes.NewReader(data))
+		return x, data, err
+	}
+	tiff, prefix, err := w.heicExifPayload(ctx, dav, href)
+	if err != nil {
+		return nil, data, err
+	}
+	data = prefix
+	// goexif parsea el stream TIFF crudo sin problema, así que la extracción
+	// de campos es idéntica a la del JPEG
+	x, err := exif.Decode(bytes.NewReader(tiff))
+	if err != nil {
+		return nil, data, err
+	}
+	return x, data, nil
+}
+
+// heicExifPayload extrae el payload TIFF del item Exif del contenedor HEIC.
+// heic.RawExif aliasa el buffer de entrada sin copiarlo: el payload es
+// solo-lectura (nada debe mutar el prefijo ni el resultado). Con ErrNoExif el
+// fichero no lleva EXIF y se devuelve tal cual; con cualquier otro error
+// (normalmente prefijo truncado) se reintenta con los rangos escalonados de
+// heicRanges y, si el último también falla, se propaga el error.
+func (w *Worker) heicExifPayload(ctx context.Context, dav *webdav.Client, href string) ([]byte, []byte, error) {
+	var last error
+	for _, n := range heicRanges {
+		data, err := dav.GetRange(ctx, href, 0, n)
+		if err != nil {
+			return nil, nil, err
+		}
+		tiff, err := heic.RawExif(bytes.NewReader(data))
+		switch {
+		case err == nil:
+			return tiff, data, nil
+		case errors.Is(err, heic.ErrNoExif):
+			return nil, data, err
+		default:
+			last = err
+		}
+	}
+	w.log.Warn("no se pudo extraer el EXIF del HEIC", "path", href, "err", last)
+	return nil, nil, last
+}
+
+// parseExif rellena res con los campos cámara/exposición/geo del EXIF (vale
+// igual para JPEG y para el stream TIFF crudo de un HEIC).
+func parseExif(x *exif.Exif, res *store.ExifResult) {
 	if tm, err := x.DateTime(); err == nil {
 		res.TakenAt = &tm
 	}
@@ -129,9 +206,23 @@ func (w *Worker) processOne(ctx context.Context, dav *webdav.Client, id int64, h
 	if lat, lon, err := x.LatLong(); err == nil {
 		res.Lat, res.Lon = &lat, &lon
 	}
-	fillDims(&res, data)
+}
 
-	return w.store.SaveExif(ctx, id, res)
+// isHEIC huele el box ftyp del offset 4 (todo ISOBMFF válido lo lleva ahí;
+// las brands heic/mif1 las maneja el decodificador de gen2brain/h265).
+func isHEIC(data []byte) bool {
+	return len(data) >= 8 && string(data[4:8]) == "ftyp"
+}
+
+// exifOrientation devuelve la orientación EXIF (1–8); cualquier valor fuera
+// de rango o ausente cuenta como 1 (sin transformación).
+func exifOrientation(x *exif.Exif) int {
+	if v, err := x.Get(exif.Orientation); err == nil {
+		if n, err := v.Int(0); err == nil && n >= 1 && n <= 8 {
+			return n
+		}
+	}
+	return 1
 }
 
 // fillDims: si el EXIF no trae dimensiones, las saca de la cabecera de la imagen
