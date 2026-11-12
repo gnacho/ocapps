@@ -21,8 +21,13 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # módulo photos; HLS se eliminó en Q7, ffmpeg ya no se usa para streaming).
 # ca-certificates: TLS hacia el servidor OpenCloud.
 FROM alpine:3.21
+# El data dir se crea aquí y se cede al usuario del servicio: un volumen
+# nombrado hereda el propietario del directorio de la imagen, y sin esto
+# arranca como root:root y el proceso (uid 10001) no puede escribir.
 RUN apk add --no-cache ca-certificates tzdata ffmpeg \
-    && adduser -D -u 10001 ocapps
+    && adduser -D -u 10001 ocapps \
+    && mkdir -p /var/lib/ocapps \
+    && chown ocapps:ocapps /var/lib/ocapps
 COPY --from=build /ocapps /usr/local/bin/ocapps
 ENV OCAPPS_LISTEN_ADDR=0.0.0.0:8096 \
     OCAPPS_DATA_DIR=/var/lib/ocapps
