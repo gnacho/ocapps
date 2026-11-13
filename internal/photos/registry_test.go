@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -116,5 +117,34 @@ func TestDavForOcultaSesionesCaducadas(t *testing.T) {
 	m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: "tok-2"})
 	if m.reg.DavFor(ctx, "user-1") == nil {
 		t.Fatal("Touch con token fresco debe recuperar la sesión")
+	}
+}
+
+// El scan se puede acotar a un drive concreto (issue #39): el personal no
+// sirve cuando las fotos viven en otro drive del mismo owner.
+func TestResolveSpaceConfigurado(t *testing.T) {
+	srv := fakeOpenCloud(t, propfindUnaFoto)
+	m, err := New(testConfig(config.Common{OpenCloudURL: srv.URL, PhotosDataDir: t.TempDir()},
+		config.PhotosConfig{ScanEvery: time.Hour, ScanSpace: "d1"}), slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: "tok"})
+	sess := m.reg.get("user-1")
+
+	got, err := m.reg.resolveSpace(ctx, sess, "user-1")
+	if err != nil {
+		t.Fatalf("resolveSpace: %v", err)
+	}
+	if !strings.Contains(got, "/dav/spaces/1") {
+		t.Errorf("espacio: got %q", got)
+	}
+
+	// Un id que no está entre los drives visibles es un error claro, no un
+	// fallback silencioso al personal.
+	m.reg.space = "no-existe"
+	if _, err := m.reg.resolveSpace(ctx, sess, "user-1"); err == nil {
+		t.Error("esperaba error con un espacio inexistente")
 	}
 }

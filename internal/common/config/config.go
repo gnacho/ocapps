@@ -100,6 +100,9 @@ type PhotosConfig struct {
 	Users     []AppUser // OCAPPS_PHOTOS_USERS + pliegue legacy (background scan)
 	Token     string    // Bearer estático DEPRECATED (exige User); "" = desactivado
 	ScanRoot  string
+	// ScanSpace acota el scan a un drive concreto (id del drive, el que va
+	// tras "$" en /dav/spaces/<user>$<drive>). Vacio = drive personal.
+	ScanSpace string
 	ScanEvery time.Duration
 	// CacheDir: raíz de la caché de miniaturas. Vacio = <DATA_DIR>/thumbs.
 	// Conviene apuntarla a un volumen con espacio (p. ej. el mismo donde vive
@@ -389,7 +392,8 @@ func Load() (*Config, error) {
 		User:     l.get("OCAPPS_PHOTOS_USER", "OC_USER", ""),
 		AppToken: l.get("OCAPPS_PHOTOS_APP_TOKEN", "OC_APP_TOKEN", ""),
 		Token:    l.get("OCAPPS_PHOTOS_TOKEN", "MEMORIES_TOKEN", ""),
-		ScanRoot: scanRootOrDefault(l.get("OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT", DefaultScanRoot)),
+		ScanRoot:  scanRootOrDefault(l.get("OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT", DefaultScanRoot)),
+		ScanSpace: strings.TrimSpace(l.get("OCAPPS_PHOTOS_SCAN_SPACE", "", "")),
 		CacheDir: l.get("OCAPPS_PHOTOS_CACHE_DIR", "", ""),
 	}
 	var photosErrs []error
