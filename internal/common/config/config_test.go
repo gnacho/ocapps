@@ -72,6 +72,29 @@ func legacyUsed(cfg *Config, legacy string) bool {
 	return false
 }
 
+func TestEmptyScanRootFallsBackToDefault(t *testing.T) {
+	base(t)
+	// Una línea en blanco en el env no debe convertirse en "recorrer todo el
+	// espacio" (issue #36): vacío = sin configurar.
+	t.Setenv("OCAPPS_PHOTOS_SCAN_ROOT", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Photos.ScanRoot != DefaultScanRoot {
+		t.Errorf("ScanRoot vacío: got %q, want %q", cfg.Photos.ScanRoot, DefaultScanRoot)
+	}
+
+	t.Setenv("OCAPPS_PHOTOS_SCAN_ROOT", "/")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Photos.ScanRoot != "/" {
+		t.Errorf("ScanRoot explícito: got %q, want %q", cfg.Photos.ScanRoot, "/")
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	base(t)
 	cfg, err := Load()

@@ -192,6 +192,18 @@ func (l *loader) alreadyUsed(legacy string) bool {
 // get devuelve el valor de la var nueva; si no existe, la legacy (con warn);
 // si ninguna, def. Registra cada legacy usada para el log resumen. Una nueva
 // definida vacía PREVALECE sobre la legacy (M9, ver lookupNew).
+// scanRootOrDefault: una variable definida pero vacía (una línea en blanco en
+// el env) significa "sin configurar", no "recorrer todo el espacio". Costó una
+// semana de indexación en drive.domatix.cloud (issue #36): el scan se metía en
+// el árbol de documentos y agotaba el deadline antes de llegar a las fotos.
+// Para recorrer todo el espacio hay que pedirlo con "/" explícito.
+func scanRootOrDefault(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return DefaultScanRoot
+	}
+	return strings.TrimSpace(v)
+}
+
 func (l *loader) get(nueva, legacy, def string) string {
 	if v, ok := l.lookupNew(nueva); ok {
 		return v
@@ -377,7 +389,7 @@ func Load() (*Config, error) {
 		User:     l.get("OCAPPS_PHOTOS_USER", "OC_USER", ""),
 		AppToken: l.get("OCAPPS_PHOTOS_APP_TOKEN", "OC_APP_TOKEN", ""),
 		Token:    l.get("OCAPPS_PHOTOS_TOKEN", "MEMORIES_TOKEN", ""),
-		ScanRoot: l.get("OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT", DefaultScanRoot),
+		ScanRoot: scanRootOrDefault(l.get("OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT", DefaultScanRoot)),
 		CacheDir: l.get("OCAPPS_PHOTOS_CACHE_DIR", "", ""),
 	}
 	var photosErrs []error
