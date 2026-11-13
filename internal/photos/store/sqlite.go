@@ -282,20 +282,27 @@ func (s *Store) UpsertByETag(ctx context.Context, owner, path, etag, filename, m
 	}
 }
 
-// SoftDeleteExcept marca como borrados los assets vivos DEL OWNER cuyo etag
-// no está en seen. Nunca toca filas de otros owners.
-func (s *Store) SoftDeleteExcept(ctx context.Context, owner string, seen map[string]bool) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, etag FROM assets WHERE owner = ? AND deleted_at IS NULL`, owner)
+// SoftDeleteExcept marca como borrados los assets vivos DEL OWNER que caen
+// bajo prefix y cuyo etag no está en seen. Nunca toca filas de otros owners ni
+// de otras rutas del mismo owner: un scan que recorre una carpeta no puede
+// borrar lo que vive fuera de ella (issue #36: un root inexistente dejó el
+// índice del owner a cero porque el soft-delete era global al owner).
+func (s *Store) SoftDeleteExcept(ctx context.Context, owner, prefix string, seen map[string]bool) (int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, path, etag FROM assets WHERE owner = ? AND deleted_at IS NULL`, owner)
 	if err != nil {
 		return 0, err
 	}
 	var stale []int64
 	for rows.Next() {
 		var id int64
-		var etag string
-		if err := rows.Scan(&id, &etag); err != nil {
+		var path, etag string
+		if err := rows.Scan(&id, &path, &etag); err != nil {
 			rows.Close()
 			return 0, err
+		}
+		if prefix != "" && !strings.HasPrefix(path, prefix) {
+			continue
 		}
 		if !seen[etag] {
 			stale = append(stale, id)

@@ -144,7 +144,7 @@ func TestMultiOwnerAislamiento(t *testing.T) {
 	}
 
 	// soft-delete acotado al owner: un scan de bob que no ve nada NO borra a alice
-	if n, err := st.SoftDeleteExcept(ctx, "bob", map[string]bool{}); err != nil || n != 2 {
+	if n, err := st.SoftDeleteExcept(ctx, "bob", "", map[string]bool{}); err != nil || n != 2 {
 		t.Fatalf("softdelete bob: %d %v", n, err)
 	}
 	statsA, _ := st.Stats(ctx, "alice")

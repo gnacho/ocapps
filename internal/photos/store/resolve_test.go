@@ -39,7 +39,7 @@ func TestAssetByPath(t *testing.T) {
 	}
 
 	// miss tras soft-delete (SoftDeleteExcept marca todo lo no visto)
-	if n, err := st.SoftDeleteExcept(ctx, "alice", map[string]bool{}); err != nil || n == 0 {
+	if n, err := st.SoftDeleteExcept(ctx, "alice", "", map[string]bool{}); err != nil || n == 0 {
 		t.Fatalf("soft-delete: n=%d err=%v", n, err)
 	}
 	if _, err := st.AssetByPath(ctx, "alice", p); !errors.Is(err, sql.ErrNoRows) {
