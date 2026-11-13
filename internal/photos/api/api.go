@@ -523,17 +523,43 @@ func (s *Server) thumbHandler(w http.ResponseWriter, r *http.Request) {
 			maxSize = n
 		}
 	}
+	// Política de caché del navegador para miniaturas y pósters: revalidable
+	// (ETag + 304), no immutable. Con "immutable" a 30 días, una corrección
+	// en la GENERACIÓN de miniaturas no llega nunca al cliente: la URL no
+	// cambia y el navegador no pregunta durante 30 días (los Thumbs viejos
+	// quedan mal orientados un mes). Con max-age=86400 + must-revalidate el
+	// navegador revalida a diario y el ETag (derivado de la cache key, con la
+	// misma sal) cambia siempre que la generación cambie: autorreparable.
+	const thumbCacheControl = "public, max-age=86400, must-revalidate"
+	// notModified responde 304 con el validador si If-None-Match coincide;
+	// devuelve true cuando ya escribió la respuesta.
+	notModified := func(etag string) bool {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", thumbCacheControl)
+		if etag != "" && strings.Contains(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+		return false
+	}
 	originalURL := PublicPrefix + "/api/assets/" + r.PathValue("id") + "/original"
 	if a.MediaType == "video" {
 		// póster del vídeo con ffmpeg; si falla, se sirve el original
+		etag := thumb.VideoETag(a.Path, etagFor(a), maxSize)
+		if notModified(etag) {
+			return
+		}
 		file, err := s.thumbs.VideoPoster(r.Context(), dav, a.Path, etagFor(a), maxSize)
 		if err != nil {
 			s.log.Warn("video poster", "id", id, "err", err)
 			http.Redirect(w, r, originalURL, http.StatusFound)
 			return
 		}
-		w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
 		http.ServeFile(w, r, file)
+		return
+	}
+	etag := thumb.ETag(a.Path, etagFor(a), maxSize)
+	if notModified(etag) {
 		return
 	}
 	path, err := s.thumbs.Get(r.Context(), dav, a.Path, etagFor(a), maxSize)
@@ -542,7 +568,6 @@ func (s *Server) thumbHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, originalURL, http.StatusFound)
 		return
 	}
-	w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
 	http.ServeFile(w, r, path)
 }
 
