@@ -37,6 +37,9 @@ type session struct {
 type registry struct {
 	baseURL string
 	log     *slog.Logger
+	// space: drive al que se acota el scan ("" = personal). Sale de
+	// OCAPPS_PHOTOS_SCAN_SPACE; ver resolveSpace.
+	space string
 
 	// hooks al scheduler (se cablean en New tras construir ambos; sin lock
 	// porque se fijan antes de servir el primer request)
@@ -54,9 +57,9 @@ type registry struct {
 	legacyOwner string
 }
 
-func newRegistry(baseURL, legacyUser, legacyToken string, log *slog.Logger) *registry {
+func newRegistry(baseURL, legacyUser, legacyToken, space string, log *slog.Logger) *registry {
 	return &registry{
-		baseURL: baseURL, log: log,
+		baseURL: baseURL, log: log, space: space,
 		sessions:    map[string]*session{},
 		legacyUser:  legacyUser,
 		legacyToken: legacyToken,
@@ -131,8 +134,12 @@ func (r *registry) DavFor(_ context.Context, owner string) *webdav.Client {
 // owner con SU credencial (driveType == "personal", fallback: el primero).
 // sess es la copia snapshot de get(): la caché se escribe en la sesión
 // ALMACENADA bajo lock.
+// space: id del drive a usar ("" = el personal). Un espacio explícito se
+// resuelve siempre contra /me/drives, sin fiarse de la caché: el personal
+// cacheado no sirve cuando el owner tiene las fotos en otro drive.
 func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string) (string, error) {
-	if sess.webdavURL != "" {
+	space := r.space
+	if space == "" && sess.webdavURL != "" {
 		return sess.webdavURL, nil
 	}
 	drives, err := sess.dav.ListDrives(ctx)
@@ -140,24 +147,36 @@ func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string
 		return "", err
 	}
 	webdavURL := ""
-	for _, d := range drives {
-		if d.DriveType == "personal" {
-			webdavURL = d.WebDAVURL
-			break
+	if space != "" {
+		for _, d := range drives {
+			if d.ID == space || strings.Contains(d.WebDAVURL, space) {
+				webdavURL = d.WebDAVURL
+				break
+			}
 		}
-	}
-	if webdavURL == "" && len(drives) > 0 {
-		webdavURL = drives[0].WebDAVURL
-	}
-	if webdavURL == "" {
-		return "", errors.New("ningún espacio con webDavUrl disponible")
+		if webdavURL == "" {
+			return "", fmt.Errorf("espacio %q no disponible para el owner (%d drives visibles)", space, len(drives))
+		}
+	} else {
+		for _, d := range drives {
+			if d.DriveType == "personal" {
+				webdavURL = d.WebDAVURL
+				break
+			}
+		}
+		if webdavURL == "" && len(drives) > 0 {
+			webdavURL = drives[0].WebDAVURL
+		}
+		if webdavURL == "" {
+			return "", errors.New("ningún espacio con webDavUrl disponible")
+		}
 	}
 	r.mu.Lock()
 	if cur, ok := r.sessions[owner]; ok {
 		cur.webdavURL = webdavURL
 	}
 	r.mu.Unlock()
-	r.log.Info("espacio OpenCloud localizado", "owner", owner, "webdav", webdavURL)
+	r.log.Info("espacio OpenCloud localizado", "owner", owner, "webdav", webdavURL, "configurado", space)
 	return webdavURL, nil
 }
 
