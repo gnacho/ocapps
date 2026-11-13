@@ -175,3 +175,20 @@ func TestScanUpsertsPorOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestScanPrefix(t *testing.T) {
+	cases := []struct{ root, want string }{
+		{"Fotos", "/dav/spaces/x/Fotos/"},
+		{"/Fotos/", "/dav/spaces/x/Fotos/"},
+		{"", "/dav/spaces/x/"},
+	}
+	for _, c := range cases {
+		if got := scanPrefix("https://drive.example.com/dav/spaces/x", c.root); got != c.want {
+			t.Errorf("scanPrefix(root=%q): got %q, want %q", c.root, got, c.want)
+		}
+	}
+	// Un path fuera del prefijo no cae en el ámbito del scan.
+	if strings.HasPrefix("/dav/spaces/x/gestion/a.jpg", scanPrefix("https://drive.example.com/dav/spaces/x", "Fotos")) {
+		t.Error("un path de otra carpeta entra en el ámbito de Fotos")
+	}
+}

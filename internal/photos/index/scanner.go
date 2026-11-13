@@ -55,6 +55,22 @@ func resolveHref(webdavURL, folderRef string) (string, error) {
 	return base + "/", nil
 }
 
+// scanPrefix es el prefijo de los paths que cubre un scan (raíz incluida):
+// acota el soft-delete para que no pueda borrar assets de fuera de la carpeta
+// recorrida (issue #36). Con root vacío cubre el espacio entero.
+func scanPrefix(webdavURL, root string) string {
+	u, err := url.Parse(webdavURL)
+	if err != nil {
+		return ""
+	}
+	base := strings.TrimRight(u.Path, "/")
+	root = strings.Trim(root, "/")
+	if root == "" {
+		return base + "/"
+	}
+	return base + "/" + root + "/"
+}
+
 // minFailGuard es el número mínimo de PROPFINDs para que el guard de
 // cordura (>50% fallidos) se active: con menos fallos aislados se completa
 // el scan igual que antes.
@@ -154,7 +170,7 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 			owner, failures, attempts)
 	}
 
-	removed, err := s.store.SoftDeleteExcept(ctx, owner, seen)
+	removed, err := s.store.SoftDeleteExcept(ctx, owner, scanPrefix(webdavURL, root), seen)
 	if err != nil {
 		return err
 	}

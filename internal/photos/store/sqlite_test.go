@@ -70,12 +70,47 @@ func TestStoreRoundtrip(t *testing.T) {
 	}
 
 	// soft-delete de lo no visto
-	n, err := st.SoftDeleteExcept(ctx, owner, map[string]bool{"e0b": true})
+	n, err := st.SoftDeleteExcept(ctx, owner, "", map[string]bool{"e0b": true})
 	if err != nil || n != 2 {
 		t.Fatalf("softdelete: %d %v", n, err)
 	}
 	stats, _ = st.Stats(ctx, owner)
 	if stats["assets"].(int64) != 1 {
 		t.Fatalf("tras softdelete: %v", stats)
+	}
+}
+
+// Un scan acotado a una carpeta no puede marcar como borrado lo que vive fuera
+// de ella: es el incidente de la issue #36 (root inexistente deja el índice a
+// cero porque el soft-delete era global al owner).
+func TestSoftDeleteExceptHonoursPrefix(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now()
+
+	for path, etag := range map[string]string{
+		"/dav/spaces/x/Fotos/a.jpg":         "ea",
+		"/dav/spaces/x/gestion/factura.jpg": "eg",
+	} {
+		if _, _, err := st.UpsertByETag(ctx, "alice", path, etag, "f.jpg", "image", now, 1000); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Root inexistente: prefijo que no cubre ningún asset. No debe borrar nada.
+	if n, err := st.SoftDeleteExcept(ctx, "alice", "/dav/spaces/x/NoExiste/", map[string]bool{}); err != nil || n != 0 {
+		t.Fatalf("softdelete fuera de ámbito: %d %v", n, err)
+	}
+	// Re-escanear /Fotos sin ver el antiguo: solo cae ese.
+	if n, err := st.SoftDeleteExcept(ctx, "alice", "/dav/spaces/x/Fotos/", map[string]bool{}); err != nil || n != 1 {
+		t.Fatalf("softdelete acotado: %d %v", n, err)
+	}
+	stats, _ := st.Stats(ctx, "alice")
+	if stats["assets"].(int64) != 1 {
+		t.Fatalf("tras softdelete acotado: %v", stats)
 	}
 }
