@@ -248,11 +248,16 @@ app repos' READMEs are in [`deploy/repo-notices/`](deploy/repo-notices/).
 
 Milestone-based implementation (SPEC §8): **H0-H6 done** - skeleton and CI (H0),
 `common` base (H1), notes/photos/news ports (H2-H4), unified wiring with D3
-degradation (H5) and the deployment/migration artifacts (H6, `deploy/`). Gates:
-`CGO_ENABLED=0 go build ./...` and `go test -race -shuffle=on ./...` are green.
+degradation (H5) and the deployment/migration artifacts (H6, `deploy/`).
+Gates, all enforced in CI: `CGO_ENABLED=0 go build ./...`,
+`go test -race -shuffle=on ./...`, `golangci-lint` with zero findings,
+`govulncheck` and total statement coverage **>= 60%**
+(`go test ./... -coverprofile=coverage.out`).
 Pending before production: a staging dry run with copies of the real databases
 and of the rollback (checklist SPEC §9.4), see `deploy/README.md`.
 
 ## License
 
-AGPL-3.0-only. The full text is in [`LICENSE`](LICENSE).
+AGPL-3.0-only. The full text is in [`LICENSE`](LICENSE), and the licenses of
+every dependency (plus the vendored `goexif` fork) are inventoried in
+[`THIRD_PARTY.md`](THIRD_PARTY.md).
