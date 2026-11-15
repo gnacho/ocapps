@@ -1,114 +1,114 @@
-# ocapps — backend unificado de las apps OpenCloud (news + notes + photos)
+# ocapps - unified backend for the OpenCloud apps (news + notes + photos)
 
-`ocapps` es un servicio Go único que sustituye a los tres backends Go de
-las apps OpenCloud (`ocnews`, `ocnotes`, `ocphotos`): un solo binario
-estático, un solo listener (`127.0.0.1:8096`), un solo unit systemd y un
-solo proxy upstream, sirviendo los **mismos contratos de API** que los
-tres servicios originales (News API v1.3, Notes API v1/v1.4 + OCS, y la
-API de photos bajo `/ocphotos-api/`).
+`ocapps` is a single Go service that replaces the three Go backends behind
+the OpenCloud apps (`ocnews`, `ocnotes`, `ocphotos`): one static binary, one
+listener (`127.0.0.1:8096`), one systemd unit and one proxy upstream, serving
+the **same API contracts** as the three original services (News API v1.3,
+Notes API v1/v1.4 + OCS, and the photos API under `/ocphotos-api/`).
 
-Especificación de diseño: [`docs/SPEC.md`](docs/SPEC.md).
-Despliegue y migración desde los servicios antiguos:
+Design spec: [`docs/SPEC.md`](docs/SPEC.md).
+Deployment and migration from the old services:
 [`deploy/README.md`](deploy/README.md).
 
-## Clientes móviles (Android)
+## Mobile clients (Android)
 
-Las tres apps tienen cliente Android nativo propio (Kotlin + Jetpack Compose,
-AGPL-3.0), y los tres hablan el contrato que sirve este binario:
+All three apps have their own native Android client (Kotlin + Jetpack Compose,
+AGPL-3.0), and all three speak the contract served by this binary:
 
-| App | Cliente | API que consume |
+| App | Client | API it consumes |
 |---|---|---|
 | News | [ocnews-android](https://github.com/gnacho/ocnews-android) | `/index.php/apps/news/api/v1-3/` |
 | Notes | [ocnotes-android](https://github.com/gnacho/ocnotes-android) | `/index.php/apps/notes/api/v1.4/` |
 | Photos | [ocphotos-android](https://github.com/gnacho/ocphotos-android) | `/ocphotos-api/api/` |
 
-Consecuencias para desplegar: el cliente entra por el **mismo origen** que la web,
-así que las rutas del proxy del `deploy/README.md` son también las que usan las
-apps del móvil (notas necesita además `/ocs/v2.php/cloud/capabilities`). La
-autenticación es **Basic usuario:app token** de OpenCloud (frase de 6 palabras,
-`opencloud auth-app create`), nunca la contraseña de la cuenta, y las rutas no
-pueden ir detrás de una sesión de navegador (las peticiones del móvil no llevan
-cookies).
+What this means for deployment: the client reaches the server through the
+**same origin** as the web app, so the proxy routes in `deploy/README.md` are
+also the ones the mobile apps use (notes additionally needs
+`/ocs/v2.php/cloud/capabilities`). Authentication is OpenCloud **Basic
+user:app token** (6-word phrase, `opencloud auth-app create`), never the
+account password, and the routes cannot sit behind a browser session (mobile
+requests carry no cookies).
 
-## Arquitectura
+## Architecture
 
-Un único módulo Go (`github.com/gnacho/ocapps`) con tres módulos de
-aplicación sobre una base común:
+A single Go module (`github.com/gnacho/ocapps`) with three application modules
+on top of a shared base:
 
 ```
-cmd/ocapps/            wiring: config común → validador Graph compartido →
-                       init por módulo con degradación (D3) → mux único →
-                       supervisor de loops con recover → shutdown gracioso
+cmd/ocapps/            wiring: shared config -> shared Graph validator ->
+                       per-module init with degradation (D3) -> single mux ->
+                       loop supervisor with recover -> graceful shutdown
 internal/
 ├── common/
-│   ├── config/        env OCAPPS_* unificado + compat legacy (SPEC §3)
-│   ├── auth/          validador Graph (caché + singleflight) + middleware
-│   │                  + políticas MultiTenant (news/notes) / SingleTenant (photos)
-│   ├── store/         apertura SQLite unificada + runner de migraciones
+│   ├── config/        unified OCAPPS_* env + legacy compatibility (SPEC §3)
+│   ├── auth/          Graph validator (cache + singleflight) + middleware
+│   │                  + MultiTenant (news/notes) / SingleTenant (photos) policies
+│   ├── store/         unified SQLite open + migration runner
 │   │                  (Migrate/Baseline; WAL, busy_timeout, foreign_keys)
-│   ├── httpx/         WriteJSON, errores, CORS unificado (SPEC §4.4)
-│   ├── live/          hub SSE por owner: avisos de cambio a los clientes
-│   │                  conectados (invalidación, no datos)
-│   ├── module/        interfaz Module (Register/Run/Healthy) + handler 503
-│   ├── log/           slog JSON con attr "module"
-│   ├── cred/          secretos persistentes + AES-256-GCM (fail-loud)
+│   ├── httpx/         WriteJSON, errors, unified CORS (SPEC §4.4)
+│   ├── live/          per-owner SSE hub: change notices to connected
+│   │                  clients (invalidation, not data)
+│   ├── module/        Module interface (Register/Run/Healthy) + 503 handler
+│   ├── log/           slog JSON with a "module" attr
+│   ├── cred/          persistent secrets + AES-256-GCM (fail-loud)
 │   ├── netguard/      anti-SSRF
-│   ├── imgproxy/      proxy de imágenes con firmas HMAC
-│   └── webdav/        cliente WebDAV/Graph generalizado
+│   ├── imgproxy/      image proxy with HMAC signatures
+│   └── webdav/        generalized WebDAV/Graph client
 ├── news/              News API v1-3 (/index.php/apps/news/api/v1-3/) + /api/me|users
 ├── notes/             Notes API v1/v1.4 + OCS (/ocs/v2.php/cloud/*)
-└── photos/            /ocphotos-api/api/* (multi-tenant por Bearer OIDC del host)
+└── photos/            /ocphotos-api/api/* (multi-tenant via the host's OIDC Bearer)
 ```
 
-Decisiones clave (SPEC): **D2** — tres ficheros SQLite
-(`<data>/news/ocnews.db`, `notes/notes.db`, `photos/memories.db`), sin
-transformación de las BDs vivas (user_version 18/2/baseline→1); **D3** —
-un módulo cuyo wiring falla queda `failed` (su namespace sirve 503) sin
-tumbar el proceso: `GET /healthz` (200 siempre, detalle por módulo) y
-`GET /readyz` (503 si algún módulo enabled falla) son la señal operativa.
+Key decisions (SPEC): **D2** - three SQLite files
+(`<data>/news/ocnews.db`, `notes/notes.db`, `photos/memories.db`), with no
+transformation of the live databases (user_version 18/2/baseline->1). **D3** -
+a module whose wiring fails stays `failed` (its namespace serves 503) without
+taking the process down: `GET /healthz` (always 200, per-module detail) and
+`GET /readyz` (503 if any enabled module is failing) are the operational
+signal.
 
-## Avisos en vivo (SSE)
+## Live updates (SSE)
 
-`GET /ocphotos-api/api/stream` es un stream de Server-Sent Events **por
-usuario**: el cliente lo deja abierto y el servidor le avisa cuando cambia algo
-de lo suyo, en vez de que el cliente pregunte cada N segundos. Por el stream no
-viajan datos, solo invalidaciones: al recibir un evento, el cliente recarga ese
-dato con la API normal.
+`GET /ocphotos-api/api/stream` is a **per-user** Server-Sent Events stream: the
+client keeps it open and the server tells it when something of its own changes,
+instead of the client polling every N seconds. No data travels over the stream,
+only invalidations: on receiving an event, the client reloads that piece of data
+through the normal API.
 
-- Autenticación: la misma del resto de `/ocphotos-api/` (Bearer OIDC del host o
-  Basic app-password). Cada stream queda atado al `oc_id` del usuario: los
-  eventos de otros usuarios no se entregan.
-- Topics: `photos` (índice o metadatos de assets: scan que cambió algo, backlog
-  EXIF, favorito, archivo, etiquetas) y `albums` (crear, renombrar, borrar y
-  pertenencia).
-- Si el cliente manda `X-Ocapps-Client: <id>` en sus escrituras, el evento
-  vuelve con ese id para que la pestaña que hizo el cambio no recargue lo que ya
-  tiene.
-- Comportamiento: heartbeat cada 25 s, `X-Accel-Buffering: no` y `retry: 3000`.
-  Un cliente que no lee a tiempo pierde un evento (recibirá el siguiente). Al
-  apagar el servicio los streams se cierran, así que `Shutdown` no espera.
-- **Proxy**: la ruta necesita buffering desactivado (`proxy_buffering off` en
-  nginx). Los snippets de `deploy/proxy/` ya lo traen; un vhost propio sin él
-  deja los eventos parados en el buffer.
+- Authentication: the same as the rest of `/ocphotos-api/` (host OIDC Bearer or
+  Basic app-password). Each stream is bound to the user's `oc_id`, so events
+  from other users are never delivered.
+- Topics: `photos` (asset index or metadata: a scan that changed something, the
+  EXIF backlog, favourite, archive, tags) and `albums` (create, rename, delete
+  and membership).
+- If the client sends `X-Ocapps-Client: <id>` on its writes, the event comes
+  back with that id so the tab that made the change does not reload what it
+  already has.
+- Behaviour: heartbeat every 25 s, `X-Accel-Buffering: no` and `retry: 3000`.
+  A client that does not read in time drops an event (it will get the next one).
+  Streams are closed on shutdown, so `Shutdown` does not wait for them.
+- **Proxy**: the route needs buffering disabled (`proxy_buffering off` in
+  nginx). The snippets in `deploy/proxy/` already do it, and a custom vhost
+  without it leaves the events stuck in the buffer.
 
-Sin consumidor del stream todo sigue funcionando: el cliente simplemente no
-recibe avisos.
+Everything keeps working with no stream consumer: the client simply gets no
+notices.
 
-## Quickstart de desarrollo
+## Development quickstart
 
-Requisitos: Go ≥ 1.26 (solo para build/test) y ffmpeg (opcional; solo lo
-usa el módulo photos en runtime para pósters de vídeo/HLS).
+Requirements: Go >= 1.26 (build/test only) and ffmpeg (optional, only the
+photos module uses it at runtime for video posters/HLS).
 
 ```bash
-# Build (binario estático, modernc.org/sqlite → sin CGO)
+# Build (static binary, modernc.org/sqlite -> no CGO)
 CGO_ENABLED=0 go build ./...
 CGO_ENABLED=0 go build -o ocapps ./cmd/ocapps
 
-# Tests (con -race; TZ=UTC para resultados deterministas)
+# Tests (with -race, TZ=UTC for deterministic results)
 TZ=UTC go test -race -shuffle=on ./...
 go vet ./...
 
-# Run con env mínima (modo local: solo news con auth bcrypt, sin OpenCloud)
+# Run with minimal env (local mode: news only, bcrypt auth, no OpenCloud)
 OCAPPS_AUTH_MODE=local \
 OCAPPS_NEWS_AUTH_USER=admin OCAPPS_NEWS_AUTH_PASS=admin \
 OCAPPS_PHOTOS_ENABLED=false OCAPPS_NOTES_ENABLED=false \
@@ -118,55 +118,56 @@ OCAPPS_DATA_DIR=/tmp/ocapps-dev \
 curl -s localhost:8096/healthz    # {"version":"dev",...,"modules":{...}}
 ```
 
-Contra una instancia OpenCloud real (modo por defecto `opencloud`):
+Against a real OpenCloud instance (default mode, `opencloud`):
 
 ```bash
 OCAPPS_OPENCLOUD_URL=https://cloud.example.com \
-OCAPPS_PHOTOS_USER=<usuario> OCAPPS_PHOTOS_APP_TOKEN=<app-token> \
+OCAPPS_PHOTOS_USER=<user> OCAPPS_PHOTOS_APP_TOKEN=<app-token> \
 ./ocapps
 ```
 
-Docker (incluye ffmpeg en la etapa runtime): `docker build -t ocapps .`.
-Despliegue con Docker Compose: [`deploy/README.md`](deploy/README.md#despliegue-con-docker-compose).
-Releases: `.goreleaser.yaml` (linux/amd64+arm64, ldflags de versión).
+Docker (includes ffmpeg in the runtime stage): `docker build -t ocapps .`.
+Deployment with Docker Compose: [`deploy/README.md`](deploy/README.md#despliegue-con-docker-compose).
+Releases: `.goreleaser.yaml` (linux/amd64+arm64, version ldflags).
 
-## Instalación desde una release
+## Installing from a release
 
-### Instalador de un comando
+### One-command installer
 
-En un servidor con OpenCloud ya funcionando:
+On a server that already runs OpenCloud:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gnacho/ocapps/main/install.sh \
   | sudo sh -s -- --url https://cloud.example.com
 ```
 
-Hace todo: usuario `ocapps`, binario, `/etc/ocapps/env`, unit systemd, servicio
-activo y, salvo `--no-extensions`, el actualizador `ocapps-ext` más las tres
-extensiones (`--apps news,notes` para elegir). Es idempotente.
+It does everything: the `ocapps` user, the binary, `/etc/ocapps/env`, the
+systemd unit, an active service and, unless `--no-extensions` is given, the
+`ocapps-ext` updater plus the three extensions (`--apps news,notes` to pick).
+It is idempotent.
 
 ```bash
-# solo el backend, sin extensiones
+# backend only, no extensions
 ... | sudo sh -s -- --url https://cloud.example.com --no-extensions
-# con el panel de extensiones dentro de la app
+# with the extension panel inside the app
 ... | sudo sh -s -- --url https://cloud.example.com --admin-token <token>
-# ver qué haría, sin tocar nada
+# show what it would do, without touching anything
 ... | sh -s -- --url https://cloud.example.com --dry-run
-# desinstalar (conserva /var/lib/ocapps) o borrarlo todo
+# uninstall (keeps /var/lib/ocapps) or remove everything
 ... | sudo sh -s -- --uninstall
 ... | sudo sh -s -- --purge
 ```
 
-Después solo falta publicar las rutas en el proxy (`/ocphotos-api/`,
-`/index.php/apps/news/`, `/index.php/apps/notes/`, los dos
-`/ocs/v2.php/cloud/*` y `/ocapps-admin/`) hacia `127.0.0.1:8096`.
+All that is left is publishing the routes on the proxy (`/ocphotos-api/`,
+`/index.php/apps/news/`, `/index.php/apps/notes/`, the two
+`/ocs/v2.php/cloud/*` and `/ocapps-admin/`) towards `127.0.0.1:8096`.
 
-### A mano
+### Manual install
 
-Cada tag produce binarios estáticos para `linux/amd64` y `linux/arm64` más
-un `checksums.txt` (`.goreleaser.yaml`). El archivo trae el binario `ocapps`
-y una copia de este README. Las releases se generan como borrador, así que
-hay que publicarlas a mano antes de que los enlaces funcionen.
+Each tag produces static binaries for `linux/amd64` and `linux/arm64` plus a
+`checksums.txt` (`.goreleaser.yaml`). The archive contains the `ocapps` binary
+and a copy of this README. Releases are created as drafts, so they must be
+published by hand before the links work.
 
 ```bash
 VERSION=0.1.4
@@ -177,8 +178,8 @@ sha256sum --ignore-missing -c checksums.txt
 tar xzf ocapps_${VERSION}_linux_amd64.tar.gz ocapps
 ```
 
-Instalación del servicio. El unit y `deploy/env.example` están en el repo,
-no dentro del archivo de la release:
+Installing the service. The unit and `deploy/env.example` live in the repo, not
+inside the release archive:
 
 ```bash
 sudo install -m 755 ocapps /usr/local/bin/ocapps
@@ -193,67 +194,65 @@ sudo systemctl enable --now opencloud-apps
 curl -s localhost:8096/healthz
 ```
 
-`/var/lib/ocapps` no hay que crearlo a mano: el unit lo declara con
-`StateDirectory` y systemd lo prepara con sus permisos al arrancar.
+`/var/lib/ocapps` does not need to be created by hand: the unit declares it with
+`StateDirectory` and systemd prepares it with the right permissions on start.
 
-El binario es estático (`CGO_ENABLED=0`). La única dependencia de sistema
-en runtime es `ffmpeg`, y sólo la usa el módulo photos para pósters de vídeo
-y HLS.
+The binary is static (`CGO_ENABLED=0`). The only system dependency at runtime is
+`ffmpeg`, and only the photos module uses it, for video posters and HLS.
 
-Proxy, migración de datos desde los servicios antiguos y rollback:
+Proxy, data migration from the old services and rollback:
 [`deploy/README.md`](deploy/README.md).
 
-## Configuración
+## Configuration
 
-Todo por variables de entorno `OCAPPS_*`. Precedencia: `OCAPPS_*` >
-variable legacy (de los servicios antiguos, soportadas con warning durante
-2 versiones menores, hasta 0.3.0) > default. Tabla completa con legacy y
-notas: SPEC §3.2 y [`deploy/env.example`](deploy/env.example).
+Everything goes through `OCAPPS_*` environment variables. Precedence: `OCAPPS_*`
+> legacy variable (from the old services, supported with a warning for 2 minor
+versions, up to 0.3.0) > default. Full table with legacy names and notes: SPEC
+§3.2 and [`deploy/env.example`](deploy/env.example).
 
-| Variable | Default | Descripción |
+| Variable | Default | Description |
 |---|---|---|
-| `OCAPPS_OPENCLOUD_URL` | *(oblig. con auth opencloud)* | Raíz del servidor OpenCloud |
-| `OCAPPS_LISTEN_ADDR` | `127.0.0.1:8096` | Listener único |
-| `OCAPPS_DATA_DIR` | `/var/lib/ocapps` | Raíz de datos (`<dir>/{news,notes,photos}`) |
+| `OCAPPS_OPENCLOUD_URL` | *(required with opencloud auth)* | OpenCloud server root |
+| `OCAPPS_LISTEN_ADDR` | `127.0.0.1:8096` | Single listener |
+| `OCAPPS_DATA_DIR` | `/var/lib/ocapps` | Data root (`<dir>/{news,notes,photos}`) |
 | `OCAPPS_LOG_LEVEL` | `info` | `debug\|info\|warn\|error` |
-| `OCAPPS_AUTH_MODE` | `opencloud` | `opencloud` (Graph) \| `local` (bcrypt, solo news) |
-| `OCAPPS_NEWS_ENABLED` / `OCAPPS_NOTES_ENABLED` / `OCAPPS_PHOTOS_ENABLED` | `true` | Apagar un módulo sin desinstalar |
-| `OCAPPS_NEWS_FEED_INTERVAL` | `15m` | Refresco de feeds (≤ `MAX_GAP`) |
-| `OCAPPS_NEWS_MAX_GAP` | `6h` | Hueco máximo antes de resync |
-| `OCAPPS_NEWS_FETCH_TIMEOUT` | `20s` | Timeout HTTP de descarga de feeds |
-| `OCAPPS_NEWS_RETENTION_DAYS` | `90` | Retención de items (0 = off) |
-| `OCAPPS_NEWS_NTFY_URL` / `OCAPPS_NEWS_NTFY_TOPIC` | `https://ntfy.sh` / `""` | Notificaciones push ntfy |
-| `OCAPPS_NEWS_PUBLIC_URL` | `""` | URL pública del API (callbacks WebSub) |
-| `OCAPPS_NEWS_AUTH_USER` / `OCAPPS_NEWS_AUTH_PASS` | `""` | Admin bootstrap en modo `local` |
-| `OCAPPS_NOTES_OWNER` | `""` | Backfill de `user` en filas vacías (migración 002) |
-| `OCAPPS_PHOTOS_USER` / `OCAPPS_PHOTOS_APP_TOKEN` | *(oblig. si photos enabled)* | Usuario y app-token OpenCloud (single-tenant) |
-| `OCAPPS_PHOTOS_TOKEN` | `""` | Bearer estático propio (ex-`MEMORIES_TOKEN`) |
-| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | Carpeta raíz de escaneo |
-| `OCAPPS_PHOTOS_SCAN_EVERY` | `5m` | Intervalo de re-escaneo |
+| `OCAPPS_AUTH_MODE` | `opencloud` | `opencloud` (Graph) \| `local` (bcrypt, news only) |
+| `OCAPPS_NEWS_ENABLED` / `OCAPPS_NOTES_ENABLED` / `OCAPPS_PHOTOS_ENABLED` | `true` | Disable a module without uninstalling |
+| `OCAPPS_NEWS_FEED_INTERVAL` | `15m` | Feed refresh (<= `MAX_GAP`) |
+| `OCAPPS_NEWS_MAX_GAP` | `6h` | Maximum gap before a resync |
+| `OCAPPS_NEWS_FETCH_TIMEOUT` | `20s` | HTTP timeout for feed downloads |
+| `OCAPPS_NEWS_RETENTION_DAYS` | `90` | Item retention (0 = off) |
+| `OCAPPS_NEWS_NTFY_URL` / `OCAPPS_NEWS_NTFY_TOPIC` | `https://ntfy.sh` / `""` | ntfy push notifications |
+| `OCAPPS_NEWS_PUBLIC_URL` | `""` | Public API URL (WebSub callbacks) |
+| `OCAPPS_NEWS_AUTH_USER` / `OCAPPS_NEWS_AUTH_PASS` | `""` | Bootstrap admin in `local` mode |
+| `OCAPPS_NOTES_OWNER` | `""` | Backfill of `user` on empty rows (migration 002) |
+| `OCAPPS_PHOTOS_USER` / `OCAPPS_PHOTOS_APP_TOKEN` | *(required if photos enabled)* | OpenCloud user and app token (single-tenant) |
+| `OCAPPS_PHOTOS_TOKEN` | `""` | Static Bearer of its own (ex `MEMORIES_TOKEN`) |
+| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | Scan root folder |
+| `OCAPPS_PHOTOS_SCAN_EVERY` | `5m` | Re-scan interval |
 
-Validación (SPEC §3.3): config común inválida = fatal (no arranca); config
-de módulo inválida = ese módulo `failed` (503) y el resto sigue.
+Validation (SPEC §3.3): invalid shared config is fatal (the process does not
+start) and invalid module config leaves that module `failed` (503) while the
+rest keeps running.
 
-## Despliegue y migración
+## Deployment and migration
 
-Ver **[`deploy/README.md`](deploy/README.md)**: requisitos (ffmpeg como
-única dependencia de sistema en runtime), build, instalación del binario +
-unit systemd + `/etc/ocapps/env`, **cambio de proxy** (⚠ `/ocphotos-api/`
-pasa a enrutarse SIN strip), migración de datos con
-[`deploy/migrate.sh`](deploy/migrate.sh) (idempotente, `--dry-run`
-primero), checklist de verificación y rollback. Avisos para los README de
-los repos de app en [`deploy/repo-notices/`](deploy/repo-notices/).
+See **[`deploy/README.md`](deploy/README.md)**: requirements (ffmpeg as the only
+system dependency at runtime), build, binary + systemd unit + `/etc/ocapps/env`
+installation, the **proxy change** (`/ocphotos-api/` becomes routed WITHOUT
+strip), data migration with [`deploy/migrate.sh`](deploy/migrate.sh) (idempotent,
+`--dry-run` first), the verification checklist and the rollback. Notices for the
+app repos' READMEs are in [`deploy/repo-notices/`](deploy/repo-notices/).
 
-## Estado del proyecto
+## Project status
 
-Implementación por hitos (SPEC §8): **H0–H6 completados** — esqueleto y CI
-(H0), base `common` (H1), ports de notes/photos/news (H2–H4), wiring
-unificado con degradación D3 (H5) y artefactos de despliegue/migración
-(H6, `deploy/`). Gates: `CGO_ENABLED=0 go build ./...`,
-`go test -race -shuffle=on ./...` verdes. Pendiente antes de producción:
-ensayo en staging con copias de las BDs reales y del rollback (checklist
-SPEC §9.4) — ver `deploy/README.md`.
+Milestone-based implementation (SPEC §8): **H0-H6 done** - skeleton and CI (H0),
+`common` base (H1), notes/photos/news ports (H2-H4), unified wiring with D3
+degradation (H5) and the deployment/migration artifacts (H6, `deploy/`). Gates:
+`CGO_ENABLED=0 go build ./...` and `go test -race -shuffle=on ./...` are green.
+Pending before production: a staging dry run with copies of the real databases
+and of the rollback (checklist SPEC §9.4), see `deploy/README.md`.
 
-## Licencia
+## License
 
-AGPL-3.0-only. El texto completo está en [`LICENSE`](LICENSE).
+AGPL-3.0-only. The full text is in [`LICENSE`](LICENSE).
