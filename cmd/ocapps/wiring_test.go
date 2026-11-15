@@ -1,8 +1,8 @@
 package main
 
-// Tests de integración del wiring H5 (SPEC §10.3): arranque con un módulo
-// forzado a fallar, tabla de registro de rutas del §4.1 contra el mux real y
-// los dos modos OCS end-to-end contra el mux integrado.
+// H5 wiring integration tests (SPEC §10.3): startup with one module forced to
+// fail, the route registration table of §4.1 against the real mux and the two
+// OCS modes end-to-end against the integrated mux.
 
 import (
 	"context"
@@ -26,8 +26,8 @@ func discardLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// localCfg: config mínima en modo local (news con admin bootstrap, notes
-// enabled, photos disabled) sobre un data dir temporal.
+// localCfg: minimal config in local mode (news with bootstrap admin, notes
+// enabled, photos disabled) on a temporary data dir.
 func localCfg(t *testing.T) *config.Config {
 	t.Helper()
 	dir := t.TempDir()
@@ -56,8 +56,8 @@ func localCfg(t *testing.T) *config.Config {
 	}
 }
 
-// fakeOpenCloud simula Graph (/me, /me/drives) para arrancar los tres
-// módulos en modo opencloud: admite Basic nacho:app-token y Bearer oc-token.
+// fakeOpenCloud simulates Graph (/me, /me/drives) to start the three modules in
+// opencloud mode: it admits Basic nacho:app-token and Bearer oc-token.
 func fakeOpenCloud(t *testing.T) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
@@ -89,13 +89,13 @@ func fakeOpenCloud(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// opencloudCfg: los tres módulos enabled contra el OpenCloud falso.
+// opencloudCfg: the three modules enabled against the fake OpenCloud.
 func opencloudCfg(t *testing.T, ocURL string) *config.Config {
 	t.Helper()
 	cfg := localCfg(t)
 	cfg.AuthMode = "opencloud"
 	cfg.OpenCloudURL = ocURL
-	cfg.News.AuthUser, cfg.News.AuthPass = "", "" // modo opencloud: sin bootstrap
+	cfg.News.AuthUser, cfg.News.AuthPass = "", "" // opencloud mode: no bootstrap
 	cfg.PhotosEnabled = true
 	cfg.Photos = config.PhotosConfig{
 		User: "nacho", AppToken: "app-token", Token: "photos-token",
@@ -118,20 +118,20 @@ func get(t *testing.T, client *http.Client, url string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-// TestIntegracionModuloForzadoAFallar (SPEC §10.3): news fuerza el fallo de
-// su constructor (modo local sin usuarios ni credenciales de bootstrap) → su
-// namespace sirve 503, los demás módulos responden normal (401 con auth
-// requerida, NUNCA 503), /readyz → 503, /healthz → 200 con news failed y el
-// proceso sigue vivo.
-func TestIntegracionModuloForzadoAFallar(t *testing.T) {
+// TestForcedFailingModuleIntegration (SPEC §10.3): news forces its constructor
+// to fail (local mode with no users and no bootstrap credentials) -> its
+// namespace serves 503, the other modules respond normally (401 with auth
+// required, NEVER 503), /readyz -> 503, /healthz -> 200 with news failed and the
+// process stays alive.
+func TestForcedFailingModuleIntegration(t *testing.T) {
 	cfg := localCfg(t)
-	cfg.News.AuthUser, cfg.News.AuthPass = "", "" // bootstrap imposible → New falla
+	cfg.News.AuthUser, cfg.News.AuthPass = "", "" // bootstrap impossible -> New fails
 
 	a := wire(cfg, discardLog())
 	srv := httptest.NewServer(a.mux)
 	t.Cleanup(srv.Close)
 
-	// namespace de news → 503 {"error":"module news unavailable"}
+	// news namespace -> 503 {"error":"module news unavailable"}
 	for _, path := range []string{
 		newsapi.Base + "/version",
 		newsapi.Base + "/items",
@@ -149,7 +149,7 @@ func TestIntegracionModuloForzadoAFallar(t *testing.T) {
 		}
 	}
 
-	// notes sigue sirviendo: 401 con auth requerida (NO 503 ni 404)
+	// notes keeps serving: 401 with auth required (NOT 503 nor 404)
 	code, body := get(t, srv.Client(), srv.URL+"/index.php/apps/notes/api/v1/notes")
 	if code != http.StatusUnauthorized {
 		t.Fatalf("notes API: status = %d, want 401 (%s)", code, body)
@@ -159,7 +159,7 @@ func TestIntegracionModuloForzadoAFallar(t *testing.T) {
 		t.Fatalf("notes OCS capabilities: status = %d, want 200", code)
 	}
 
-	// /healthz → 200 siempre, con news failed y notes ok
+	// /healthz -> 200 always, with news failed and notes ok
 	code, body = get(t, srv.Client(), srv.URL+"/healthz")
 	if code != http.StatusOK {
 		t.Fatalf("healthz: status = %d, want 200", code)
@@ -181,27 +181,27 @@ func TestIntegracionModuloForzadoAFallar(t *testing.T) {
 		t.Fatalf("healthz modules.photos = %q, want disabled", hz.Modules["photos"])
 	}
 
-	// /readyz → 503 (un módulo enabled failed), mismo body
+	// /readyz -> 503 (one enabled module failed), same body
 	code, body = get(t, srv.Client(), srv.URL+"/readyz")
 	if code != http.StatusServiceUnavailable {
 		t.Fatalf("readyz: status = %d, want 503 (%s)", code, body)
 	}
 	if !strings.Contains(body, `"news":"failed:`) {
-		t.Fatalf("readyz body sin news failed: %s", body)
+		t.Fatalf("readyz body without news failed: %s", body)
 	}
 
-	// proceso vivo: healthz sigue respondiendo tras todos los fallos
+	// process alive: healthz keeps responding after all the failures
 	if code, _ = get(t, srv.Client(), srv.URL+"/healthz"); code != http.StatusOK {
-		t.Fatalf("proceso no vivo: healthz = %d", code)
+		t.Fatalf("process not alive: healthz = %d", code)
 	}
 }
 
-// TestIntegracionTablaDeRutas (SPEC §10.3/§4.1): todos los paths públicos de
-// la tabla de enrutado tienen patrón en el mux real con los TRES módulos
-// enabled; ningún namespace pisa a otro (un patrón duplicado haría panic en
-// la propia llamada a wire) y /ocs/v2.php/cloud/user es único (lo sirve
-// notes: XML 200 sin auth, algo que el stub eliminado de news nunca hacía).
-func TestIntegracionTablaDeRutas(t *testing.T) {
+// TestRoutesTableIntegration (SPEC §10.3/§4.1): all the public paths of the
+// routing table have a pattern in the real mux with the THREE modules enabled,
+// no namespace steps on another one (a duplicate pattern would panic in the
+// wire call itself) and /ocs/v2.php/cloud/user is unique (notes serves it:
+// XML 200 without auth, something the removed news stub never did).
+func TestRoutesTableIntegration(t *testing.T) {
 	oc := fakeOpenCloud(t)
 	a := wire(opencloudCfg(t, oc.URL), discardLog())
 	srv := httptest.NewServer(a.mux)
@@ -210,7 +210,7 @@ func TestIntegracionTablaDeRutas(t *testing.T) {
 	paths := []struct {
 		method, path string
 	}{
-		// news: contrato News API v1.3 + excepciones públicas + API propia
+		// news: News API v1.3 contract + public exceptions + own API
 		{"GET", "/index.php/apps/news/api/v1-3/version"},
 		{"GET", "/index.php/apps/news/api/v1-3/folders"},
 		{"GET", "/index.php/apps/news/api/v1-3/feeds"},
@@ -231,13 +231,13 @@ func TestIntegracionTablaDeRutas(t *testing.T) {
 		{"POST", "/api/users"},
 		{"PUT", "/api/users/1"},
 		{"DELETE", "/api/users/1"},
-		// notes: contrato Notes API + OCS
+		// notes: Notes API + OCS contract
 		{"GET", "/index.php/apps/notes/api/v1/notes"},
 		{"GET", "/index.php/apps/notes/api/v1/settings"},
 		{"GET", "/index.php/apps/notes/api/v1.4/attachment/1"},
 		{"GET", "/ocs/v2.php/cloud/capabilities"},
 		{"GET", "/ocs/v2.php/cloud/user"},
-		// photos: namespace sin strip (§4.3)
+		// photos: namespace without strip (§4.3)
 		{"GET", "/ocphotos-api/api/stats"},
 		{"GET", "/ocphotos-api/api/assets"},
 		// common
@@ -247,40 +247,40 @@ func TestIntegracionTablaDeRutas(t *testing.T) {
 	for _, p := range paths {
 		req := httptest.NewRequest(p.method, p.path, nil)
 		if _, pattern := a.mux.Handler(req); pattern == "" {
-			t.Errorf("%s %s: sin patrón registrado (sería 404)", p.method, p.path)
+			t.Errorf("%s %s: no registered pattern (would be 404)", p.method, p.path)
 		}
 	}
 
-	// Unicidad de /ocs/v2.php/cloud/user: wire() no ha panado (patrón
-	// duplicado) y el handler que responde es el de NOTES (XML 200 sin auth;
-	// el stub de news eliminado respondía siempre JSON y 401 sin auth).
+	// Uniqueness of /ocs/v2.php/cloud/user: wire() did not panic (duplicate
+	// pattern) and the handler that responds is the NOTES one (XML 200 without
+	// auth, the removed news stub always responded JSON and 401 without auth).
 	code, body := get(t, srv.Client(), srv.URL+"/ocs/v2.php/cloud/user")
 	if code != http.StatusOK || !strings.Contains(body, "<id>User</id>") {
-		t.Fatalf("ocs user por defecto: %d %s (want 200 XML notes)", code, body)
+		t.Fatalf("ocs user by default: %d %s (want 200 XML notes)", code, body)
 	}
 
-	// readyz verde con los tres módulos sanos
+	// readyz green with the three healthy modules
 	code, body = get(t, srv.Client(), srv.URL+"/readyz")
 	if code != http.StatusOK {
-		t.Fatalf("readyz con módulos sanos: %d (%s)", code, body)
+		t.Fatalf("readyz with healthy modules: %d (%s)", code, body)
 	}
 	for _, want := range []string{`"news":"ok"`, `"notes":"ok"`, `"photos":"ok"`} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("readyz body sin %s: %s", want, body)
+			t.Fatalf("readyz body without %s: %s", want, body)
 		}
 	}
 }
 
-// TestIntegracionOCSDosModos (SPEC §4.2/§10.3): /ocs/v2.php/cloud/user
-// end-to-end contra el mux integrado, en ambos modos.
-func TestIntegracionOCSDosModos(t *testing.T) {
+// TestOCSTwoModesIntegration (SPEC §4.2/§10.3): /ocs/v2.php/cloud/user
+// end-to-end against the integrated mux, in both modes.
+func TestOCSTwoModesIntegration(t *testing.T) {
 	oc := fakeOpenCloud(t)
 	a := wire(opencloudCfg(t, oc.URL), discardLog())
 	srv := httptest.NewServer(a.mux)
 	t.Cleanup(srv.Close)
 
-	// JSON con auth (news-android: ?format=json) → envelope OCS con
-	// id=username y displayname/display-name.
+	// JSON with auth (news-android: ?format=json) -> OCS envelope with
+	// id=username and displayname/display-name.
 	req, _ := http.NewRequest("GET", srv.URL+"/ocs/v2.php/cloud/user?format=json", nil)
 	req.SetBasicAuth("nacho", "app-token")
 	resp, err := srv.Client().Do(req)
@@ -291,16 +291,16 @@ func TestIntegracionOCSDosModos(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	body := string(b)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("JSON con auth: %d %s", resp.StatusCode, body)
+		t.Fatalf("JSON with auth: %d %s", resp.StatusCode, body)
 	}
 	for _, want := range []string{`"ocs"`, `"statuscode":200`, `"id":"nacho"`,
 		`"displayname":"Nacho"`, `"display-name":"Nacho"`} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("JSON con auth: falta %s en %s", want, body)
+			t.Fatalf("JSON with auth: missing %s in %s", want, body)
 		}
 	}
 
-	// JSON vía Accept (clientes OCS con OCS-APIRequest) → también JSON.
+	// JSON through Accept (OCS clients with OCS-APIRequest) -> JSON as well.
 	reqA, _ := http.NewRequest("GET", srv.URL+"/ocs/v2.php/cloud/user", nil)
 	reqA.SetBasicAuth("nacho", "app-token")
 	reqA.Header.Set("Accept", "application/json")
@@ -312,22 +312,22 @@ func TestIntegracionOCSDosModos(t *testing.T) {
 	_ = respA.Body.Close()
 	if respA.StatusCode != http.StatusOK ||
 		!strings.Contains(respA.Header.Get("Content-Type"), "application/json") {
-		t.Fatalf("JSON vía Accept: %d %q", respA.StatusCode, respA.Header.Get("Content-Type"))
+		t.Fatalf("JSON through Accept: %d %q", respA.StatusCode, respA.Header.Get("Content-Type"))
 	}
 
-	// JSON sin auth → 401.
+	// JSON without auth -> 401.
 	code, body := get(t, srv.Client(), srv.URL+"/ocs/v2.php/cloud/user?format=json")
 	if code != http.StatusUnauthorized || !strings.Contains(body, `"statuscode":401`) {
-		t.Fatalf("JSON sin auth: %d %s (want 401)", code, body)
+		t.Fatalf("JSON without auth: %d %s (want 401)", code, body)
 	}
 
-	// XML por defecto sin auth → 200 "User" (modo Iotas conservado).
+	// XML by default without auth -> 200 "User" (Iotas mode kept).
 	code, body = get(t, srv.Client(), srv.URL+"/ocs/v2.php/cloud/user")
 	if code != http.StatusOK || !strings.Contains(body, "<id>User</id>") {
-		t.Fatalf("XML sin auth: %d %s (want 200 <id>User</id>)", code, body)
+		t.Fatalf("XML without auth: %d %s (want 200 <id>User</id>)", code, body)
 	}
 
-	// XML con auth → 200 con el display name.
+	// XML with auth -> 200 with the display name.
 	reqX, _ := http.NewRequest("GET", srv.URL+"/ocs/v2.php/cloud/user", nil)
 	reqX.SetBasicAuth("nacho", "app-token")
 	respX, err := srv.Client().Do(reqX)
@@ -337,13 +337,13 @@ func TestIntegracionOCSDosModos(t *testing.T) {
 	defer func() { _ = respX.Body.Close() }()
 	bx, _ := io.ReadAll(respX.Body)
 	if respX.StatusCode != http.StatusOK || !strings.Contains(string(bx), "<id>Nacho</id>") {
-		t.Fatalf("XML con auth: %d %s", respX.StatusCode, bx)
+		t.Fatalf("XML with auth: %d %s", respX.StatusCode, bx)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Supervisor (unitario, SPEC §4.5): pánico o error en Run → módulo failed,
-// proceso (y el resto de goroutines) sigue.
+// Supervisor (unit, SPEC §4.5): panic or error in Run -> module failed, the
+// process (and the rest of the goroutines) goes on.
 // ---------------------------------------------------------------------------
 
 type stubModule struct {
@@ -357,10 +357,10 @@ func (s stubModule) Register(_ *http.ServeMux)     {}
 func (s stubModule) Run(ctx context.Context) error { return s.run(ctx) }
 func (s stubModule) Healthy() error                { return nil }
 
-func TestSupervisorPanicoMarcaFailed(t *testing.T) {
+func TestSupervisorPanicMarksFailed(t *testing.T) {
 	e := &entry{name: "boom", enabled: true, mod: stubModule{"boom",
-		func(context.Context) error { panic("explota") }}}
-	sano := &entry{name: "sano", enabled: true, mod: stubModule{"sano",
+		func(context.Context) error { panic("boom") }}}
+	healthy := &entry{name: "healthy", enabled: true, mod: stubModule{"healthy",
 		func(ctx context.Context) error { <-ctx.Done(); return nil }}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -369,33 +369,33 @@ func TestSupervisorPanicoMarcaFailed(t *testing.T) {
 	wgPanic.Add(1)
 	wgSano.Add(1)
 	go e.supervise(ctx, &wgPanic, discardLog())
-	go sano.supervise(ctx, &wgSano, discardLog())
-	wgPanic.Wait() // el pánico no debe escapar de supervise
+	go healthy.supervise(ctx, &wgSano, discardLog())
+	wgPanic.Wait() // the panic must not escape supervise
 
-	if st := e.status(); !strings.HasPrefix(st, "failed:") || !strings.Contains(st, "explota") {
-		t.Fatalf("status tras pánico = %q, want failed: ... explota", st)
+	if st := e.status(); !strings.HasPrefix(st, "failed:") || !strings.Contains(st, "boom") {
+		t.Fatalf("status after panic = %q, want failed: ... boom", st)
 	}
-	if st := sano.status(); st != "ok" {
-		t.Fatalf("módulo sano afectado por pánico ajeno: %q", st)
+	if st := healthy.status(); st != "ok" {
+		t.Fatalf("healthy module affected by someone else panic: %q", st)
 	}
 	cancel()
-	wgSano.Wait() // sano termina al cancelar
+	wgSano.Wait() // the healthy one ends on cancel
 }
 
-func TestSupervisorRunConErrorMarcaFailed(t *testing.T) {
-	e := &entry{name: "fallo", enabled: true, mod: stubModule{"fallo",
+func TestSupervisorRunErrorMarksFailed(t *testing.T) {
+	e := &entry{name: "failing", enabled: true, mod: stubModule{"failing",
 		func(context.Context) error { return context.DeadlineExceeded }}}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go e.supervise(context.Background(), &wg, discardLog())
 	wg.Wait()
 	if st := e.status(); !strings.HasPrefix(st, "failed:") {
-		t.Fatalf("status tras error de Run = %q, want failed:", st)
+		t.Fatalf("status after a Run error = %q, want failed:", st)
 	}
 }
 
-// TestHealthzSiempre200: incluso con TODOS los módulos failed, healthz es
-// 200 (liveness) y readyz 503.
+// TestHealthzSiempre200: even with ALL the modules failed, healthz is 200
+// (liveness) and readyz 503.
 func TestHealthzSiempre200(t *testing.T) {
 	a := &app{
 		mux: http.NewServeMux(),
@@ -419,18 +419,18 @@ func TestHealthzSiempre200(t *testing.T) {
 	srv := httptest.NewServer(a.mux)
 	t.Cleanup(srv.Close)
 	if code, _ := get(t, srv.Client(), srv.URL+"/healthz"); code != http.StatusOK {
-		t.Fatalf("healthz con todo failed: %d, want 200", code)
+		t.Fatalf("healthz with everything failed: %d, want 200", code)
 	}
 	if code, _ := get(t, srv.Client(), srv.URL+"/readyz"); code != http.StatusServiceUnavailable {
-		t.Fatalf("readyz con todo failed: %d, want 503", code)
+		t.Fatalf("readyz with everything failed: %d, want 503", code)
 	}
 }
 
-// smoke de photos.PublicPrefix (import usado en la tabla): el namespace de
-// photos failed es exactamente su prefijo público.
+// smoke of photos.PublicPrefix (import used in the table): the namespace of a
+// failed photos module is exactly its public prefix.
 func TestFailedNamespacePhotos(t *testing.T) {
 	ns := failedNamespaces["photos"]
 	if len(ns) != 1 || ns[0] != photos.PublicPrefix+"/" {
-		t.Fatalf("namespace failed de photos = %v", ns)
+		t.Fatalf("failed namespace of photos = %v", ns)
 	}
 }

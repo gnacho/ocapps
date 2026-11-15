@@ -19,9 +19,9 @@ import (
 	"github.com/gnacho/ocapps/internal/common/config"
 )
 
-// fakeOpenCloud simula Graph (/me, /me/drives) y WebDAV (PROPFIND) para el
-// wiring multi-tenant. propfind decide la respuesta de cada path PROPFIND
-// (nil -> 404 en todo).
+// fakeOpenCloud simulates Graph (/me, /me/drives) and WebDAV (PROPFIND) for the
+// multi-tenant wiring. propfind decides the answer of each PROPFIND path (nil ->
+// 404 for everything).
 func fakeOpenCloud(t *testing.T, propfind func(path string) (int, string)) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
@@ -51,8 +51,8 @@ func fakeOpenCloud(t *testing.T, propfind func(path string) (int, string)) *http
 	return srv
 }
 
-// fakeOpenCloudReq es fakeOpenCloud con acceso al *http.Request (p. ej.
-// para exigir Basic en los PROPFIND).
+// fakeOpenCloudReq is fakeOpenCloud with access to the *http.Request (for
+// example to demand Basic auth on the PROPFINDs).
 func fakeOpenCloudReq(t *testing.T, propfind func(r *http.Request) (int, string)) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
@@ -78,14 +78,14 @@ func fakeOpenCloudReq(t *testing.T, propfind func(r *http.Request) (int, string)
 	return srv
 }
 
-const unaFotoXML = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+const onePhotoXML = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
 <d:response><d:href>/dav/spaces/1/Fotos/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 <d:response><d:href>/dav/spaces/1/Fotos/IMG.jpg</d:href><d:propstat><d:prop><d:resourcetype/><d:getetag>"e1"</d:getetag><d:getlastmodified>Mon, 02 Jan 2006 15:04:05 GMT</d:getlastmodified><d:getcontentlength>100</d:getcontentlength><d:getcontenttype>image/jpeg</d:getcontenttype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 </d:multistatus>`
 
-func propfindUnaFoto(path string) (int, string) {
+func propfindOnePhoto(path string) (int, string) {
 	if path == "/dav/spaces/1/Fotos/" {
-		return http.StatusMultiStatus, unaFotoXML
+		return http.StatusMultiStatus, onePhotoXML
 	}
 	return http.StatusNotFound, ""
 }
@@ -97,92 +97,93 @@ func photosCfg() config.PhotosConfig {
 	}
 }
 
-// testConfig envuelve las secciones en la config unificada completa que
-// espera New (sin ModuleErr: config manual = config válida).
+// testConfig wraps the sections in the full unified config New expects (without
+// ModuleErr: manual config = valid config).
 func testConfig(common config.Common, pcfg config.PhotosConfig) *config.Config {
 	return &config.Config{Common: common, Photos: pcfg}
 }
 
-// TestNewSinCredencialesOK: OCAPPS_PHOTOS_USER/APP_TOKEN ya NO son
-// obligatorios (H8): el módulo arranca sin ellos y no depende de OpenCloud.
-func TestNewSinCredencialesOK(t *testing.T) {
+// TestNewWithoutCredentialsOK: OCAPPS_PHOTOS_USER/APP_TOKEN are no longer
+// mandatory (H8), the module starts without them and does not depend on
+// OpenCloud.
+func TestNewWithoutCredentialsOK(t *testing.T) {
 	m, err := New(testConfig(config.Common{OpenCloudURL: "http://127.0.0.1:1", PhotosDataDir: t.TempDir()}, config.PhotosConfig{ScanEvery: time.Hour}), slog.Default(), nil)
 	if err != nil {
-		t.Fatalf("New sin credenciales no debe fallar (H8): %v", err)
+		t.Fatalf("New without credentials must not fail (H8): %v", err)
 	}
 	if err := m.Healthy(); err != nil {
-		t.Fatalf("Healthy = ping SQLite, sin OpenCloud (H8): %v", err)
+		t.Fatalf("Healthy = SQLite ping, without OpenCloud (H8): %v", err)
 	}
-	// el namespace sirve las rutas reales desde el arranque (no 503 de init)
+	// the namespace serves the real routes from startup (no init 503)
 	mux := http.NewServeMux()
 	m.Register(mux)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, PublicPrefix+"/api/stats", nil))
 	if rr.Code == http.StatusServiceUnavailable {
-		t.Fatal("el módulo ya no sirve 503 de init (H8): las rutas responden desde el arranque")
+		t.Fatal("the module no longer serves an init 503 (H8), the routes respond from startup")
 	}
 	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("stats sin auth -> %d, quiero 401", rr.Code)
+		t.Fatalf("stats without auth -> %d, want 401", rr.Code)
 	}
 }
 
-// TestNewTokenSinUserFalla: el Bearer estático DEPRECATED sin
-// OCAPPS_PHOTOS_USER no tiene identidad -> error de config (H8 §6.2).
-func TestNewTokenSinUserFalla(t *testing.T) {
+// TestNewTokenWithoutUserFails: the DEPRECATED static Bearer without
+// OCAPPS_PHOTOS_USER has no identity -> config error (H8 §6.2).
+func TestNewTokenWithoutUserFails(t *testing.T) {
 	pcfg := config.PhotosConfig{Token: "test-token", ScanEvery: time.Hour}
 	_, err := New(testConfig(config.Common{OpenCloudURL: "http://x", PhotosDataDir: t.TempDir()}, pcfg), slog.Default(), nil)
 	if err == nil || !strings.Contains(err.Error(), "OCAPPS_PHOTOS_TOKEN") {
-		t.Fatalf("Token sin User debe ser error de config: %v", err)
+		t.Fatalf("Token without User must be a config error: %v", err)
 	}
 }
 
-// I1: un ModuleErr("photos") registrado por config.Load (p. ej.
-// OCAPPS_PHOTOS_SCAN_EVERY=0s, que PARSEA bien pero es inválido) debe
-// tumbar New — antes el módulo arrancaba "sano" y paniqueaba en
-// time.NewTicker(≤0) tras el scan inicial.
-func TestNewFalloConScanEveryInvalido(t *testing.T) {
-	for _, raw := range []string{"0s", "-5m", "no-es-duracion"} {
+// I1: a ModuleErr("photos") registered by config.Load (for example
+// OCAPPS_PHOTOS_SCAN_EVERY=0s, which PARSES fine but is invalid) must bring New
+// down - before, the module started "healthy" and panicked in
+// time.NewTicker(<=0) after the initial scan.
+func TestNewFailsWithInvalidScanEvery(t *testing.T) {
+	for _, raw := range []string{"0s", "-5m", "not-a-duration"} {
 		t.Run(raw, func(t *testing.T) {
-			t.Setenv("OCAPPS_AUTH_MODE", "local") // sin OPENCLOUD_URL obligatoria
+			t.Setenv("OCAPPS_AUTH_MODE", "local") // no mandatory OPENCLOUD_URL
 			t.Setenv("OCAPPS_DATA_DIR", t.TempDir())
 			t.Setenv("OCAPPS_PHOTOS_SCAN_EVERY", raw)
 			cfg, err := config.Load()
 			if err != nil {
-				t.Fatalf("Load: %v (SCAN_EVERY inválido degrada el módulo, no es fatal)", err)
+				t.Fatalf("Load: %v (an invalid SCAN_EVERY degrades the module, it is not fatal)", err)
 			}
 			if cfg.ModuleErr("photos") == nil {
-				t.Fatalf("SCAN_EVERY=%q debería registrar ModuleErr(photos)", raw)
+				t.Fatalf("SCAN_EVERY=%q should register ModuleErr(photos)", raw)
 			}
 			_, err = New(cfg, slog.Default(), nil)
 			if err == nil {
-				t.Fatalf("New con SCAN_EVERY=%q debería fallar (módulo failed en init, D3)", raw)
+				t.Fatalf("New with SCAN_EVERY=%q should fail (module failed in init, D3)", raw)
 			}
 		})
 	}
 }
 
-// TestModuloSinInitContraOpenCloud: con OpenCloud CAÍDO el módulo arranca y
-// está sano igual (H8 §7: no hay initBackend ni retry loop; los scans se
-// posponen a la actividad del usuario).
-func TestModuloSinInitContraOpenCloud(t *testing.T) {
+// TestModuleWithoutInitAgainstOpenCloud: with OpenCloud DOWN the module starts
+// and is healthy anyway (H8 §7: there is no initBackend and no retry loop, the
+// scans are postponed to the user activity).
+func TestModuleWithoutInitAgainstOpenCloud(t *testing.T) {
 	common := config.Common{OpenCloudURL: "http://127.0.0.1:1", PhotosDataDir: t.TempDir()}
 	m, err := New(testConfig(common, photosCfg()), slog.Default(), nil)
 	if err != nil {
-		t.Fatalf("New con OpenCloud caído: %v", err)
+		t.Fatalf("New with OpenCloud down: %v", err)
 	}
 	if err := m.Healthy(); err != nil {
-		t.Fatalf("Healthy con OpenCloud caído: %v", err)
+		t.Fatalf("Healthy with OpenCloud down: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	// el backfill no puede resolver el legacy owner (Graph caído): log y sigue
+	// the backfill cannot resolve the legacy owner (Graph down): log and go on
 	if err := m.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 }
 
-func TestModuloOKContraGraphFalso(t *testing.T) {
-	srv := fakeOpenCloud(t, propfindUnaFoto)
+func TestModuleOKAgainstFakeGraph(t *testing.T) {
+	srv := fakeOpenCloud(t, propfindOnePhoto)
 	dataDir := t.TempDir()
 	common := config.Common{OpenCloudURL: srv.URL, PhotosDataDir: dataDir}
 	m, err := New(testConfig(common, photosCfg()), slog.Default(), nil)
@@ -193,18 +194,18 @@ func TestModuloOKContraGraphFalso(t *testing.T) {
 		t.Fatalf("Healthy: %v", err)
 	}
 
-	// Q3: mediasecret persistido con permisos 0600
+	// Q3: mediasecret persisted with 0600 permissions
 	sec := filepath.Join(dataDir, "mediasecret")
 	fi, err := os.Stat(sec)
 	if err != nil {
-		t.Fatalf("mediasecret no persistido: %v", err)
+		t.Fatalf("mediasecret not persisted: %v", err)
 	}
 	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("mediasecret permisos = %o, quiero 600", fi.Mode().Perm())
+		t.Fatalf("mediasecret permissions = %o, want 600", fi.Mode().Perm())
 	}
 
-	// rutas reales bajo el prefijo con el token estático (mapea al owner
-	// legacy resuelto contra el Graph falso)
+	// real routes under the prefix with the static token (it maps to the legacy
+	// owner resolved against the fake Graph)
 	mux := http.NewServeMux()
 	m.Register(mux)
 	req := httptest.NewRequest(http.MethodGet, PublicPrefix+"/api/stats", nil)
@@ -215,7 +216,7 @@ func TestModuloOKContraGraphFalso(t *testing.T) {
 		t.Fatalf("stats -> %d (%s)", rr.Code, rr.Body.String())
 	}
 
-	// Run retorna al cancelar ctx
+	// Run returns when ctx is cancelled
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- m.Run(ctx) }()
@@ -227,14 +228,14 @@ func TestModuloOKContraGraphFalso(t *testing.T) {
 			t.Fatalf("Run: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run no retornó tras cancelar ctx")
+		t.Fatal("Run did not return after cancelling ctx")
 	}
 }
 
-// TestTouchDisparaScanDeIndiceVacio: la primera actividad de un usuario (un
-// request autenticado -> Touch) encola su scan y puebla SU índice (H8 §7).
-func TestTouchDisparaScanDeIndiceVacio(t *testing.T) {
-	srv := fakeOpenCloud(t, propfindUnaFoto)
+// TestTouchTriggersScanOfEmptyIndex: the first activity of a user (an
+// authenticated request -> Touch) enqueues its scan and fills ITS index (H8 §7).
+func TestTouchTriggersScanOfEmptyIndex(t *testing.T) {
+	srv := fakeOpenCloud(t, propfindOnePhoto)
 	common := config.Common{OpenCloudURL: srv.URL, PhotosDataDir: t.TempDir()}
 	m, err := New(testConfig(common, photosCfg()), slog.Default(), nil)
 	if err != nil {
@@ -249,7 +250,7 @@ func TestTouchDisparaScanDeIndiceVacio(t *testing.T) {
 		<-done
 	}()
 
-	// request con Basic app-password -> valida contra el Graph falso -> Touch
+	// request with Basic app-password -> validated against the fake Graph -> Touch
 	mux := http.NewServeMux()
 	m.Register(mux)
 	req := httptest.NewRequest(http.MethodGet, PublicPrefix+"/api/stats", nil)
@@ -260,25 +261,25 @@ func TestTouchDisparaScanDeIndiceVacio(t *testing.T) {
 		t.Fatalf("stats -> %d", rr.Code)
 	}
 
-	// el scan disparado por la actividad indexa la foto para user-1
+	// the scan triggered by the activity indexes the photo for user-1
 	waitFor(t, 5*time.Second, func() bool {
 		stats, err := m.st.Stats(context.Background(), "user-1")
 		return err == nil && stats["assets"].(int64) == 1
-	}, "el scan por actividad no indexó la foto del usuario")
+	}, "the activity scan did not index the user photo")
 }
 
-// TestUsuarioSembradoEscaneaEnTicker: un usuario de OCAPPS_PHOTOS_USERS se
-// siembra al arrancar Run y el ticker ScanEvery encola su scan (intervalos
-// inyectables para el test, H8 §7/§9).
-func TestUsuarioSembradoEscaneaEnTicker(t *testing.T) {
-	srv := fakeOpenCloud(t, propfindUnaFoto)
+// TestSeededUserScansOnTicker: a user of OCAPPS_PHOTOS_USERS is seeded when Run
+// starts and the ScanEvery ticker enqueues its scan (intervals injectable for the
+// test, H8 §7/§9).
+func TestSeededUserScansOnTicker(t *testing.T) {
+	srv := fakeOpenCloud(t, propfindOnePhoto)
 	pcfg := photosCfg()
 	pcfg.Users = []config.AppUser{{User: "admin", Token: "app-token"}}
 	m, err := New(testConfig(config.Common{OpenCloudURL: srv.URL, PhotosDataDir: t.TempDir()}, pcfg), slog.Default(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.sched.every = 30 * time.Millisecond // ticker inyectable
+	m.sched.every = 30 * time.Millisecond // injectable ticker
 	m.sched.sweep = time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -292,22 +293,22 @@ func TestUsuarioSembradoEscaneaEnTicker(t *testing.T) {
 	waitFor(t, 5*time.Second, func() bool {
 		stats, err := m.st.Stats(context.Background(), "user-1")
 		return err == nil && stats["assets"].(int64) == 1
-	}, "el usuario sembrado no escaneó en el ticker")
+	}, "the seeded user did not scan on the ticker")
 
-	// la sesión sembrada tiene su espacio resuelto y no se purga
+	// the seeded session has its space resolved and is not purged
 	sess := m.reg.get("user-1")
 	if sess == nil || !sess.seeded || sess.webdavURL == "" {
-		t.Fatalf("sesión sembrada: %+v", sess)
+		t.Fatalf("seeded session: %+v", sess)
 	}
 	if n := m.reg.purge(time.Now()); n != 0 {
-		t.Fatalf("las sesiones sembradas no se purgan: %d", n)
+		t.Fatalf("seeded sessions are not purged: %d", n)
 	}
 }
 
-// TestScanTokenCaducadoPospone: un scan que recibe 401 marca la sesión Bearer
-// como caducada y NO cuenta como lastScan (se reanudará con la próxima
-// actividad del usuario, H8 §7); el índice queda intacto.
-func TestScanTokenCaducadoPospone(t *testing.T) {
+// TestScanExpiredTokenPostpones: a scan that receives a 401 marks the Bearer
+// session as expired and does NOT count as lastScan (it will resume on the next
+// user activity, H8 §7), the index stays intact.
+func TestScanExpiredTokenPostpones(t *testing.T) {
 	srv := fakeOpenCloud(t, func(path string) (int, string) {
 		return http.StatusUnauthorized, ""
 	})
@@ -316,26 +317,26 @@ func TestScanTokenCaducadoPospone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// sesión Bearer del usuario (como si hubiera hecho un request)
+	// Bearer session of the user (as if it had made a request)
 	m.reg.Touch(context.Background(), &auth.User{ID: "user-1"}, auth.Credential{Bearer: "caducado"})
 
 	m.sched.scanOne(context.Background(), "user-1")
 
 	sess := m.reg.get("user-1")
 	if sess == nil || !sess.expired || sess.webdavURL != "" {
-		t.Fatalf("sesión tras 401: %+v, quiero expired y espacio invalidado", sess)
+		t.Fatalf("session after 401: %+v, want expired and an invalidated space", sess)
 	}
 	m.sched.mu.Lock()
 	_, scanned := m.sched.lastScan["user-1"]
 	m.sched.mu.Unlock()
 	if scanned {
-		t.Fatal("un scan con token caducado NO cuenta como lastScan")
+		t.Fatal("a scan with an expired token does NOT count as lastScan")
 	}
 }
 
-// TestSchedulerDedupeYSemaforo: la cola deduplica por owner y el semáforo
-// global limita a 2 scans concurrentes (H8 §7).
-func TestSchedulerDedupeYSemaforo(t *testing.T) {
+// TestSchedulerDedupeAndSemaphore: the queue dedupes by owner and the global
+// semaphore limits to 2 concurrent scans (H8 §7).
+func TestSchedulerDedupeAndSemaphore(t *testing.T) {
 	var inFlight atomic.Int32
 	var maxSeen atomic.Int32
 	block := make(chan struct{})
@@ -346,7 +347,7 @@ func TestSchedulerDedupeYSemaforo(t *testing.T) {
 				break
 			}
 		}
-		<-block // scans bloqueados hasta que el test los suelte
+		<-block // scans blocked until the test releases them
 		inFlight.Add(-1)
 		return http.StatusNotFound, ""
 	})
@@ -356,9 +357,9 @@ func TestSchedulerDedupeYSemaforo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cap(m.sched.maxPar) != 2 {
-		t.Fatalf("semáforo global: cap=%d, quiero 2", cap(m.sched.maxPar))
+		t.Fatalf("global semaphore: cap=%d, want 2", cap(m.sched.maxPar))
 	}
-	// sesiones Bearer de 4 usuarios
+	// Bearer sessions of 4 users
 	for i := 0; i < 4; i++ {
 		owner := fmt.Sprintf("user-%d", i)
 		m.reg.Touch(context.Background(), &auth.User{ID: owner}, auth.Credential{Bearer: "tok"})
@@ -366,38 +367,38 @@ func TestSchedulerDedupeYSemaforo(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go m.sched.run(ctx)
-	// dedupe: encolar dos veces el mismo owner solo lo cuenta una vez
+	// dedupe: enqueuing the same owner twice counts it only once
 	m.sched.enqueue("user-0")
 	m.sched.enqueue("user-0")
 	m.sched.enqueue("user-1")
 	m.sched.enqueue("user-2")
 	m.sched.enqueue("user-3")
 
-	waitFor(t, 5*time.Second, func() bool { return inFlight.Load() == 2 }, "no hay 2 scans en vuelo")
+	waitFor(t, 5*time.Second, func() bool { return inFlight.Load() == 2 }, "there are no 2 scans in flight")
 	if got := maxSeen.Load(); got > 2 {
-		t.Fatalf("scans concurrentes = %d, quiero <= 2", got)
+		t.Fatalf("concurrent scans = %d, want <= 2", got)
 	}
 	m.sched.mu.Lock()
-	enCola := len(m.sched.queued)
-	escaneando := len(m.sched.scanning)
+	queuedCount := len(m.sched.queued)
+	scanningCount := len(m.sched.scanning)
 	m.sched.mu.Unlock()
-	if escaneando != 2 {
-		t.Fatalf("scanning=%d, quiero 2", escaneando)
+	if scanningCount != 2 {
+		t.Fatalf("scanning=%d, want 2", scanningCount)
 	}
-	// user-0 se encoló una sola vez: queued contiene como mucho a los 2 restantes
-	if enCola > 2 {
-		t.Fatalf("dedupe roto: queued=%d", enCola)
+	// user-0 was queued only once: queued holds at most the 2 remaining ones
+	if queuedCount > 2 {
+		t.Fatalf("broken dedupe: queued=%d", queuedCount)
 	}
 	close(block)
-	waitFor(t, 5*time.Second, func() bool { return inFlight.Load() == 0 }, "scans no terminaron")
+	waitFor(t, 5*time.Second, func() bool { return inFlight.Load() == 0 }, "the scans did not finish")
 	if got := maxSeen.Load(); got > 2 {
-		t.Fatalf("scans concurrentes = %d, quiero <= 2", got)
+		t.Fatalf("concurrent scans = %d, want <= 2", got)
 	}
 }
 
-// TestPurgadoSesionesBearer: las sesiones Bearer sin actividad >24h se
-// purgan; las Basic y las sembradas no (H8 §2).
-func TestPurgadoSesionesBearer(t *testing.T) {
+// TestPurgeBearerSessions: Bearer sessions without activity for more than 24h are
+// purged, Basic and seeded ones are not (H8 §2).
+func TestPurgeBearerSessions(t *testing.T) {
 	m, err := New(testConfig(config.Common{OpenCloudURL: "http://x", PhotosDataDir: t.TempDir()},
 		config.PhotosConfig{ScanEvery: time.Hour}), slog.Default(), nil)
 	if err != nil {
@@ -408,29 +409,29 @@ func TestPurgadoSesionesBearer(t *testing.T) {
 	m.reg.Touch(ctx, &auth.User{ID: "bearer-nuevo"}, auth.Credential{Bearer: "t2"})
 	m.reg.Touch(ctx, &auth.User{ID: "basico"}, auth.Credential{Username: "admin", Password: "app-token"})
 
-	// envejece una sesión Bearer y la Basic (que NO se purga)
+	// age one Bearer session and the Basic one (which is NOT purged)
 	m.reg.mu.Lock()
 	m.reg.sessions["bearer-viejo"].lastSeen = time.Now().Add(-25 * time.Hour)
 	m.reg.sessions["basico"].lastSeen = time.Now().Add(-72 * time.Hour)
 	m.reg.mu.Unlock()
 
 	if n := m.reg.purge(time.Now()); n != 1 {
-		t.Fatalf("purgadas = %d, quiero 1", n)
+		t.Fatalf("purged = %d, want 1", n)
 	}
 	if m.reg.get("bearer-viejo") != nil {
-		t.Fatal("bearer-viejo debió purgarse")
+		t.Fatal("bearer-viejo should have been purged")
 	}
 	if m.reg.get("bearer-nuevo") == nil || m.reg.get("basico") == nil {
-		t.Fatal("bearer-nuevo y la sesión Basic deben sobrevivir")
+		t.Fatal("bearer-nuevo and the Basic session must survive")
 	}
 }
 
-// TestBackfillConMeIDMockeado: una memories.db de la era single-tenant se
-// migra (002) y sus filas owner=” se adoptan al oc_id resuelto contra Graph
-// con el app-token (H8 §5.3).
-func TestBackfillConMeIDMockeado(t *testing.T) {
+// TestBackfillWithMockedMeID: a memories.db from the single-tenant era is
+// migrated (002) and its owner empty rows are adopted into the oc_id resolved
+// against Graph with the app token (H8 §5.3).
+func TestBackfillWithMockedMeID(t *testing.T) {
 	dataDir := t.TempDir()
-	// BD viva pre-H8 con esquema single-tenant y un asset + álbum
+	// live pre-H8 database with the single-tenant schema, one asset and one album
 	db, err := sql.Open("sqlite", filepath.Join(dataDir, "memories.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -449,7 +450,7 @@ INSERT INTO albums (name) VALUES ('Vacaciones');
 	}
 	db.Close()
 
-	srv := fakeOpenCloud(t, nil) // Graph falso: /me -> user-1
+	srv := fakeOpenCloud(t, nil) // fake Graph: /me -> user-1
 	m, err := New(testConfig(config.Common{OpenCloudURL: srv.URL, PhotosDataDir: dataDir}, photosCfg()), slog.Default(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -459,22 +460,22 @@ INSERT INTO albums (name) VALUES ('Vacaciones');
 	done := make(chan error, 1)
 	go func() { done <- m.Run(ctx) }()
 
-	// el backfill corre al inicio de Run: los huérfanos quedan adoptados
+	// the backfill runs at the start of Run: the orphans end up adopted
 	waitFor(t, 5*time.Second, func() bool {
 		oa, ob, err := m.st.OrphanCounts(context.Background())
 		return err == nil && oa == 0 && ob == 0
-	}, "el backfill no adoptó las filas single-tenant")
+	}, "the backfill did not adopt the single-tenant rows")
 	stats, err := m.st.Stats(context.Background(), "user-1")
 	if err != nil || stats["assets"].(int64) != 1 {
-		t.Fatalf("asset adoptado por user-1: %v %v", stats, err)
+		t.Fatalf("asset adopted by user-1: %v %v", stats, err)
 	}
 	cancel()
 	<-done
 }
 
-// TestBackfillSinUsuarioLegacyAvisa: sin OCAPPS_PHOTOS_USER/APP_TOKEN el
-// módulo arranca igual y deja las filas huérfanas (WARN en logs, H8 §5.3).
-func TestBackfillSinUsuarioLegacyAvisa(t *testing.T) {
+// TestBackfillWithoutLegacyUserWarns: without OCAPPS_PHOTOS_USER/APP_TOKEN the
+// module starts anyway and leaves the orphan rows (WARN in the logs, H8 §5.3).
+func TestBackfillWithoutLegacyUserWarns(t *testing.T) {
 	m, err := New(testConfig(config.Common{OpenCloudURL: "http://127.0.0.1:1", PhotosDataDir: t.TempDir()},
 		config.PhotosConfig{ScanEvery: time.Hour}), slog.Default(), nil)
 	if err != nil {
@@ -484,10 +485,10 @@ func TestBackfillSinUsuarioLegacyAvisa(t *testing.T) {
 	if _, _, err := m.st.UpsertByETag(ctx, "", "/dav/x/vieja.jpg", "e1", "vieja.jpg", "image", time.Now(), 100); err != nil {
 		t.Fatal(err)
 	}
-	m.backfill(ctx) // sin credenciales: WARN y sigue
+	m.backfill(ctx) // no credentials: WARN and go on
 	oa, _, err := m.st.OrphanCounts(ctx)
 	if err != nil || oa != 1 {
-		t.Fatalf("las filas huérfanas permanecen sin credenciales legacy: %d %v", oa, err)
+		t.Fatalf("the orphan rows remain without legacy credentials: %d %v", oa, err)
 	}
 }
 

@@ -1,9 +1,9 @@
-// Package config carga y valida la configuración unificada de ocapps
-// (SPEC §3). Todo llega por variables de entorno OCAPPS_*; cada variable
-// nueva tiene fallback a su(s) equivalente(s) legacy con warning de
-// deprecación (§3.1, §3.2). Validación fail-fast SOLO de lo común (§3.3);
-// los errores de módulo se registran por módulo (ModuleErr) para que el
-// wiring degrade ese módulo sin tumbar el proceso (D3).
+// Package config loads and validates the unified ocapps configuration
+// (SPEC §3). Everything comes from OCAPPS_* environment variables, every new
+// variable falls back to its legacy equivalent(s) with a deprecation warning
+// (§3.1, §3.2). Fail-fast validation of the common part ONLY (§3.3), module
+// errors are recorded per module (ModuleErr) so that the wiring degrades that
+// module without taking the process down (D3).
 package config
 
 import (
@@ -34,43 +34,43 @@ const (
 	DefaultScanEvery = 5 * time.Minute
 )
 
-// graphMeSuffix es el sufijo que OCNOTES_GRAPH_URL traía pegado a la raíz.
+// graphMeSuffix is the suffix that OCNOTES_GRAPH_URL carried glued to the root.
 const graphMeSuffix = "/graph/v1.0/me"
 
-// Common: configuración compartida por los tres módulos.
+// Common: configuration shared by the three modules.
 type Common struct {
-	OpenCloudURL string // raíz del servidor OpenCloud (obligatoria con AuthMode=opencloud)
-	ListenAddr   string // un solo listener
-	DataDir      string // raíz de datos; los módulos cuelgan en subdirs (§5.1)
+	OpenCloudURL string // OpenCloud server root (mandatory with AuthMode=opencloud)
+	ListenAddr   string // a single listener
+	DataDir      string // data root, modules hang under subdirs (§5.1)
 	LogLevel     string // debug|info|warn|error
-	AuthMode     string // opencloud | local (bcrypt, solo news)
+	AuthMode     string // opencloud | local (bcrypt, news only)
 
 	NewsEnabled   bool
 	NotesEnabled  bool
 	PhotosEnabled bool
 
-	// Data dirs efectivos por módulo: <DataDir>/<mod> salvo que la legacy
-	// por módulo (OCNEWS_DATA_DIR / OCNOTES_DATA_DIR / DATA_DIR) defina otra
-	// ruta (transición suave, §3.2).
+	// Effective data dirs per module: <DataDir>/<mod> unless the per module
+	// legacy one (OCNEWS_DATA_DIR / OCNOTES_DATA_DIR / DATA_DIR) sets another
+	// path (smooth transition, §3.2).
 	NewsDataDir   string
 	NotesDataDir  string
 	PhotosDataDir string
 }
 
-// NewsConfig: módulo news (OCAPPS_NEWS_*).
+// NewsConfig: news module (OCAPPS_NEWS_*).
 type NewsConfig struct {
 	FetchTimeout  time.Duration // > 0
 	FeedInterval  time.Duration // > 0
 	MaxGap        time.Duration // >= FeedInterval
-	RetentionDays int           // 0 = retención desactivada
+	RetentionDays int           // 0 = retention disabled
 	NtfyURL       string
 	NtfyTopic     string
-	PublicURL     string // callbacks WebSub
-	AuthUser      string // bootstrap admin en modo local
+	PublicURL     string // WebSub callbacks
+	AuthUser      string // bootstrap admin in local mode
 	AuthPass      string
 }
 
-// Retention deriva la duración de retención (0 = desactivada).
+// Retention derives the retention duration (0 = disabled).
 func (n NewsConfig) Retention() time.Duration {
 	if n.RetentionDays <= 0 {
 		return 0
@@ -78,60 +78,60 @@ func (n NewsConfig) Retention() time.Duration {
 	return time.Duration(n.RetentionDays) * 24 * time.Hour
 }
 
-// NotesConfig: módulo notes (OCAPPS_NOTES_*).
+// NotesConfig: notes module (OCAPPS_NOTES_*).
 type NotesConfig struct {
-	Owner string // backfill de `user` en filas vacías (migración 002)
+	Owner string // backfill of `user` in empty rows (migration 002)
 }
 
-// AppUser: un usuario de photos con app-token para scan periódico en
-// background (OCAPPS_PHOTOS_USERS, H8). El app-token solo vive en memoria.
+// AppUser: a photos user with an app-token for the periodic background scan
+// (OCAPPS_PHOTOS_USERS, H8). The app-token only lives in memory.
 type AppUser struct {
 	User  string
 	Token string
 }
 
-// PhotosConfig: módulo photos (OCAPPS_PHOTOS_*). Multi-tenant (H8): ya no
-// hay usuario obligatorio; User/AppToken quedan como vía legacy de (a)
-// identidad del Bearer estático DEPRECATED y (b) backfill del índice
-// single-tenant, y se pliegan en Users para background scan.
+// PhotosConfig: photos module (OCAPPS_PHOTOS_*). Multi-tenant (H8): there is
+// no mandatory user anymore, User/AppToken remain as the legacy path for (a)
+// identity of the DEPRECATED static Bearer and (b) backfill of the
+// single-tenant index, and they are folded into Users for the background scan.
 type PhotosConfig struct {
-	User      string    // usuario del app-token (legacy); opcional desde H8
-	AppToken  string    // app-token de OpenCloud (legacy); opcional desde H8
-	Users     []AppUser // OCAPPS_PHOTOS_USERS + pliegue legacy (background scan)
-	Token     string    // Bearer estático DEPRECATED (exige User); "" = desactivado
-	ScanRoot  string
-	// ScanSpace acota el scan a un drive concreto (id del drive, el que va
-	// tras "$" en /dav/spaces/<user>$<drive>). Vacio = drive personal.
+	User     string    // app-token user (legacy), optional since H8
+	AppToken string    // OpenCloud app-token (legacy), optional since H8
+	Users    []AppUser // OCAPPS_PHOTOS_USERS + legacy folding (background scan)
+	Token    string    // static Bearer DEPRECATED (requires User), "" = disabled
+	ScanRoot string
+	// ScanSpace limits the scan to a specific drive (drive id, the one after
+	// "$" in /dav/spaces/<user>$<drive>). Empty = personal drive.
 	ScanSpace string
 	ScanEvery time.Duration
-	// CacheDir: raíz de la caché de miniaturas. Vacio = <DATA_DIR>/thumbs.
-	// Conviene apuntarla a un volumen con espacio (p. ej. el mismo donde vive
-	// OpenCloud) para no engordar el rootfs del contenedor.
+	// CacheDir: root of the thumbnails cache. Empty = <DATA_DIR>/thumbs.
+	// It is worth pointing it to a volume with room (e.g. the same one where
+	// OpenCloud lives) so the container rootfs does not grow.
 	CacheDir string
 }
 
-// LegacyUse registra una variable legacy usada en el arranque (§3.1).
+// LegacyUse records a legacy variable used at startup (§3.1).
 type LegacyUse struct {
-	Legacy string // variable legacy usada
-	New    string // variable OCAPPS_* equivalente ("" si fue eliminada)
+	Legacy string // legacy variable used
+	New    string // equivalent OCAPPS_* variable ("" if it was removed)
 }
 
-// Config es la configuración unificada (SPEC §2.1).
+// Config is the unified configuration (SPEC §2.1).
 type Config struct {
 	Common
 	News   NewsConfig
 	Notes  NotesConfig
 	Photos PhotosConfig
 
-	// Legacy: variables legacy en uso (ya logueadas una a una con Warn).
+	// Legacy: legacy variables in use (already logged one by one with Warn).
 	Legacy []LegacyUse
 
 	moduleErrs map[string]error
 }
 
-// ModuleErr devuelve el error de configuración de un módulo
-// ("news"|"notes"|"photos"), nil si su configuración es válida. Un error
-// aquí degrada el módulo (503), no el proceso (SPEC §3.3/D3).
+// ModuleErr returns the configuration error of a module
+// ("news"|"notes"|"photos"), nil if its configuration is valid. An error here
+// degrades the module (503), not the process (SPEC §3.3/D3).
 func (c *Config) ModuleErr(module string) error {
 	if c.moduleErrs == nil {
 		return nil
@@ -139,14 +139,14 @@ func (c *Config) ModuleErr(module string) error {
 	return c.moduleErrs[module]
 }
 
-// loader aplica la política de precedencia OCAPPS_* > legacy > default y
-// registra/loguea cada legacy usada (§3.1).
+// loader applies the OCAPPS_* > legacy > default precedence policy and
+// records/logs every legacy used (§3.1).
 type loader struct {
 	used []LegacyUse
 }
 
-// lookup: valor de una variable LEGACY solo si está definida Y no vacía —
-// una legacy vacía cuenta como no definida (comportamiento conservado, §3.1).
+// lookup: value of a LEGACY variable only if it is defined AND not empty - an
+// empty legacy counts as not defined (behavior kept, §3.1).
 func (l *loader) lookup(key string) (string, bool) {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
@@ -155,12 +155,12 @@ func (l *loader) lookup(key string) (string, bool) {
 	return v, true
 }
 
-// lookupNew: valor de una variable OCAPPS_* NUEVA. A diferencia de las
-// legacy, una nueva definida EXPLÍCITAMENTE vacía cuenta como definida
-// (M9): prevalece sobre la legacy, que se ignora. Con el valor vacío, get
-// devuelve "" y dur/intVar/boolVar caen al default (su guarda raw==""
-// devuelve def sin error) — definir una nueva vacía es la forma de anular
-// una legacy heredada del entorno.
+// lookupNew: value of a NEW OCAPPS_* variable. Unlike legacy ones, a new one
+// explicitly defined as empty counts as defined (M9): it prevails over the
+// legacy one, which is ignored. With the empty value, get returns "" and
+// dur/intVar/boolVar fall back to the default (their raw=="" guard returns def
+// with no error) - defining a new one as empty is the way to cancel a legacy
+// one inherited from the environment.
 func (l *loader) lookupNew(key string) (string, bool) {
 	v, ok := os.LookupEnv(key)
 	if !ok {
@@ -170,16 +170,16 @@ func (l *loader) lookupNew(key string) (string, bool) {
 }
 
 func (l *loader) warnLegacy(legacy, nueva string) {
-	for _, u := range l.used { // un solo warning por variable y arranque
+	for _, u := range l.used { // a single warning per variable and startup
 		if u.Legacy == legacy {
 			return
 		}
 	}
 	l.used = append(l.used, LegacyUse{Legacy: legacy, New: nueva})
 	if nueva == "" {
-		slog.Warn("env legacy eliminada; se ignora", "legacy", legacy)
+		slog.Warn("removed legacy env var, ignoring it", "legacy", legacy)
 	} else {
-		slog.Warn("env legacy en uso; migra a OCAPPS_*", "legacy", legacy, "nueva", nueva)
+		slog.Warn("legacy env var in use, migrate to OCAPPS_*", "legacy", legacy, "new", nueva)
 	}
 }
 
@@ -192,14 +192,15 @@ func (l *loader) alreadyUsed(legacy string) bool {
 	return false
 }
 
-// get devuelve el valor de la var nueva; si no existe, la legacy (con warn);
-// si ninguna, def. Registra cada legacy usada para el log resumen. Una nueva
-// definida vacía PREVALECE sobre la legacy (M9, ver lookupNew).
-// scanRootOrDefault: una variable definida pero vacía (una línea en blanco en
-// el env) significa "sin configurar", no "recorrer todo el espacio". Costó una
-// semana de indexación en drive.domatix.cloud (issue #36): el scan se metía en
-// el árbol de documentos y agotaba el deadline antes de llegar a las fotos.
-// Para recorrer todo el espacio hay que pedirlo con "/" explícito.
+// get returns the value of the new var, or the legacy one if missing (with a
+// warning), or def if neither exists. It records every legacy used for the
+// summary log. A new one defined as empty PREVAILS over the legacy one (M9,
+// see lookupNew).
+// scanRootOrDefault: a variable defined but empty (a blank line in the env)
+// means "not configured", not "walk the whole space". It cost a week of
+// indexing on drive.domatix.cloud (issue #36): the scan walked into the
+// documents tree and exhausted the deadline before reaching the photos.
+// To walk the whole space it must be requested explicitly with "/".
 func scanRootOrDefault(v string) string {
 	if strings.TrimSpace(v) == "" {
 		return DefaultScanRoot
@@ -220,7 +221,7 @@ func (l *loader) get(nueva, legacy, def string) string {
 	return def
 }
 
-// getFirst es get con varias legacy en orden de precedencia entre ellas.
+// getFirst is get with several legacy ones in precedence order among them.
 func (l *loader) getFirst(nueva string, legacies []string, def string) string {
 	if v, ok := l.lookupNew(nueva); ok {
 		return v
@@ -234,9 +235,9 @@ func (l *loader) getFirst(nueva string, legacies []string, def string) string {
 	return def
 }
 
-// dur parsea una duración con precedencia nueva > legacy > def. El error
-// nombra la variable que aportó el valor inválido. Una nueva definida vacía
-// bloquea la legacy y cae al default (M9).
+// dur parses a duration with new > legacy > def precedence. The error names
+// the variable that provided the invalid value. A new one defined as empty
+// blocks the legacy one and falls back to the default (M9).
 func (l *loader) dur(nueva, legacy string, def time.Duration) (time.Duration, error) {
 	raw, src := "", ""
 	if v, ok := l.lookupNew(nueva); ok {
@@ -252,13 +253,13 @@ func (l *loader) dur(nueva, legacy string, def time.Duration) (time.Duration, er
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil {
-		return def, fmt.Errorf("%s inválido (%q): %w", src, raw, err)
+		return def, fmt.Errorf("%s invalid (%q): %w", src, raw, err)
 	}
 	return d, nil
 }
 
-// intVar parsea un entero con precedencia nueva > legacy > def. Una nueva
-// definida vacía bloquea la legacy y cae al default (M9).
+// intVar parses an integer with new > legacy > def precedence. A new one
+// defined as empty blocks the legacy one and falls back to the default (M9).
 func (l *loader) intVar(nueva, legacy string, def int) (int, error) {
 	raw, src := "", ""
 	if v, ok := l.lookupNew(nueva); ok {
@@ -274,12 +275,12 @@ func (l *loader) intVar(nueva, legacy string, def int) (int, error) {
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		return def, fmt.Errorf("%s inválido (%q): %w", src, raw, err)
+		return def, fmt.Errorf("%s invalid (%q): %w", src, raw, err)
 	}
 	return n, nil
 }
 
-// boolVar parsea un booleano nuevo (sin legacy). Vacía = default.
+// boolVar parses a new boolean (no legacy). Empty = default.
 func (l *loader) boolVar(nueva string, def bool) (bool, error) {
 	raw, ok := l.lookupNew(nueva)
 	if !ok || raw == "" {
@@ -287,29 +288,29 @@ func (l *loader) boolVar(nueva string, def bool) (bool, error) {
 	}
 	b, err := strconv.ParseBool(raw)
 	if err != nil {
-		return def, fmt.Errorf("%s inválido (%q): %w", nueva, raw, err)
+		return def, fmt.Errorf("%s invalid (%q): %w", nueva, raw, err)
 	}
 	return b, nil
 }
 
-// Load lee la configuración completa. Errores de config COMÚN → error fatal
-// (§3.3). Errores de módulo → quedan en Config.ModuleErr(mod).
+// Load reads the whole configuration. COMMON config errors -> fatal error
+// (§3.3). Module errors -> kept in Config.ModuleErr(mod).
 func Load() (*Config, error) {
 	l := &loader{}
 	c := &Config{moduleErrs: map[string]error{}}
 
-	// --- comunes (§3.2) ---
+	// --- common (§3.2) ---
 	c.AuthMode = l.getFirst("OCAPPS_AUTH_MODE", []string{"OCNEWS_AUTH_MODE", "OCNOTES_AUTH_MODE"}, DefaultAuthMode)
 	switch c.AuthMode {
 	case "opencloud", "local":
 	default:
-		return nil, fmt.Errorf("OCAPPS_AUTH_MODE inválido: %q (opencloud|local)", c.AuthMode)
+		return nil, fmt.Errorf("invalid OCAPPS_AUTH_MODE: %q (opencloud|local)", c.AuthMode)
 	}
 
 	c.OpenCloudURL = loadOpenCloudURL(l)
 
-	// ListenAddr: las legacy solo detectan despliegues viejos en logs; el
-	// puerto NO se hereda (cada servicio tenía uno distinto, §3.2).
+	// ListenAddr: the legacy ones only detect old deployments in the logs, the
+	// port is NOT inherited (each service had a different one, §3.2).
 	c.ListenAddr = DefaultListenAddr
 	if v, ok := l.lookupNew("OCAPPS_LISTEN_ADDR"); ok {
 		c.ListenAddr = v
@@ -317,13 +318,13 @@ func Load() (*Config, error) {
 		for _, legacy := range []string{"OCNEWS_ADDR", "OCNOTES_ADDR", "LISTEN_ADDR"} {
 			if _, ok := l.lookup(legacy); ok {
 				l.warnLegacy(legacy, "OCAPPS_LISTEN_ADDR")
-				slog.Warn("env legacy de addr detectada: el puerto no se hereda en el servicio unificado",
+				slog.Warn("legacy addr env var detected: the port is not inherited in the unified service",
 					"legacy", legacy, "listen", DefaultListenAddr)
 			}
 		}
 	}
 	if c.ListenAddr == "" {
-		return nil, fmt.Errorf("OCAPPS_LISTEN_ADDR no puede estar vacío")
+		return nil, fmt.Errorf("OCAPPS_LISTEN_ADDR cannot be empty")
 	}
 
 	c.DataDir = l.getFirst("OCAPPS_DATA_DIR", []string{"OCNEWS_DATA_DIR", "OCNOTES_DATA_DIR", "DATA_DIR"}, DefaultDataDir)
@@ -335,7 +336,7 @@ func Load() (*Config, error) {
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
-		return nil, fmt.Errorf("OCAPPS_LOG_LEVEL inválido: %q (debug|info|warn|error)", c.LogLevel)
+		return nil, fmt.Errorf("invalid OCAPPS_LOG_LEVEL: %q (debug|info|warn|error)", c.LogLevel)
 	}
 
 	var err error
@@ -349,7 +350,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	// --- news (errores → degrada el módulo, §3.3) ---
+	// --- news (errors -> the module degrades, §3.3) ---
 	c.News = NewsConfig{
 		NtfyURL:   l.get("OCAPPS_NEWS_NTFY_URL", "OCNEWS_NTFY_URL", DefaultNtfyURL),
 		NtfyTopic: l.get("OCAPPS_NEWS_NTFY_TOPIC", "OCNEWS_NTFY_TOPIC", ""),
@@ -361,22 +362,22 @@ func Load() (*Config, error) {
 	if c.News.FetchTimeout, err = l.dur("OCAPPS_NEWS_FETCH_TIMEOUT", "OCNEWS_FETCH_TIMEOUT", DefaultFetchTimeout); err != nil {
 		newsErrs = append(newsErrs, err)
 	} else if c.News.FetchTimeout <= 0 {
-		newsErrs = append(newsErrs, fmt.Errorf("OCAPPS_NEWS_FETCH_TIMEOUT debe ser > 0 (got %s)", c.News.FetchTimeout))
+		newsErrs = append(newsErrs, fmt.Errorf("OCAPPS_NEWS_FETCH_TIMEOUT must be > 0 (got %s)", c.News.FetchTimeout))
 	}
 	if c.News.FeedInterval, err = l.dur("OCAPPS_NEWS_FEED_INTERVAL", "OCNEWS_FEED_INTERVAL", DefaultFeedInterval); err != nil {
 		newsErrs = append(newsErrs, err)
 	} else if c.News.FeedInterval <= 0 {
-		newsErrs = append(newsErrs, fmt.Errorf("OCAPPS_NEWS_FEED_INTERVAL debe ser > 0 (got %s)", c.News.FeedInterval))
+		newsErrs = append(newsErrs, fmt.Errorf("OCAPPS_NEWS_FEED_INTERVAL must be > 0 (got %s)", c.News.FeedInterval))
 	}
 	if c.News.MaxGap, err = l.dur("OCAPPS_NEWS_MAX_GAP", "OCNEWS_MAX_GAP", DefaultMaxGap); err != nil {
 		newsErrs = append(newsErrs, err)
 	} else if c.News.MaxGap < c.News.FeedInterval {
-		newsErrs = append(newsErrs, fmt.Errorf("OCAPPS_NEWS_MAX_GAP (%s) debe ser >= OCAPPS_NEWS_FEED_INTERVAL (%s)", c.News.MaxGap, c.News.FeedInterval))
+		newsErrs = append(newsErrs, fmt.Errorf("OCAPPS_NEWS_MAX_GAP (%s) must be >= OCAPPS_NEWS_FEED_INTERVAL (%s)", c.News.MaxGap, c.News.FeedInterval))
 	}
 	if c.News.RetentionDays, err = l.intVar("OCAPPS_NEWS_RETENTION_DAYS", "OCNEWS_RETENTION_DAYS", DefaultRetentionDays); err != nil {
 		newsErrs = append(newsErrs, err)
 	} else if c.News.RetentionDays < 0 {
-		newsErrs = append(newsErrs, fmt.Errorf("OCAPPS_NEWS_RETENTION_DAYS debe ser >= 0 (got %d)", c.News.RetentionDays))
+		newsErrs = append(newsErrs, fmt.Errorf("OCAPPS_NEWS_RETENTION_DAYS must be >= 0 (got %d)", c.News.RetentionDays))
 	}
 	if len(newsErrs) > 0 {
 		c.moduleErrs["news"] = errorsJoin(newsErrs...)
@@ -387,14 +388,14 @@ func Load() (*Config, error) {
 		Owner: l.get("OCAPPS_NOTES_OWNER", "OCNOTES_OWNER", ""),
 	}
 
-	// --- photos multi-tenant (H8): ya NO hay usuario obligatorio (§3.3/§6.2) ---
+	// --- photos multi-tenant (H8): there is NO mandatory user anymore (§3.3/§6.2) ---
 	c.Photos = PhotosConfig{
-		User:     l.get("OCAPPS_PHOTOS_USER", "OC_USER", ""),
-		AppToken: l.get("OCAPPS_PHOTOS_APP_TOKEN", "OC_APP_TOKEN", ""),
-		Token:    l.get("OCAPPS_PHOTOS_TOKEN", "MEMORIES_TOKEN", ""),
+		User:      l.get("OCAPPS_PHOTOS_USER", "OC_USER", ""),
+		AppToken:  l.get("OCAPPS_PHOTOS_APP_TOKEN", "OC_APP_TOKEN", ""),
+		Token:     l.get("OCAPPS_PHOTOS_TOKEN", "MEMORIES_TOKEN", ""),
 		ScanRoot:  scanRootOrDefault(l.get("OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT", DefaultScanRoot)),
 		ScanSpace: strings.TrimSpace(l.get("OCAPPS_PHOTOS_SCAN_SPACE", "", "")),
-		CacheDir: l.get("OCAPPS_PHOTOS_CACHE_DIR", "", ""),
+		CacheDir:  l.get("OCAPPS_PHOTOS_CACHE_DIR", "", ""),
 	}
 	var photosErrs []error
 	var usersErr error
@@ -402,34 +403,34 @@ func Load() (*Config, error) {
 	if usersErr != nil {
 		photosErrs = append(photosErrs, usersErr)
 	}
-	// El Bearer estático está DEPRECATED y ya no tiene identidad propia
-	// (H8 §6.2): sin OCAPPS_PHOTOS_USER no hay oc_id al que mapearlo.
+	// The static Bearer is DEPRECATED and no longer has an identity of its own
+	// (H8 §6.2): without OCAPPS_PHOTOS_USER there is no oc_id to map it to.
 	if c.PhotosEnabled && c.Photos.Token != "" && c.Photos.User == "" {
-		photosErrs = append(photosErrs, fmt.Errorf("OCAPPS_PHOTOS_TOKEN (deprecated) exige OCAPPS_PHOTOS_USER para mapear el token al owner legacy"))
+		photosErrs = append(photosErrs, fmt.Errorf("OCAPPS_PHOTOS_TOKEN (deprecated) requires OCAPPS_PHOTOS_USER to map the token to the legacy owner"))
 	}
-	// Pliegue del par legacy USER+APP_TOKEN en la lista de usuarios con
-	// background scan (H8 §6.2): mismo efecto que OCAPPS_PHOTOS_USERS.
+	// Folding of the legacy USER+APP_TOKEN pair into the list of users with a
+	// background scan (H8 §6.2): same effect as OCAPPS_PHOTOS_USERS.
 	if c.Photos.User != "" && c.Photos.AppToken != "" && !photosUserListed(c.Photos.Users, c.Photos.User) {
-		slog.Warn("OCAPPS_PHOTOS_USER + OCAPPS_PHOTOS_APP_TOKEN están deprecated para background scan: usa OCAPPS_PHOTOS_USERS",
+		slog.Warn("OCAPPS_PHOTOS_USER + OCAPPS_PHOTOS_APP_TOKEN are deprecated for the background scan: use OCAPPS_PHOTOS_USERS",
 			"user", c.Photos.User)
 		c.Photos.Users = append(c.Photos.Users, AppUser{User: c.Photos.User, Token: c.Photos.AppToken})
 	}
 	if c.Photos.ScanEvery, err = l.dur("OCAPPS_PHOTOS_SCAN_EVERY", "SCAN_EVERY", DefaultScanEvery); err != nil {
 		photosErrs = append(photosErrs, err)
 	} else if c.Photos.ScanEvery <= 0 {
-		photosErrs = append(photosErrs, fmt.Errorf("OCAPPS_PHOTOS_SCAN_EVERY debe ser > 0 (got %s)", c.Photos.ScanEvery))
+		photosErrs = append(photosErrs, fmt.Errorf("OCAPPS_PHOTOS_SCAN_EVERY must be > 0 (got %s)", c.Photos.ScanEvery))
 	}
 	if len(photosErrs) > 0 {
 		c.moduleErrs["photos"] = errorsJoin(photosErrs...)
 	}
-	// WEB_DIR eliminada (PWA legacy retirada, Q6): si está definida, warn.
+	// WEB_DIR removed (legacy PWA retired, Q6): warn if it is defined.
 	if _, ok := l.lookup("WEB_DIR"); ok {
 		l.warnLegacy("WEB_DIR", "")
 	}
 
-	// --- validación fatal de lo común (§3.3) ---
+	// --- fatal validation of the common part (§3.3) ---
 	if c.AuthMode == "opencloud" && c.OpenCloudURL == "" {
-		return nil, fmt.Errorf("OCAPPS_AUTH_MODE=opencloud exige OCAPPS_OPENCLOUD_URL (raíz del servidor OpenCloud)")
+		return nil, fmt.Errorf("OCAPPS_AUTH_MODE=opencloud requires OCAPPS_OPENCLOUD_URL (OpenCloud server root)")
 	}
 	if err := ensureWritableDir(c.DataDir); err != nil {
 		return nil, err
@@ -439,10 +440,10 @@ func Load() (*Config, error) {
 	return c, nil
 }
 
-// parsePhotosUsers parsea OCAPPS_PHOTOS_USERS: "alice:apptoken1,bob:apptoken2"
-// (usuarios con scan periódico en background, H8). Formato estricto: cada
-// entrada no vacía debe ser `user:token` con ambas partes no vacías; una
-// entrada malformada es error de config del módulo (ModuleErr, patrón D3).
+// parsePhotosUsers parses OCAPPS_PHOTOS_USERS: "alice:apptoken1,bob:apptoken2"
+// (users with a periodic background scan, H8). Strict format: every non-empty
+// entry must be `user:token` with both parts non-empty, a malformed entry is a
+// module config error (ModuleErr, pattern D3).
 func parsePhotosUsers(raw string) ([]AppUser, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -456,14 +457,14 @@ func parsePhotosUsers(raw string) ([]AppUser, error) {
 		}
 		user, token, ok := strings.Cut(entry, ":")
 		if !ok || strings.TrimSpace(user) == "" || strings.TrimSpace(token) == "" {
-			return nil, fmt.Errorf("OCAPPS_PHOTOS_USERS: entrada malformada %q (formato: user:apptoken[,user2:apptoken2])", entry)
+			return nil, fmt.Errorf("OCAPPS_PHOTOS_USERS: malformed entry %q (format: user:apptoken[,user2:apptoken2])", entry)
 		}
 		out = append(out, AppUser{User: strings.TrimSpace(user), Token: strings.TrimSpace(token)})
 	}
 	return out, nil
 }
 
-// photosUserListed: ¿ya está ese usuario en la lista (pliegue legacy)?
+// photosUserListed: is that user already in the list (legacy folding)?
 func photosUserListed(users []AppUser, user string) bool {
 	for _, u := range users {
 		if u.User == user {
@@ -473,11 +474,11 @@ func photosUserListed(users []AppUser, user string) bool {
 	return false
 }
 
-// loadOpenCloudURL resuelve la raíz del servidor con la precedencia
-// OCAPPS_OPENCLOUD_URL > OCNEWS_OPENCOLOUD_URL (typo histórico, Q1) >
-// OCNOTES_GRAPH_URL (derivando la raíz: strip de /graph/v1.0/me) > OC_BASE_URL.
-// La nueva definida vacía prevalece sobre las legacy (M9) y la validación
-// fatal de §3.3 la rechaza después si auth mode es opencloud.
+// loadOpenCloudURL resolves the server root with the precedence
+// OCAPPS_OPENCLOUD_URL > OCNEWS_OPENCOLOUD_URL (historical typo, Q1) >
+// OCNOTES_GRAPH_URL (deriving the root: stripping /graph/v1.0/me) > OC_BASE_URL.
+// The new one defined as empty prevails over the legacy ones (M9) and the
+// fatal validation of §3.3 rejects it afterwards if the auth mode is opencloud.
 func loadOpenCloudURL(l *loader) string {
 	if v, ok := l.lookupNew("OCAPPS_OPENCLOUD_URL"); ok {
 		return strings.TrimRight(v, "/")
@@ -491,8 +492,8 @@ func loadOpenCloudURL(l *loader) string {
 		root := strings.TrimRight(v, "/")
 		if strings.HasSuffix(root, graphMeSuffix) {
 			root = strings.TrimSuffix(root, graphMeSuffix)
-			slog.Info("OCNOTES_GRAPH_URL apuntaba a /graph/v1.0/me; se deriva la raíz del servidor",
-				"legacy", v, "raiz", root)
+			slog.Info("OCNOTES_GRAPH_URL pointed to /graph/v1.0/me, deriving the server root",
+				"legacy", v, "root", root)
 		}
 		return root
 	}
@@ -503,9 +504,10 @@ func loadOpenCloudURL(l *loader) string {
 	return ""
 }
 
-// moduleDataDir deriva el data dir de un módulo: la legacy por módulo si está
-// definida (transición suave), si no <dataDir>/<module>. Si la legacy ya se
-// registró como fallback del DataDir común no se duplica el warning.
+// moduleDataDir derives the data dir of a module: the per module legacy one if
+// defined (smooth transition), otherwise <dataDir>/<module>. If the legacy one
+// was already recorded as a fallback of the common DataDir the warning is not
+// duplicated.
 func moduleDataDir(l *loader, dataDir, module, legacy string) string {
 	if v, ok := l.lookup(legacy); ok {
 		if !l.alreadyUsed(legacy) {
@@ -516,15 +518,15 @@ func moduleDataDir(l *loader, dataDir, module, legacy string) string {
 	return filepath.Join(dataDir, module)
 }
 
-// ensureWritableDir verifica que el data dir común es creable y escribible
-// (fatal si no, §3.3).
+// ensureWritableDir verifies that the common data dir can be created and
+// written (fatal if not, §3.3).
 func ensureWritableDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("OCAPPS_DATA_DIR %q no creable: %w", dir, err)
+		return fmt.Errorf("OCAPPS_DATA_DIR %q not creatable: %w", dir, err)
 	}
 	f, err := os.CreateTemp(dir, ".ocapps-write-test-*")
 	if err != nil {
-		return fmt.Errorf("OCAPPS_DATA_DIR %q no escribible: %w", dir, err)
+		return fmt.Errorf("OCAPPS_DATA_DIR %q not writable: %w", dir, err)
 	}
 	name := f.Name()
 	_ = f.Close()

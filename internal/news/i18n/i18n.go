@@ -1,12 +1,12 @@
-// Package i18n: catálogo ES/EN de los mensajes de la API.
-// Negociación: users.language (si es es|en) → Accept-Language → en.
+// Package i18n: ES/EN catalog of the API messages.
+// Negotiation: users.language (if it is es|en) -> Accept-Language -> en.
 package i18n
 
 import (
 	"strings"
 )
 
-// Lang es el idioma resuelto para una petición.
+// Lang is the language resolved for a request.
 type Lang string
 
 const (
@@ -14,7 +14,7 @@ const (
 	EN Lang = "en"
 )
 
-// Catálogo de mensajes por clave estable (el code del envelope de error).
+// Message catalog by stable key (the code of the error envelope).
 var messages = map[string]map[Lang]string{
 	"unauthorized": {
 		ES: "no autorizado",
@@ -174,7 +174,7 @@ var messages = map[string]map[Lang]string{
 	},
 }
 
-// T devuelve el mensaje traducido; claves desconocidas caen en internal_error.
+// T returns the translated message, unknown keys fall back to internal_error.
 func T(lang Lang, key string) string {
 	if m, ok := messages[key]; ok {
 		if s, ok := m[lang]; ok && s != "" {
@@ -185,8 +185,8 @@ func T(lang Lang, key string) string {
 	return messages["internal_error"][lang]
 }
 
-// Negotiate resuelve el idioma: preferencia explícita del usuario y,
-// si es auto, la cabecera Accept-Language; por defecto inglés.
+// Negotiate resolves the language: explicit user preference and,
+// if it is auto, the Accept-Language header, English by default.
 func Negotiate(userLang, acceptLanguage string) Lang {
 	switch strings.ToLower(strings.TrimSpace(userLang)) {
 	case "es":

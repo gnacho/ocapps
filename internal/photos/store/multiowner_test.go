@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// fixtureDosOwners: alice y bob con LOS MISMOS paths (UNIQUE(owner,path),
-// H8) + un álbum y una etiqueta para cada uno.
-func fixtureDosOwners(t *testing.T) (*Store, context.Context, map[string]int64, map[string]int64) {
+// twoOwnersFixture: alice and bob with THE SAME paths (UNIQUE(owner,path),
+// H8) plus one album and one tag for each of them.
+func twoOwnersFixture(t *testing.T) (*Store, context.Context, map[string]int64, map[string]int64) {
 	t.Helper()
 	st, err := Open(t.TempDir() + "/test.db")
 	if err != nil {
@@ -32,10 +32,10 @@ func fixtureDosOwners(t *testing.T) (*Store, context.Context, map[string]int64, 
 	return st, ctx, ids, ids
 }
 
-// TestMultiOwnerMismosPathsCoexisten: UNIQUE(owner,path) — dos owners con los
-// mismos paths no colisionan ni se pisaban los upserts.
-func TestMultiOwnerMismosPathsCoexisten(t *testing.T) {
-	st, ctx, _, _ := fixtureDosOwners(t)
+// TestMultiOwnerSamePathsCoexist: UNIQUE(owner,path) - two owners with the same
+// paths do not collide and their upserts do not overwrite each other.
+func TestMultiOwnerSamePathsCoexist(t *testing.T) {
+	st, ctx, _, _ := twoOwnersFixture(t)
 	for _, owner := range []string{"alice", "bob"} {
 		page, err := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, false, "")
 		if err != nil || len(page) != 2 {
@@ -43,7 +43,7 @@ func TestMultiOwnerMismosPathsCoexisten(t *testing.T) {
 		}
 		for _, a := range page {
 			if a.Path == "" {
-				t.Fatal("path vacío")
+				t.Fatal("empty path")
 			}
 		}
 		stats, _ := st.Stats(ctx, owner)
@@ -51,7 +51,7 @@ func TestMultiOwnerMismosPathsCoexisten(t *testing.T) {
 			t.Fatalf("stats %s: %v", owner, stats)
 		}
 	}
-	// upsert del mismo path con distinto etag en un owner NO toca al otro
+	// upsert of the same path with a different etag for one owner does NOT touch the other
 	aliceA, _ := st.AssetByID(ctx, "alice", mustID(t, st, ctx, "alice", "/dav/spaces/x/Fotos/a.jpg"))
 	_ = aliceA
 }
@@ -67,24 +67,24 @@ func mustID(t *testing.T, st *Store, ctx context.Context, owner, path string) in
 			return a.ID
 		}
 	}
-	t.Fatalf("asset %q de %q no encontrado", path, owner)
+	t.Fatalf("asset %q of %q not found", path, owner)
 	return 0
 }
 
-// TestMultiOwnerAislamiento: AssetsPage/Stats/Calendar/Albums/Tags/Folders/
-// Geo/Places no cruzan datos entre owners.
-func TestMultiOwnerAislamiento(t *testing.T) {
-	st, ctx, _, _ := fixtureDosOwners(t)
+// TestMultiOwnerIsolation: AssetsPage/Stats/Calendar/Albums/Tags/Folders/
+// Geo/Places do not cross data between owners.
+func TestMultiOwnerIsolation(t *testing.T) {
+	st, ctx, _, _ := twoOwnersFixture(t)
 	aliceA := mustID(t, st, ctx, "alice", "/dav/spaces/x/Fotos/a.jpg")
 	bobA := mustID(t, st, ctx, "bob", "/dav/spaces/x/Fotos/a.jpg")
 	if aliceA == bobA {
-		t.Fatal("los ids deben ser globales y distintos")
+		t.Fatal("ids must be global and different")
 	}
 
-	// álbumes por owner
+	// albums per owner
 	alAlice, _ := st.CreateAlbum(ctx, "alice", "Vacaciones")
 	if _, err := st.CreateAlbum(ctx, "bob", "Vacaciones"); err != nil {
-		t.Fatalf("bob puede tener un álbum con el mismo nombre: %v", err)
+		t.Fatalf("bob can have an album with the same name: %v", err)
 	}
 	if err := st.AddToAlbum(ctx, "alice", alAlice, []int64{aliceA}); err != nil {
 		t.Fatal(err)
@@ -95,10 +95,10 @@ func TestMultiOwnerAislamiento(t *testing.T) {
 	}
 	albumsBob, _ := st.ListAlbums(ctx, "bob")
 	if len(albumsBob) != 1 || albumsBob[0].Count != 0 {
-		t.Fatalf("albums bob: %+v (no debe ver el contenido de alice)", albumsBob)
+		t.Fatalf("albums bob: %+v (must not see alice's content)", albumsBob)
 	}
 
-	// tags por owner
+	// tags per owner
 	if err := st.AddTag(ctx, "alice", aliceA, "playa"); err != nil {
 		t.Fatal(err)
 	}
@@ -109,17 +109,17 @@ func TestMultiOwnerAislamiento(t *testing.T) {
 	}
 	byTag, _ := st.AssetsByTag(ctx, "bob", "playa")
 	if len(byTag) != 0 {
-		t.Fatal("bob no debe ver assets por el tag de alice")
+		t.Fatal("bob must not see assets through alice's tag")
 	}
 
-	// calendar por owner
+	// calendar per owner
 	calA, _ := st.Calendar(ctx, "alice")
 	calB, _ := st.Calendar(ctx, "bob")
 	if len(calA) != 1 || len(calB) != 1 {
 		t.Fatalf("calendar: %+v %+v", calA, calB)
 	}
 
-	// folders por owner: mismos paths, cada uno ve solo los suyos
+	// folders per owner: same paths, each one sees only its own
 	subs, _ := st.Subfolders(ctx, "alice", "/dav/spaces/x/Fotos/")
 	if len(subs) != 1 || subs[0].Count != 1 {
 		t.Fatalf("subfolders alice: %+v", subs)
@@ -129,27 +129,27 @@ func TestMultiOwnerAislamiento(t *testing.T) {
 		t.Fatalf("folder assets bob: %d", len(fa))
 	}
 
-	// geo/places por owner
+	// geo/places per owner
 	lat, lon := 40.4168, -3.7038
 	if err := st.SaveExif(ctx, aliceA, ExifResult{Lat: &lat, Lon: &lon}); err != nil {
 		t.Fatal(err)
 	}
 	geoB, _ := st.GeoAssets(ctx, "bob", 10)
 	if len(geoB) != 0 {
-		t.Fatal("bob no debe ver el geo de alice")
+		t.Fatal("bob must not see alice's geo")
 	}
 	placesB, _ := st.PlaceClusters(ctx, "bob", 2)
 	if len(placesB) != 0 {
-		t.Fatal("bob no debe ver los lugares de alice")
+		t.Fatal("bob must not see alice's places")
 	}
 
-	// soft-delete acotado al owner: un scan de bob que no ve nada NO borra a alice
+	// soft-delete scoped to the owner: a scan of bob that sees nothing does NOT delete alice's rows
 	if n, err := st.SoftDeleteExcept(ctx, "bob", "", map[string]bool{}); err != nil || n != 2 {
 		t.Fatalf("softdelete bob: %d %v", n, err)
 	}
 	statsA, _ := st.Stats(ctx, "alice")
 	if statsA["assets"].(int64) != 2 {
-		t.Fatalf("alice intacta tras softdelete de bob: %v", statsA)
+		t.Fatalf("alice intact after bob's softdelete: %v", statsA)
 	}
 	statsB, _ := st.Stats(ctx, "bob")
 	if statsB["assets"].(int64) != 0 {
@@ -157,10 +157,10 @@ func TestMultiOwnerAislamiento(t *testing.T) {
 	}
 }
 
-// TestMultiOwnerIDOR: leer/escribir ids ajenos devuelve sql.ErrNoRows ("no
-// encontrado"), nunca un error que delate existencia (H8 §3).
+// TestMultiOwnerIDOR: reading or writing foreign ids returns sql.ErrNoRows
+// ("not found"), never an error that leaks existence (H8 §3).
 func TestMultiOwnerIDOR(t *testing.T) {
-	st, ctx, _, _ := fixtureDosOwners(t)
+	st, ctx, _, _ := twoOwnersFixture(t)
 	aliceA := mustID(t, st, ctx, "alice", "/dav/spaces/x/Fotos/a.jpg")
 	alAlice, _ := st.CreateAlbum(ctx, "alice", "Vacaciones")
 	if err := st.AddToAlbum(ctx, "alice", alAlice, []int64{aliceA}); err != nil {
@@ -170,74 +170,73 @@ func TestMultiOwnerIDOR(t *testing.T) {
 	assertNoRows := func(name string, err error) {
 		t.Helper()
 		if !errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("%s: err=%v, quiero sql.ErrNoRows", name, err)
+			t.Fatalf("%s: err=%v, want sql.ErrNoRows", name, err)
 		}
 	}
 
-	// lectura de un id ajeno
+	// reading a foreign id
 	if _, err := st.AssetByID(ctx, "bob", aliceA); err == nil {
-		t.Fatal("AssetByID ajeno debe fallar")
+		t.Fatal("AssetByID on a foreign asset must fail")
 	} else {
 		assertNoRows("AssetByID", err)
 	}
-	// escrituras sobre un id ajeno
+	// writes on a foreign id
 	assertNoRows("SetFavorite", st.SetFavorite(ctx, "bob", aliceA, true))
 	assertNoRows("SetArchived", st.SetArchived(ctx, "bob", aliceA, true))
 	assertNoRows("SetPHash", st.SetPHash(ctx, "bob", aliceA, "00"))
 	assertNoRows("AddTag", st.AddTag(ctx, "bob", aliceA, "robo"))
 	assertNoRows("AssetTags", func() error { _, err := st.AssetTags(ctx, "bob", aliceA); return err }())
-	// álbum ajeno: renombrar, borrar, listar assets, añadir, quitar
+	// foreign album: rename, delete, list its assets, add, remove
 	assertNoRows("RenameAlbum", st.RenameAlbum(ctx, "bob", alAlice, "x"))
 	assertNoRows("DeleteAlbum", st.DeleteAlbum(ctx, "bob", alAlice))
 	assertNoRows("AlbumAssets", func() error { _, err := st.AlbumAssets(ctx, "bob", alAlice); return err }())
-	assertNoRows("AddToAlbum(album ajeno)", st.AddToAlbum(ctx, "bob", alAlice, []int64{mustID(t, st, ctx, "bob", "/dav/spaces/x/Fotos/a.jpg")}))
+	assertNoRows("AddToAlbum(foreign album)", st.AddToAlbum(ctx, "bob", alAlice, []int64{mustID(t, st, ctx, "bob", "/dav/spaces/x/Fotos/a.jpg")}))
 	assertNoRows("RemoveFromAlbum", st.RemoveFromAlbum(ctx, "bob", alAlice, aliceA))
-	// añadir un asset AJENO a un álbum PROPIO: también ErrNoRows
+	// adding a FOREIGN asset to an OWN album: also ErrNoRows
 	alBob, _ := st.CreateAlbum(ctx, "bob", "Mío")
-	assertNoRows("AddToAlbum(asset ajeno)", st.AddToAlbum(ctx, "bob", alBob, []int64{aliceA}))
+	assertNoRows("AddToAlbum(foreign asset)", st.AddToAlbum(ctx, "bob", alBob, []int64{aliceA}))
 
-	// y alice sigue intacta tras todos los intentos de bob
+	// and alice is still intact after all of bob's attempts
 	a, err := st.AssetByID(ctx, "alice", aliceA)
 	if err != nil || a.IsFavorite || a.IsArchived {
-		t.Fatalf("alice modificada por bob: %+v %v", a, err)
+		t.Fatalf("alice modified by bob: %+v %v", a, err)
 	}
 	if tags, _ := st.AssetTags(ctx, "alice", aliceA); len(tags) != 0 {
-		t.Fatalf("tags de alice tras intentos de bob: %v", tags)
+		t.Fatalf("alice's tags after bob's attempts: %v", tags)
 	}
 	if albums, _ := st.ListAlbums(ctx, "alice"); len(albums) != 1 || albums[0].Name != "Vacaciones" {
-		t.Fatalf("álbum de alice modificado por bob: %+v", albums)
+		t.Fatalf("alice's album modified by bob: %+v", albums)
 	}
-	// el álbum de bob NO contiene el asset de alice
+	// bob's album does NOT contain alice's asset
 	if got, _ := st.AlbumAssets(ctx, "bob", alBob); len(got) != 0 {
-		t.Fatalf("bob coló un asset ajeno en su álbum: %d", len(got))
+		t.Fatalf("bob sneaked a foreign asset into his album: %d", len(got))
 	}
 }
 
-// TestPendingExifPorOwner: la cola de EXIF va por owner (worker multi-tenant).
-func TestPendingExifPorOwner(t *testing.T) {
-	st, ctx, _, _ := fixtureDosOwners(t)
+// TestPendingExifPerOwner: the EXIF queue is per owner (multi-tenant worker).
+func TestPendingExifPerOwner(t *testing.T) {
+	st, ctx, _, _ := twoOwnersFixture(t)
 	pA, err := st.PendingExif(ctx, "alice", 50)
 	if err != nil || len(pA) != 2 {
 		t.Fatalf("pending alice: %d %v", len(pA), err)
 	}
-	// procesar uno de alice no cambia la cola de bob
+	// processing one of alice's does not change bob's queue
 	if err := st.SaveExif(ctx, pA[0].ID, ExifResult{}); err != nil {
 		t.Fatal(err)
 	}
 	pA2, _ := st.PendingExif(ctx, "alice", 50)
 	pB, _ := st.PendingExif(ctx, "bob", 50)
 	if len(pA2) != 1 || len(pB) != 2 {
-		t.Fatalf("pending tras exif: alice=%d bob=%d", len(pA2), len(pB))
+		t.Fatalf("pending after exif: alice=%d bob=%d", len(pA2), len(pB))
 	}
 }
 
-// TestBackfillColisiones: si el backfill se saltó un arranque (OpenCloud
-// caído) y el usuario re-escaneó, coexisten (”,path) y (owner,path). El
-// backfill NO debe reventar por UNIQUE(owner,path): adopta las huérfanas no
-// conflictivas, borra las conflictivas (las nuevas del owner ya las
-// representan, con cascada de album_assets/asset_tags) y es idempotente
-// (H8 review FIX 3).
-func TestBackfillColisiones(t *testing.T) {
+// TestBackfillCollisions: if the backfill skipped a start (OpenCloud down) and
+// the user rescanned, (empty path) and (owner,path) coexist. The backfill must NOT
+// blow up on UNIQUE(owner,path): it adopts the non-conflicting orphans, deletes
+// the conflicting ones (the new rows of the owner already represent them, with
+// a cascade over album_assets/asset_tags) and is idempotent (H8 review FIX 3).
+func TestBackfillCollisions(t *testing.T) {
 	st, err := Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
@@ -253,64 +252,64 @@ func TestBackfillColisiones(t *testing.T) {
 		}
 		return id
 	}
-	// era single-tenant: 3 assets huérfanos y 2 álbumes huérfanos
+	// single-tenant era: 3 orphan assets and 2 orphan albums
 	orphanA := add("", "/dav/x/a.jpg", "e1")
 	orphanB := add("", "/dav/x/b.jpg", "e2")
 	add("", "/dav/x/c.jpg", "e3")
-	alOrfanV, _ := st.CreateAlbum(ctx, "", "Vacaciones")
+	alOrphanV, _ := st.CreateAlbum(ctx, "", "Vacaciones")
 	if _, err := st.CreateAlbum(ctx, "", "Retro"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AddToAlbum(ctx, "", alOrfanV, []int64{orphanA, orphanB}); err != nil {
+	if err := st.AddToAlbum(ctx, "", alOrphanV, []int64{orphanA, orphanB}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AddTag(ctx, "", orphanB, "playa"); err != nil {
 		t.Fatal(err)
 	}
-	// el usuario re-escaneó antes del backfill: /b.jpg y /c.jpg ya son suyos
+	// the user rescanned before the backfill: /b.jpg and /c.jpg already belong to him
 	add("oc1", "/dav/x/b.jpg", "e2-new")
 	add("oc1", "/dav/x/c.jpg", "e3-new")
 	alV, _ := st.CreateAlbum(ctx, "oc1", "Vacaciones")
 
-	// escenario previo al fix: el UPDATE a ciegas reventaba con error 2067
+	// scenario before the fix: the blind UPDATE blew up with error 2067
 	nA, nAl, rmA, rmAl, err := st.BackfillOwner(ctx, "oc1")
 	if err != nil {
-		t.Fatalf("backfill con colisiones no debe fallar: %v", err)
+		t.Fatalf("backfill with collisions must not fail: %v", err)
 	}
 	if nA != 1 || nAl != 1 || rmA != 2 || rmAl != 1 {
-		t.Fatalf("adoptados %d/%d eliminados %d/%d, quiero 1/1 y 2/1", nA, nAl, rmA, rmAl)
+		t.Fatalf("adopted %d/%d removed %d/%d, want 1/1 and 2/1", nA, nAl, rmA, rmAl)
 	}
-	// sin huérfanos y con todo lo esperado para oc1
+	// no orphans left and everything expected for oc1
 	if oa, ob, _ := st.OrphanCounts(ctx); oa != 0 || ob != 0 {
-		t.Fatalf("orphans tras backfill: %d %d", oa, ob)
+		t.Fatalf("orphans after backfill: %d %d", oa, ob)
 	}
 	stats, _ := st.Stats(ctx, "oc1")
 	if stats["assets"].(int64) != 3 {
-		t.Fatalf("oc1 debe tener 3 assets: %v", stats)
+		t.Fatalf("oc1 must have 3 assets: %v", stats)
 	}
-	// el asset huérfano NO conflictivo se adoptó conservando su id
+	// the NON-conflicting orphan asset was adopted keeping its id
 	if a, err := st.AssetByID(ctx, "oc1", orphanA); err != nil || a.Path != "/dav/x/a.jpg" {
-		t.Fatalf("asset adoptado: %+v %v", a, err)
+		t.Fatalf("adopted asset: %+v %v", a, err)
 	}
-	// los conflictivos huérfanos se borraron (id ya no existe ni para "")
+	// the conflicting orphans were deleted (the id no longer exists even for "")
 	if _, err := st.AssetByID(ctx, "", orphanB); err == nil {
-		t.Fatal("el huérfano conflictivo debe desaparecer")
+		t.Fatal("the conflicting orphan must disappear")
 	}
-	// cascada: el tag y los enlaces del álbum huérfano borrado también
+	// cascade: the tag and the links of the deleted orphan album too
 	if albums, _ := st.ListAlbums(ctx, ""); len(albums) != 0 {
-		t.Fatalf("álbumes huérfanos: %+v", albums)
+		t.Fatalf("orphan albums: %+v", albums)
 	}
 	if tags, _ := st.ListTags(ctx, "oc1"); len(tags) != 0 {
-		t.Fatalf("el tag del conflictivo debió morir en cascada: %v", tags)
+		t.Fatalf("the tag of the conflicting asset should have died in cascade: %v", tags)
 	}
-	// el álbum del owner conserva su identidad (sin duplicado por nombre)
+	// the owner's album keeps its identity (no duplicate by name)
 	albums, _ := st.ListAlbums(ctx, "oc1")
 	if len(albums) != 2 || (albums[0].ID != alV && albums[1].ID != alV) {
-		t.Fatalf("álbumes de oc1: %+v", albums)
+		t.Fatalf("albums of oc1: %+v", albums)
 	}
-	// idempotente: segundo backfill (rearranque) no toca nada
+	// idempotent: a second backfill (restart) touches nothing
 	nA, nAl, rmA, rmAl, err = st.BackfillOwner(ctx, "oc1")
 	if err != nil || nA != 0 || nAl != 0 || rmA != 0 || rmAl != 0 {
-		t.Fatalf("segundo backfill debe ser no-op: %d/%d -%d/-%d %v", nA, nAl, rmA, rmAl, err)
+		t.Fatalf("second backfill must be a no-op: %d/%d -%d/-%d %v", nA, nAl, rmA, rmAl, err)
 	}
 }

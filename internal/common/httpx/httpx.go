@@ -1,7 +1,7 @@
-// Package httpx: helpers HTTP compartidos por los tres módulos (SPEC §2.1,
-// §4.4). Unifica writeJSON/errorStatus/decodeBody/withCORS de ocnews, ocnotes
-// y ocphotos. CORS mantiene ACAO * (sin cookies, auth por cabecera) con la
-// unión de métodos y cabeceras de los tres servicios.
+// Package httpx: HTTP helpers shared by the three modules (SPEC §2.1, §4.4).
+// It unifies writeJSON/errorStatus/decodeBody/withCORS from ocnews, ocnotes
+// and ocphotos. CORS keeps ACAO * (no cookies, header auth) with the union of
+// methods and headers of the three services.
 package httpx
 
 import (
@@ -13,8 +13,8 @@ import (
 	"net/http"
 )
 
-// Cabeceras CORS unificadas (SPEC §4.4): unión de las de news, notes y
-// photos. Sin Access-Control-Allow-Credentials: no hay cookies.
+// Unified CORS headers (SPEC §4.4): union of those of news, notes and photos.
+// No Access-Control-Allow-Credentials: there are no cookies.
 const (
 	corsAllowOrigin   = "*"
 	corsAllowMethods  = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
@@ -22,18 +22,18 @@ const (
 	corsExposeHeaders = "ETag, Last-Modified, X-Notes-API-Versions, X-Notes-Chunk-Cursor"
 )
 
-// WriteJSON escribe v como JSON con el código dado. Fija Content-Type ANTES
-// de WriteHeader (corrige el bug menor de ocphotos que escribía siempre 200).
+// WriteJSON writes v as JSON with the given code. It sets Content-Type BEFORE
+// WriteHeader (fixes the minor ocphotos bug that always wrote 200).
 func WriteJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("escribir respuesta JSON", "err", err)
+		slog.Error("write JSON response", "err", err)
 	}
 }
 
-// HTTPError es un error con código HTTP, code estable para clientes y
-// mensaje presentable. Los handlers lo devuelven y ErrorStatus lo escribe.
+// HTTPError is an error with an HTTP code, a stable code for clients and a
+// presentable message. Handlers return it and ErrorStatus writes it.
 type HTTPError struct {
 	Status  int    `json:"-"`
 	Code    string `json:"code"`
@@ -42,18 +42,19 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string { return e.Code + ": " + e.Message }
 
-// NewError construye un HTTPError.
+// NewError builds an HTTPError.
 func NewError(status int, code, msg string) *HTTPError {
 	return &HTTPError{Status: status, Code: code, Message: msg}
 }
 
-// ErrorStatus escribe el envelope {"error":{"code","message"}}. Si err es
-// (o envuelve) un *HTTPError usa su status/code/message; si no, 500
-// "internal" sin filtrar el mensaje interno al cliente (va al log).
+// ErrorStatus writes the {"error":{"code","message"}} envelope. If err is (or
+// wraps) an *HTTPError it uses its status/code/message, otherwise 500
+// "internal" without leaking the internal message to the client (it goes to
+// the log).
 func ErrorStatus(w http.ResponseWriter, r *http.Request, err error) {
 	var he *HTTPError
 	if !errors.As(err, &he) {
-		slog.Error("error interno", "path", r.URL.Path, "err", err)
+		slog.Error("internal error", "path", r.URL.Path, "err", err)
 		he = &HTTPError{Status: http.StatusInternalServerError, Code: "internal", Message: "internal error"}
 	}
 	if he.Status < 400 || he.Status > 599 {
@@ -62,13 +63,13 @@ func ErrorStatus(w http.ResponseWriter, r *http.Request, err error) {
 	WriteJSON(w, he.Status, map[string]*HTTPError{"error": he})
 }
 
-// maxBodyBytes es el tope de lectura de bodies de API (4 MB, como ocnews).
+// maxBodyBytes is the read cap for API bodies (4 MB, like ocnews).
 const maxBodyBytes = 4 << 20
 
-// DecodeBody decodifica JSON tolerante (port de ocnews): decide por el
-// CONTENIDO (primer byte no-blanco '{' o '['), no por el Content-Type —
-// `curl -d` manda form-urlencoded aunque el body sea JSON. Si no es JSON,
-// deja el body intacto (devuelve nil) para que el handler haga ParseForm.
+// DecodeBody decodes tolerant JSON (port of ocnews): it decides by the
+// CONTENT (first non-blank byte '{' or '['), not by the Content-Type -
+// `curl -d` sends form-urlencoded even when the body is JSON. If it is not
+// JSON, it leaves the body intact (returns nil) so the handler can ParseForm.
 func DecodeBody(r *http.Request, dst any) error {
 	if r.Body == nil {
 		return nil
@@ -98,8 +99,8 @@ func peekNonSpace(br *bufio.Reader) (byte, error) {
 	return 0, nil
 }
 
-// CORS es el middleware unificado (SPEC §4.4). El preflight OPTIONS se
-// responde aquí con 204 SIN pasar por auth ni por el handler siguiente.
+// CORS is the unified middleware (SPEC §4.4). The OPTIONS preflight is
+// answered here with 204 WITHOUT going through auth or the next handler.
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -115,8 +116,8 @@ func CORS(next http.Handler) http.Handler {
 	})
 }
 
-// Preflight devuelve un handler 204 para registrar explícitamente
-// "OPTIONS <prefix>/" antes del handler autenticado (patrón de ocnews).
+// Preflight returns a 204 handler to explicitly register
+// "OPTIONS <prefix>/" before the authenticated handler (ocnews pattern).
 func Preflight() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

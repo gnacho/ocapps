@@ -1,19 +1,19 @@
 #!/bin/sh
-# install.sh — instala el backend ocapps y sus extensiones web en OpenCloud.
+# install.sh - installs the ocapps backend and its web extensions on OpenCloud.
 #
 #   curl -fsSL https://raw.githubusercontent.com/gnacho/ocapps/main/install.sh | sh -s -- --url https://cloud.example.com
 #
-# Opciones:
-#   --url URL            URL pública de OpenCloud (obligatoria, salvo --dry-run)
-#   --apps a,b,c         extensiones a instalar (default: news,notes,ocphotos)
-#   --no-extensions      solo el backend
-#   --admin-token TOK    activa el panel de extensiones (/ocapps-admin/)
-#   --version vX.Y.Z     versión del binario (default: última release)
-#   --dry-run            enseña lo que haría, sin tocar nada
-#   --uninstall          para y elimina el servicio (conserva /var/lib/ocapps)
-#   --purge              como --uninstall, y borra también los datos
+# Options:
+#   --url URL            public OpenCloud URL (required, except with --dry-run)
+#   --apps a,b,c         extensions to install (default: news,notes,ocphotos)
+#   --no-extensions      backend only
+#   --admin-token TOK    enables the extensions panel (/ocapps-admin/)
+#   --version vX.Y.Z     binary version (default: latest release)
+#   --dry-run            shows what it would do, without touching anything
+#   --uninstall          stops and removes the service (keeps /var/lib/ocapps)
+#   --purge              like --uninstall, and deletes the data as well
 #
-# Requisitos: root, curl, tar, systemd. No instala dependencias del sistema.
+# Requirements: root, curl, tar, systemd. It installs no system dependencies.
 
 set -eu
 
@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
     --uninstall) UNINSTALL=1 ;;
     --purge) UNINSTALL=1; PURGE=1 ;;
     -h|--help) usage 0 ;;
-    *) echo "opción desconocida: $1" >&2; usage ;;
+    *) echo "unknown option: $1" >&2; usage ;;
   esac
   shift
 done
@@ -71,58 +71,58 @@ run() {
 }
 
 need_root() {
-  [ "$DRY_RUN" = 1 ] && return 0   # dry-run no toca el sistema
-  [ "$(id -u)" = 0 ] || { echo "error: ejecuta como root" >&2; exit 1; }
+  [ "$DRY_RUN" = 1 ] && return 0   # dry-run touches nothing on the system
+  [ "$(id -u)" = 0 ] || { echo "error: run as root" >&2; exit 1; }
 }
 
-need() { command -v "$1" >/dev/null 2>&1 || { echo "error: falta $1" >&2; exit 1; }; }
+need() { command -v "$1" >/dev/null 2>&1 || { echo "error: missing $1" >&2; exit 1; }; }
 
-# ---------- desinstalar ----------
+# ---------- uninstall ----------
 if [ "$UNINSTALL" = 1 ]; then
   need_root
-  say "== parando y eliminando el servicio"
+  say "== stopping and removing the service"
   run "systemctl disable --now opencloud-apps 2>/dev/null || true"
   run "rm -f '$UNIT'"
   run "systemctl daemon-reload"
   run "rm -f '$BIN'"
-  say "  conservado: $ETC, /var/lib/ocapps y $HELPER"
+  say "  kept: $ETC, /var/lib/ocapps and $HELPER"
   if [ "$PURGE" = 1 ]; then
-    say "== --purge: borrando datos y configuración"
+    say "== --purge: deleting data and configuration"
     run "rm -rf '$ETC' /var/lib/ocapps"
   fi
-  say "hecho. Las extensiones desplegadas NO se tocan: quítalas de $APPS_DIR."
+  say "done. Deployed extensions are NOT touched: remove them from $APPS_DIR."
   exit 0
 fi
 
-# ---------- instalar ----------
+# ---------- install ----------
 need_root
 need curl
 need tar
 
-[ -n "$OC_URL" ] || { echo "error: falta --url (URL pública de OpenCloud)" >&2; usage; }
-case "$OC_URL" in http://*|https://*) ;; *) echo "error: --url debe empezar por http(s)://" >&2; exit 1 ;; esac
+[ -n "$OC_URL" ] || { echo "error: missing --url (public OpenCloud URL)" >&2; usage; }
+case "$OC_URL" in http://*|https://*) ;; *) echo "error: --url must start with http(s)://" >&2; exit 1 ;; esac
 OC_URL="${OC_URL%/}"
 
 arch=$(uname -m)
 case "$arch" in
   x86_64|amd64) GOARCH=amd64 ;;
   aarch64|arm64) GOARCH=arm64 ;;
-  *) echo "error: arquitectura no soportada: $arch" >&2; exit 1 ;;
+  *) echo "error: unsupported architecture: $arch" >&2; exit 1 ;;
 esac
 
-say "== ocapps en $OC_URL ($GOARCH)$([ "$DRY_RUN" = 1 ] && echo ' [dry-run]')"
+say "== ocapps at $OC_URL ($GOARCH)$([ "$DRY_RUN" = 1 ] && echo ' [dry-run]')"
 
-# 1. versión y binario
+# 1. version and binary
 if [ -z "$VERSION" ]; then
   api="https://api.github.com/repos/$REPO/releases/latest"
   VERSION=$(curl -fsSL "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
-  [ -n "$VERSION" ] || { echo "error: no se pudo resolver la última versión" >&2; exit 1; }
+  [ -n "$VERSION" ] || { echo "error: could not resolve the latest version" >&2; exit 1; }
 fi
 case "$VERSION" in v*) ;; *) VERSION="v$VERSION" ;; esac
 plain="${VERSION#v}"
 tarball="ocapps_${plain}_linux_${GOARCH}.tar.gz"
 base="https://github.com/$REPO/releases/download/$VERSION"
-say "   versión: $VERSION"
+say "   version: $VERSION"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -130,12 +130,12 @@ if [ "$DRY_RUN" = 0 ]; then
   curl -fsSL -o "$tmp/$tarball" "$base/$tarball"
   curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
   ( cd "$tmp" && grep " $tarball\$" checksums.txt | sha256sum -c - ) || {
-    echo "error: el checksum no coincide" >&2; exit 1; }
+    echo "error: checksum mismatch" >&2; exit 1; }
   tar xzf "$tmp/$tarball" -C "$tmp"
 fi
 
-# 2. usuario, binario y entorno
-say "== usuario y binario"
+# 2. user, binary and environment
+say "== user and binary"
 if ! id "$APP_USER" >/dev/null 2>&1; then
   run "useradd --system --user-group --home-dir /var/lib/ocapps --shell /usr/sbin/nologin $APP_USER"
 fi
@@ -145,13 +145,13 @@ else
   say "  [dry-run] install -m 755 ocapps $BIN"
 fi
 
-say "== entorno en $ETC/env"
+say "== environment in $ETC/env"
 run "install -d -m 750 -o root -g $APP_USER '$ETC'"
 if [ -f "$ETC/env" ]; then
-  say "  ya existe, no se toca (revisa OCAPPS_OPENCLOUD_URL a mano)"
+  say "  already exists, left untouched (check OCAPPS_OPENCLOUD_URL by hand)"
   run "sed -i 's|^OCAPPS_OPENCLOUD_URL=.*|OCAPPS_OPENCLOUD_URL=$OC_URL|' '$ETC/env'"
 else
-  [ "$DRY_RUN" = 1 ] && say "  [dry-run] escribir $ETC/env"
+  [ "$DRY_RUN" = 1 ] && say "  [dry-run] write $ETC/env"
   if [ "$DRY_RUN" = 0 ]; then
     cat > "$ETC/env" <<EOF
 OCAPPS_OPENCLOUD_URL=$OC_URL
@@ -170,8 +170,8 @@ EOF
   fi
 fi
 
-# 3. unidad systemd
-say "== servicio systemd"
+# 3. systemd unit
+say "== systemd service"
 if [ "$DRY_RUN" = 0 ]; then
   cat > "$UNIT" <<'EOF'
 [Unit]
@@ -202,9 +202,9 @@ fi
 run "systemctl daemon-reload"
 run "systemctl enable --now opencloud-apps"
 
-# 4. extensiones
+# 4. extensions
 if [ "$WITH_EXTENSIONS" = 1 ] && [ -n "$APPS" ]; then
-  say "== actualizador y extensiones ($APPS)"
+  say "== updater and extensions ($APPS)"
   if [ ! -x "$HELPER" ]; then
     run "curl -fsSL -o '$HELPER' '$UPDATER_URL' && chmod 755 '$HELPER'"
   fi
@@ -226,15 +226,15 @@ if [ "$WITH_EXTENSIONS" = 1 ] && [ -n "$APPS" ]; then
 fi
 
 say ""
-say "== comprobación"
+say "== check"
 if [ "$DRY_RUN" = 1 ]; then
   say "  [dry-run] systemctl is-active opencloud-apps && curl -f http://127.0.0.1:8096/readyz"
 else
   sleep 2
-  systemctl is-active opencloud-apps || { echo "error: el servicio no arrancó (journalctl -u opencloud-apps)" >&2; exit 1; }
+  systemctl is-active opencloud-apps || { echo "error: the service did not start (journalctl -u opencloud-apps)" >&2; exit 1; }
   curl -fsS -o /dev/null http://127.0.0.1:8096/readyz && say "  readyz OK"
   if [ -x "$HELPER" ]; then "$HELPER" list || true; fi
   say ""
-  say "Falta el proxy: publica /ocphotos-api/, /index.php/apps/news/, /index.php/apps/notes/,"
-  say "los dos /ocs/v2.php/cloud/* y /ocapps-admin/ hacia 127.0.0.1:8096."
+  say "Proxy still missing: publish /ocphotos-api/, /index.php/apps/news/, /index.php/apps/notes/,"
+  say "both /ocs/v2.php/cloud/* and /ocapps-admin/ towards 127.0.0.1:8096."
 fi

@@ -1,15 +1,16 @@
-// Package live: canal de avisos de cambio por usuario (Server-Sent Events),
-// compartido por los módulos de ocapps.
+// Package live: per user change notification channel (Server-Sent Events),
+// shared by the ocapps modules.
 //
-// El cliente mantiene UNA petición abierta contra el stream; cuando algo
-// cambia, el servidor manda un mensaje pequeño con el topic que ha cambiado y
-// el cliente recarga ESE dato con la API normal (no se envían datos por el
-// stream, solo invalidaciones). Ventajas frente a que el cliente pregunte:
-// latencia de milisegundos en vez de "cada N segundos", cero peticiones cuando
-// no pasa nada, y el coste del escaneo no se multiplica por pestañas abiertas.
+// The client keeps ONE request open against the stream, when something changes
+// the server sends a small message with the topic that changed and the client
+// reloads THAT data with the normal API (no data is sent over the stream, only
+// invalidations). Advantages over the client polling: millisecond latency
+// instead of "every N seconds", zero requests when nothing happens, and the
+// scanning cost is not multiplied by open tabs.
 //
-// Es multi-tenant: cada suscriptor está atado a un owner (oc_id) y solo recibe
-// los eventos de SU owner. Un hub es del proceso, no de un request.
+// It is multi-tenant: every subscriber is tied to an owner (oc_id) and only
+// receives the events of ITS owner. A hub belongs to the process, not to a
+// request.
 package live
 
 import (
@@ -19,27 +20,27 @@ import (
 	"time"
 )
 
-// clientHeader lo manda el cliente en cada petición de escritura, para que el
-// evento diga qué cliente hizo el cambio y ese cliente no recargue lo que ya
-// tiene. Es opcional: sin él, todos recargan.
+// clientHeader is sent by the client in every write request, so that the event
+// says which client made the change and that client does not reload what it
+// already has. It is optional: without it, everyone reloads.
 const clientHeader = "X-Ocapps-Client"
 
-// maxClientIDLen acota el id de cliente: se refleja en el stream y no queremos
-// reenviar cadenas arbitrariamente largas.
+// maxClientIDLen caps the client id: it is reflected in the stream and we do
+// not want to relay arbitrarily long strings.
 const maxClientIDLen = 64
 
-// heartbeatEvery mantiene viva la conexión a través de proxies que cierran
-// streams ociosos (nginx proxy_read_timeout por defecto: 60 s).
+// heartbeatEvery keeps the connection alive through proxies that close idle
+// streams (nginx proxy_read_timeout default: 60 s).
 const heartbeatEvery = 25 * time.Second
 
-// Event es un aviso de cambio: qué cambió y quién lo cambió (vacío si no se
-// sabe o si lo cambió el servidor, p. ej. un scan de fondo).
+// Event is a change notification: what changed and who changed it (empty if it
+// is unknown or if the server changed it, e.g. a background scan).
 type Event struct {
 	Topic  string `json:"topic"`
 	Client string `json:"client,omitempty"`
 }
 
-// Hub reparte eventos entre los streams abiertos.
+// Hub distributes events among the open streams.
 type Hub struct {
 	mu     sync.Mutex
 	subs   map[string]map[chan Event]struct{}
@@ -47,13 +48,12 @@ type Hub struct {
 	done   chan struct{}
 }
 
-// NewHub construye un hub sin suscriptores.
+// NewHub builds a hub with no subscribers.
 func NewHub() *Hub {
 	return &Hub{subs: map[string]map[chan Event]struct{}{}, done: make(chan struct{})}
 }
 
-// ClientID lee el id de cliente de la petición ("" si falta o es demasiado
-// largo).
+// ClientID reads the client id from the request ("" if missing or too long).
 func ClientID(r *http.Request) string {
 	id := r.Header.Get(clientHeader)
 	if len(id) > maxClientIDLen {
@@ -62,11 +62,11 @@ func ClientID(r *http.Request) string {
 	return id
 }
 
-// Subscribe abre un canal para el owner. Devuelve el canal, la función para
-// cerrarlo (idempotente) y false si el hub ya está cerrado.
+// Subscribe opens a channel for the owner. It returns the channel, the
+// function to close it (idempotent) and false if the hub is already closed.
 //
-// Subscribe existe para el propio stream y para los tests; los módulos que
-// quieran reaccionar a eventos en proceso pueden usarlo igualmente.
+// Subscribe exists for the stream itself and for the tests, modules that want
+// to react to in-process events can use it as well.
 func (h *Hub) Subscribe(owner string) (<-chan Event, func(), bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -93,9 +93,10 @@ func (h *Hub) Subscribe(owner string) (<-chan Event, func(), bool) {
 	return ch, unsubscribe, true
 }
 
-// Publish manda el evento a los streams de ESE owner. Un suscriptor que no
-// lee a tiempo pierde el mensaje (y recibirá el siguiente): preferimos perder
-// una invalidación a bloquear una escritura. Sin owner no se publica nada.
+// Publish sends the event to the streams of THAT owner. A subscriber that does
+// not read in time loses the message (and will receive the next one): we
+// prefer losing an invalidation to blocking a write. Without an owner nothing
+// is published.
 func (h *Hub) Publish(owner string, ev Event) {
 	if owner == "" || ev.Topic == "" {
 		return
@@ -110,17 +111,16 @@ func (h *Hub) Publish(owner string, ev Event) {
 	}
 }
 
-// Subscribers devuelve cuántos streams tiene abiertos el owner (métricas y
-// tests).
+// Subscribers returns how many streams the owner has open (metrics and tests).
 func (h *Hub) Subscribers(owner string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.subs[owner])
 }
 
-// Close termina todos los streams (apagado del proceso). Sin esto,
-// http.Server.Shutdown espera a los handlers en curso hasta agotar su
-// presupuesto, porque un stream no termina nunca por sí solo.
+// Close ends all the streams (process shutdown). Without it,
+// http.Server.Shutdown waits for the handlers in progress until its budget is
+// exhausted, because a stream never ends on its own.
 func (h *Hub) Close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -131,16 +131,16 @@ func (h *Hub) Close() {
 	close(h.done)
 }
 
-// Serve atiende el stream SSE del owner. No escribe datos de la aplicación:
-// solo eventos de invalidación y pings.
+// Serve handles the owner SSE stream. It does not write application data: only
+// invalidation events and pings.
 func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, owner string) {
 	if owner == "" {
-		http.Error(w, "owner requerido", http.StatusUnauthorized)
+		http.Error(w, "owner required", http.StatusUnauthorized)
 		return
 	}
 	ch, unsubscribe, ok := h.Subscribe(owner)
 	if !ok {
-		http.Error(w, "servidor apagándose", http.StatusServiceUnavailable)
+		http.Error(w, "server shutting down", http.StatusServiceUnavailable)
 		return
 	}
 	defer unsubscribe()
@@ -150,9 +150,9 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, owner string) {
 	hdr.Set("Content-Type", "text/event-stream")
 	hdr.Set("Cache-Control", "no-cache")
 	hdr.Set("Connection", "keep-alive")
-	hdr.Set("X-Accel-Buffering", "no") // nginx: no acumular el stream
+	hdr.Set("X-Accel-Buffering", "no") // nginx: do not buffer the stream
 	w.WriteHeader(http.StatusOK)
-	// retry: si el navegador reconecta por su cuenta, que espere 3 s.
+	// retry: if the browser reconnects on its own, it waits 3 s.
 	if _, err := w.Write([]byte("retry: 3000\n: connected\n\n")); err != nil {
 		return
 	}

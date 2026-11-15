@@ -15,17 +15,17 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// userAPIRoute: un patrón exacto de la API propia y su handler. path es el
-// patrón sin método (para registrar también el preflight OPTIONS).
+// userAPIRoute: an exact pattern of the own API and its handler. path is the
+// pattern without method (to also register the OPTIONS preflight).
 type userAPIRoute struct {
 	pattern string
 	path    string
 	h       http.HandlerFunc
 }
 
-// userAPIRoutes: endpoints PROPIOS de la app (no de la spec v1.3) para la
-// PWA y la extensión: perfil propio y gestión de usuarios. Son PATRONES
-// EXACTOS (SPEC §4.1: nada de catch-all /api/ en el mux unificado).
+// userAPIRoutes: app OWN endpoints (not from the v1.3 spec) for the
+// PWA and the extension: own profile and user management. They are EXACT
+// PATTERNS (SPEC §4.1: no /api/ catch-all in the unified mux).
 func (s *Server) userAPIRoutes() []userAPIRoute {
 	return []userAPIRoute{
 		{"GET /api/me", "/api/me", s.me},
@@ -42,13 +42,13 @@ func (s *Server) userAPIRoutes() []userAPIRoute {
 	}
 }
 
-// refreshUserFeeds: refresco manual e inmediato de TODOS los feeds del
-// usuario autenticado (la ruta /feeds/update de la spec es solo admin).
+// refreshUserFeeds: manual and immediate refresh of ALL the feeds of the
+// authenticated user (the spec /feeds/update route is admin only).
 func (s *Server) refreshUserFeeds(w http.ResponseWriter, r *http.Request) {
 	u := user(r)
 	feeds, err := s.store.ListFeeds(u.ID)
 	if err != nil {
-		s.logError(w, r, "listar feeds para refresh", err)
+		s.logError(w, r, "list feeds for refresh", err)
 		return
 	}
 	var wg sync.WaitGroup
@@ -67,15 +67,15 @@ func (s *Server) refreshUserFeeds(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	wg.Wait()
-	s.log.Info("refresco manual", "user", u.Username, "feeds", len(feeds), "nuevos", inserted)
+	s.log.Info("manual refresh", "user", u.Username, "feeds", len(feeds), "new", inserted)
 	writeJSON(w, http.StatusOK, map[string]any{"refreshed": len(feeds), "newItems": inserted})
 }
 
-// NOTA (SPEC §4.2): el stub OCS de /ocs/v2.php/cloud/user que servía este
-// paquete para news-android se eliminó en H5 — la ruta la registra SOLO el
-// módulo notes, cuyo handler extendido emite el mismo payload JSON
-// (id=username, displayname, display-name; 401 sin auth) cuando el cliente
-// pide ?format=json o Accept: application/json.
+// NOTE (SPEC §4.2): the OCS stub of /ocs/v2.php/cloud/user that this
+// package served for news-android was removed in H5, the route is registered ONLY by the
+// notes module, whose extended handler emits the same JSON payload
+// (id=username, displayname, display-name, 401 without auth) when the client
+// asks for ?format=json or Accept: application/json.
 
 var validUsername = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{2,31}$`)
 
@@ -113,7 +113,7 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 		lang = *body.Language
 	}
 	if err := s.store.UpdateProfile(u.ID, name, lang); err != nil {
-		s.logError(w, r, "actualizar perfil", err)
+		s.logError(w, r, "update profile", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, meResponse{u.Username, name, u.Role, lang})
@@ -129,7 +129,7 @@ func (s *Server) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := user(r)
-	// la contraseña actual debe validar (bcrypt contra el hash almacenado)
+	// the current password must validate (bcrypt against the stored hash)
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(body.Current)) != nil {
 		errorStatus(w, r, http.StatusUnprocessableEntity, "invalid_password")
 		return
@@ -140,25 +140,25 @@ func (s *Server) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := auth.HashPassword(body.New)
 	if err != nil {
-		s.logError(w, r, "hashear contraseña", err)
+		s.logError(w, r, "hash password", err)
 		return
 	}
 	if err := s.store.UpdatePassword(u.ID, hash); err != nil {
-		s.logError(w, r, "cambiar contraseña", err)
+		s.logError(w, r, "change password", err)
 		return
 	}
 	writeEmpty(w)
 }
 
-// userSettings: preferencias de la app persistidas por usuario. La fuente de
-// verdad del idioma sigue siendo users.language; el resto va en user_settings.
+// userSettings: app preferences persisted per user. The source of
+// truth for the language is still users.language, the rest goes in user_settings.
 type userSettings struct {
 	Theme           string `json:"theme"`           // system|light|dark
 	ReaderMaxWidth  string `json:"readerMaxWidth"`  // narrow|normal|wide
-	FeedIntervalMin string `json:"feedIntervalMin"` // minutos; vacío = default global
+	FeedIntervalMin string `json:"feedIntervalMin"` // minutes, empty = global default
 	ReaderFont      string `json:"readerFont"`      // default|serif|sans|mono
-	ReaderFontSize  string `json:"readerFontSize"`  // px; vacío = 15
-	NtfyTopic       string `json:"ntfyTopic"`       // topic ntfy del usuario; vacío = global/off
+	ReaderFontSize  string `json:"readerFontSize"`  // px, empty = 15
+	NtfyTopic       string `json:"ntfyTopic"`       // user ntfy topic, empty = global/off
 }
 
 func (s *Server) mySettings(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +208,7 @@ func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
 			v = ""
 		}
 		if err := s.store.SetUserSetting(u.ID, "theme", v); err != nil {
-			s.logError(w, r, "guardar tema", err)
+			s.logError(w, r, "store theme", err)
 			return
 		}
 	}
@@ -222,7 +222,7 @@ func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
 			v = ""
 		}
 		if err := s.store.SetUserSetting(u.ID, "reader_max_width", v); err != nil {
-			s.logError(w, r, "guardar ancho lector", err)
+			s.logError(w, r, "store reader width", err)
 			return
 		}
 	}
@@ -235,7 +235,7 @@ func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := s.store.SetUserSetting(u.ID, "feed_interval_min", v); err != nil {
-			s.logError(w, r, "guardar intervalo", err)
+			s.logError(w, r, "store interval", err)
 			return
 		}
 	}
@@ -249,7 +249,7 @@ func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
 			v = ""
 		}
 		if err := s.store.SetUserSetting(u.ID, "reader_font", v); err != nil {
-			s.logError(w, r, "guardar fuente del lector", err)
+			s.logError(w, r, "store reader font", err)
 			return
 		}
 	}
@@ -263,7 +263,7 @@ func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
 			v = ""
 		}
 		if err := s.store.SetUserSetting(u.ID, "reader_font_size", v); err != nil {
-			s.logError(w, r, "guardar tamaño de fuente", err)
+			s.logError(w, r, "store font size", err)
 			return
 		}
 	}
@@ -274,7 +274,7 @@ func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.store.SetUserSetting(u.ID, "ntfy_topic", v); err != nil {
-			s.logError(w, r, "guardar topic ntfy", err)
+			s.logError(w, r, "store ntfy topic", err)
 			return
 		}
 	}
@@ -295,7 +295,7 @@ func validFontSize(v string) bool {
 	return err == nil && n >= 13 && n <= 20
 }
 
-// validNtfyTopic: topic de ntfy = [a-zA-Z0-9_-], hasta 64 chars.
+// validNtfyTopic: ntfy topic = [a-zA-Z0-9_-], up to 64 chars.
 func validNtfyTopic(v string) bool {
 	if len(v) > 64 {
 		return false
@@ -312,7 +312,7 @@ func validNtfyTopic(v string) bool {
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := s.store.ListUsers()
 	if err != nil {
-		s.logError(w, r, "listar usuarios", err)
+		s.logError(w, r, "list users", err)
 		return
 	}
 	out := make([]meResponse, 0, len(users))
@@ -360,7 +360,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
-		s.logError(w, r, "hashear contraseña", err)
+		s.logError(w, r, "hash password", err)
 		return
 	}
 	id, err := s.store.CreateUser(body.Username, hash, body.DisplayName, role)
@@ -373,7 +373,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := s.store.GetUserByID(id)
 	if err != nil {
-		s.logError(w, r, "leer usuario creado", err)
+		s.logError(w, r, "read created user", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, meResponse{created.Username, created.DisplayName, created.Role, created.Language})
@@ -391,7 +391,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.logError(w, r, "leer usuario", err)
+		s.logError(w, r, "read user", err)
 		return
 	}
 	var body struct {
@@ -411,7 +411,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		errorStatus(w, r, http.StatusUnprocessableEntity, "invalid_language")
 		return
 	}
-	// guard: degradar al último admin deja el sistema cerrado
+	// guard: demoting the last admin leaves the system closed
 	if body.Role != nil && *body.Role == "user" && target.Role == "admin" {
 		if admins, err := s.store.CountAdmins(); err == nil && admins <= 1 {
 			errorStatus(w, r, http.StatusConflict, "cannot_delete_last_admin")
@@ -425,16 +425,16 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		hash, err := auth.HashPassword(body.Password)
 		if err != nil {
-			s.logError(w, r, "hashear contraseña", err)
+			s.logError(w, r, "hash password", err)
 			return
 		}
 		if err := s.store.UpdatePassword(id, hash); err != nil {
-			s.logError(w, r, "cambiar contraseña", err)
+			s.logError(w, r, "change password", err)
 			return
 		}
 	}
 	if err := s.store.UpdateUserFields(id, body.Role, body.Language); err != nil {
-		s.logError(w, r, "actualizar usuario", err)
+		s.logError(w, r, "update user", err)
 		return
 	}
 	updated, _ := s.store.GetUserByID(id)
@@ -457,7 +457,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrConflict):
 		errorStatus(w, r, http.StatusConflict, "cannot_delete_last_admin")
 	case err != nil:
-		s.logError(w, r, "borrar usuario", err)
+		s.logError(w, r, "delete user", err)
 	default:
 		writeEmpty(w)
 	}

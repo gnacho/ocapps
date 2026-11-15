@@ -20,7 +20,7 @@ func TestTagsAndFolders(t *testing.T) {
 	id2, _, _ := st.UpsertByETag(ctx, owner, "/dav/spaces/x/Fotos/2024/b.jpg", "e2", "b.jpg", "image", now.Add(-time.Hour), 100)
 	_, _, _ = st.UpsertByETag(ctx, owner, "/dav/spaces/x/Fotos/2024/c.jpg", "e3", "c.jpg", "image", now.Add(-2*time.Hour), 100)
 
-	// --- etiquetas ---
+	// --- tags ---
 	if err := st.AddTag(ctx, owner, id1, "playa"); err != nil {
 		t.Fatal(err)
 	}
@@ -38,9 +38,9 @@ func TestTagsAndFolders(t *testing.T) {
 	if err != nil || len(list) != 2 {
 		t.Fatalf("list tags: %+v %v", list, err)
 	}
-	// "familia" (1) y "playa" (2), ordenadas alfabéticamente
+	// "familia" (1) and "playa" (2), sorted alphabetically
 	if list[0].Name != "familia" || list[0].Count != 1 || list[1].Name != "playa" || list[1].Count != 2 {
-		t.Fatalf("recuentos: %+v", list)
+		t.Fatalf("counts: %+v", list)
 	}
 	byTag, err := st.AssetsByTag(ctx, owner, "playa")
 	if err != nil || len(byTag) != 2 {
@@ -53,7 +53,7 @@ func TestTagsAndFolders(t *testing.T) {
 		t.Fatalf("remove tag: %d", len(byTag))
 	}
 
-	// --- carpetas ---
+	// --- folders ---
 	base := "/dav/spaces/x/Fotos/"
 	subs, err := st.Subfolders(ctx, owner, base)
 	if err != nil || len(subs) != 1 || subs[0].Name != "2024" || subs[0].Count != 2 {
@@ -63,7 +63,7 @@ func TestTagsAndFolders(t *testing.T) {
 	if err != nil || len(assets) != 1 || assets[0].Filename != "a.jpg" {
 		t.Fatalf("folder assets: %+v %v", assets, err)
 	}
-	// la subcarpeta no devuelve las fotos del nivel superior
+	// the subfolder does not return the photos of the upper level
 	subAssets, err := st.FolderAssets(ctx, owner, base+"2024/")
 	if err != nil || len(subAssets) != 2 {
 		t.Fatalf("subfolder assets: %d %v", len(subAssets), err)

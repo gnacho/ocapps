@@ -1,15 +1,14 @@
-// Package photos — módulo photos del servicio unificado ocapps (SPEC §4.5,
-// §8-H3), MULTI-TENANT desde H8 (SPEC §6.2): cualquier usuario de OpenCloud
-// tiene su índice (scoping por owner = oc_id), su sesión DAV en memoria y su
-// scan por actividad. El wiring es:
+// Package photos - photos module of the unified ocapps service (SPEC §4.5,
+// §8-H3), MULTI-TENANT since H8 (SPEC §6.2): every OpenCloud user has its index
+// (scoping by owner = oc_id), its in-memory DAV session and its scan on
+// activity. The wiring is:
 //
-//	store (baseline §5.3 + migración 002 multi-owner) → mediasecret (cred,
-//	Q3) → ffmpeg check (Q4) → registry de sesiones + scheduler → api.Server.
+//	store (baseline §5.3 + multi-owner migration 002) -> mediasecret (cred,
+//	Q3) -> ffmpeg check (Q4) -> session registry + scheduler -> api.Server.
 //
-// El módulo YA NO depende de OpenCloud para arrancar: no hay initBackend
-// global ni retry loop contra Graph (H8 §7). Healthy() = ping SQLite. La
-// resolución de espacios personales es lazy (primer request/scan del
-// usuario).
+// The module NO LONGER depends on OpenCloud to start: there is no global
+// initBackend and no retry loop against Graph (H8 §7). Healthy() = SQLite ping.
+// The resolution of personal spaces is lazy (first request/scan of the user).
 package photos
 
 import (
@@ -34,14 +33,15 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/thumb"
 )
 
-// PublicPrefix es el namespace público del módulo (SPEC §4.3). Alias de la
-// constante del paquete api (fuente única: registro de rutas y firma de vídeo).
+// PublicPrefix is the public namespace of the module (SPEC §4.3). Alias of the
+// constant in the api package (single source: route registration and video
+// signing).
 const PublicPrefix = api.PublicPrefix
 
-// photosTopic es el topic de los eventos del stream que publica este módulo.
+// photosTopic is the topic of the stream events published by this module.
 const photosTopic = api.TopicPhotos
 
-// Module implementa la interfaz común de SPEC §4.5 (internal/common/module).
+// Module implements the common interface of SPEC §4.5 (internal/common/module).
 var _ commonmodule.Module = (*Module)(nil)
 
 type Module struct {
@@ -59,33 +59,34 @@ type Module struct {
 	hub    *live.Hub
 }
 
-// New cablea el módulo. cfg es la config unificada completa (se usa la
-// sección Photos, la Common y ModuleErr("photos"): un error de config del
-// módulo — p. ej. OCAPPS_PHOTOS_SCAN_EVERY inválido u OCAPPS_PHOTOS_USERS
-// malformado — es error de New y el módulo queda failed en init, patrón D3
-// como news, I1) y gv el validador Graph COMPARTIDO del proceso (desde H5;
-// el módulo deriva el suyo con gv.WithPolicy(MultiTenant()) — misma caché,
-// tenancy multiusuario desde H8, SPEC §6.2). Si gv es nil se crea uno
-// independiente (tests/standalone). Errores de wiring duro (config inválida,
-// BD, mediasecret) → error: el módulo no se construye y el wiring registra
-// su namespace como failed (SPEC §4.5/D3). El módulo NO toca OpenCloud en
-// New (H8): arranca siempre y sirve aunque OpenCloud esté caído (los
-// requests fallarán en auth contra Graph, pero el proceso y /health viven).
+// New wires the module. cfg is the full unified config (the Photos section,
+// the Common one and ModuleErr("photos") are used: a config error of the
+// module - for example an invalid OCAPPS_PHOTOS_SCAN_EVERY or a malformed
+// OCAPPS_PHOTOS_USERS - is an error of New and the module ends up failed in
+// init, pattern D3 like news, I1) and gv the SHARED Graph validator of the
+// process (since H5, the module derives its own with gv.WithPolicy(MultiTenant())
+// - same cache, multiuser tenancy since H8, SPEC §6.2). If gv is nil an
+// independent one is created (tests/standalone). Hard wiring errors (invalid
+// config, database, mediasecret) -> error: the module is not built and the
+// wiring registers its namespace as failed (SPEC §4.5/D3). The module does NOT
+// touch OpenCloud in New (H8): it always starts and serves even when OpenCloud
+// is down (the requests will fail in auth against Graph, but the process and
+// /health live on).
 //
-// OCAPPS_PHOTOS_USER/APP_TOKEN ya NO son obligatorios (H8). El Bearer
-// estático OCAPPS_PHOTOS_TOKEN está DEPRECATED: sigue funcionando solo si
-// Photos.User está configurado (mapea al oc_id legacy); Token sin User es
-// error de config (el token ya no tiene identidad).
+// OCAPPS_PHOTOS_USER/APP_TOKEN are NO LONGER mandatory (H8). The static Bearer
+// OCAPPS_PHOTOS_TOKEN is DEPRECATED: it keeps working only if Photos.User is
+// configured (it maps to the legacy oc_id), Token without User is a config
+// error (the token no longer has an identity).
 func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module, error) {
-	// I1: sin este chequeo, una config de módulo inválida que PARSEA bien
-	// (p. ej. SCAN_EVERY=0s) construía un módulo "sano" que paniqueaba en
-	// time.NewTicker(≤0).
+	// I1: without this check, an invalid module config that PARSES fine (for
+	// example SCAN_EVERY=0s) built a "healthy" module that panicked in
+	// time.NewTicker(<=0).
 	if err := cfg.ModuleErr("photos"); err != nil {
-		return nil, fmt.Errorf("config de photos inválida: %w", err)
+		return nil, fmt.Errorf("invalid photos config: %w", err)
 	}
 	pcfg, common := cfg.Photos, cfg.Common
 	if pcfg.Token != "" && pcfg.User == "" {
-		return nil, fmt.Errorf("photos: OCAPPS_PHOTOS_TOKEN (deprecated) exige OCAPPS_PHOTOS_USER para mapear el token al owner legacy")
+		return nil, fmt.Errorf("photos: OCAPPS_PHOTOS_TOKEN (deprecated) requires OCAPPS_PHOTOS_USER to map the token to the legacy owner")
 	}
 	dataDir := common.PhotosDataDir
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -95,23 +96,24 @@ func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module
 	if err != nil {
 		return nil, fmt.Errorf("photos: sqlite: %w", err)
 	}
-	// Q3: sin fallback hardcodeado; si no hay secreto, el módulo no arranca.
+	// Q3: no hardcoded fallback, if there is no secret the module does not start.
 	secret, err := cred.LoadOrCreateSecret(filepath.Join(dataDir, "mediasecret"))
 	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("photos: mediasecret: %w", err)
 	}
-	// Q4: ffmpeg es la única dependencia de sistema; su ausencia degrada
-	// (pósters de vídeo: se sirve el original) pero no impide servir.
+	// Q4: ffmpeg is the only system dependency, its absence degrades the
+	// service (video posters: the original is served) but does not prevent
+	// serving.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		log.Warn("ffmpeg no encontrado: pósters de vídeo degradados (se servirá el original)", "err", err)
+		log.Warn("ffmpeg not found: video posters degraded (the original will be served)", "err", err)
 	}
 	if pcfg.Token != "" {
-		log.Warn("OCAPPS_PHOTOS_TOKEN está DEPRECATED (H8): los clientes deben usar el Bearer OIDC de OpenCloud; el token estático mapea al owner legacy de OCAPPS_PHOTOS_USER",
+		log.Warn("OCAPPS_PHOTOS_TOKEN is DEPRECATED (H8): clients must use the OpenCloud OIDC Bearer, the static token maps to the legacy owner of OCAPPS_PHOTOS_USER",
 			"user", pcfg.User)
 	}
 
-	if gv == nil { // standalone/tests: validador propio sin caché compartida
+	if gv == nil { // standalone/tests: own validator with no shared cache
 		gv = auth.NewGraphValidator(common.OpenCloudURL, auth.MultiTenant(), log)
 	}
 	validator := gv.WithPolicy(auth.MultiTenant())
@@ -131,8 +133,8 @@ func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module
 	reg.touchHook = sched.maybeScan
 	reg.scanHook = sched.requestScan
 	geocoder := geo.New(st, log)
-	// Canal de invalidaciones (SSE): el cliente deja de sondear y recarga
-	// cuando el servidor avisa de un cambio del owner.
+	// Invalidation channel (SSE): the client stops polling and reloads when
+	// the server notifies a change of the owner.
 	hub := live.NewHub()
 	srv := api.New(st, thumbs, geocoder, validator, reg,
 		api.Config{Token: pcfg.Token, Secret: secret}, log)
@@ -149,28 +151,28 @@ func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module
 
 func (m *Module) Name() string { return "photos" }
 
-// CloseStreams cierra los streams SSE abiertos. El wiring lo llama desde
-// http.Server.RegisterOnShutdown: sin esto, Shutdown espera a los handlers en
-// curso y un stream no termina nunca por sí solo (agotaría el presupuesto de
-// 10 s en cada apagado con pestañas abiertas).
+// CloseStreams closes the open SSE streams. The wiring calls it from
+// http.Server.RegisterOnShutdown: without this, Shutdown waits for the running
+// handlers and a stream never finishes on its own (it would exhaust the 10 s
+// budget on every shutdown with open tabs).
 func (m *Module) CloseStreams() {
 	if m.hub != nil {
 		m.hub.Close()
 	}
 }
 
-// Enabled: si el módulo se construyó es que estaba enabled; el gate
-// OCAPPS_PHOTOS_ENABLED lo aplica el wiring antes de llamar a New.
+// Enabled: if the module was built it was enabled, the OCAPPS_PHOTOS_ENABLED
+// gate is applied by the wiring before calling New.
 func (m *Module) Enabled() bool { return true }
 
-// Register monta el namespace del módulo (SPEC §4.5). El módulo ya no tiene
-// init remoto (H8): las rutas reales responden desde el arranque.
+// Register mounts the namespace of the module (SPEC §4.5). The module no longer
+// has a remote init (H8): the real routes respond from startup.
 func (m *Module) Register(mux *http.ServeMux) {
 	mux.Handle(PublicPrefix+"/", m.apiSrv.Handler())
 }
 
-// Healthy: ping a la SQLite del módulo como news/notes (M5). El módulo ya no
-// depende de OpenCloud para estar sano (H8 §7).
+// Healthy: ping to the SQLite of the module like news/notes (M5). The module no
+// longer depends on OpenCloud to be healthy (H8 §7).
 func (m *Module) Healthy() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -180,9 +182,9 @@ func (m *Module) Healthy() error {
 	return nil
 }
 
-// Run siembra las sesiones de OCAPPS_PHOTOS_USERS, aplica el backfill del
-// índice single-tenant si procede (H8 §5.3) y ejecuta el scheduler (scans
-// por actividad + ticker + purga de sesiones). Retorna al cancelar ctx.
+// Run seeds the sessions of OCAPPS_PHOTOS_USERS, applies the backfill of the
+// single-tenant index when applicable (H8 §5.3) and runs the scheduler (scans
+// on activity + ticker + session purge). It returns when ctx is cancelled.
 func (m *Module) Run(ctx context.Context) error {
 	defer func() { _ = m.st.Close() }()
 	m.seedUsers(ctx)
@@ -191,43 +193,43 @@ func (m *Module) Run(ctx context.Context) error {
 	return nil
 }
 
-// seedUsers siembra las sesiones de los usuarios con app-token
-// (OCAPPS_PHOTOS_USERS + pliegue legacy): cliente Basic, MeID y espacio
-// personal. Si uno falla, log ERROR y ese usuario queda sin background scan,
-// pero el módulo sigue (H8 §7).
+// seedUsers seeds the sessions of the users with an app token
+// (OCAPPS_PHOTOS_USERS + legacy fold): Basic client, MeID and personal space.
+// If one fails, the error is logged and that user is left without background
+// scan, but the module goes on (H8 §7).
 func (m *Module) seedUsers(ctx context.Context) {
 	for _, u := range m.cfg.Users {
 		owner, err := m.reg.seed(ctx, u.User, u.Token)
 		if err != nil {
-			m.log.Error("photos: no se pudo sembrar el usuario de background scan; queda sin scan programado",
+			m.log.Error("photos: could not seed the background scan user, it is left without a scheduled scan",
 				"user", u.User, "err", err)
 			continue
 		}
-		m.log.Info("usuario de background scan sembrado", "user", u.User, "owner", owner)
+		m.log.Info("background scan user seeded", "user", u.User, "owner", owner)
 	}
 }
 
-// backfill adopta las filas de la era single-tenant (owner=”) al oc_id del
-// usuario legacy (H8 §5.3). No puede ser SQL: el oc_id se resuelve contra
-// Graph con el app-token. Sin OCAPPS_PHOTOS_USER+APP_TOKEN configurados el
-// módulo arranca igual y deja un WARN explícito con el recuento.
+// backfill adopts the rows of the single-tenant era (owner empty) into the oc_id
+// of the legacy user (H8 §5.3). It cannot be SQL: the oc_id is resolved against
+// Graph with the app token. Without OCAPPS_PHOTOS_USER+APP_TOKEN configured the
+// module starts anyway and leaves an explicit WARN with the count.
 func (m *Module) backfill(ctx context.Context) {
 	orphanAssets, orphanAlbums, err := m.st.OrphanCounts(ctx)
 	if err != nil {
-		m.log.Error("backfill: no se pudo contar filas sin owner", "err", err)
+		m.log.Error("backfill: could not count rows without owner", "err", err)
 		return
 	}
 	if orphanAssets == 0 && orphanAlbums == 0 {
 		return
 	}
 	if m.cfg.User == "" || m.cfg.AppToken == "" {
-		m.log.Warn(fmt.Sprintf("hay %d assets y %d álbumes de la era single-tenant sin owner; configura OCAPPS_PHOTOS_USER + OCAPPS_PHOTOS_APP_TOKEN (una vez) para adoptarlos", orphanAssets, orphanAlbums),
+		m.log.Warn(fmt.Sprintf("there are %d assets and %d albums from the single-tenant era without owner, configure OCAPPS_PHOTOS_USER + OCAPPS_PHOTOS_APP_TOKEN (once) to adopt them", orphanAssets, orphanAlbums),
 			"assets", orphanAssets, "albums", orphanAlbums)
 		return
 	}
 	owner, err := m.reg.LegacyOwner(ctx)
 	if err != nil {
-		m.log.Error("backfill: no se pudo resolver el oc_id del usuario legacy; se reintentará en el próximo arranque", "err", err)
+		m.log.Error("backfill: could not resolve the oc_id of the legacy user, it will be retried on the next start", "err", err)
 		return
 	}
 	nAssets, nAlbums, rmAssets, rmAlbums, err := m.st.BackfillOwner(ctx, owner)
@@ -236,9 +238,9 @@ func (m *Module) backfill(ctx context.Context) {
 		return
 	}
 	if rmAssets > 0 || rmAlbums > 0 {
-		m.log.Warn("backfill multi-owner: filas huérfanas conflictivas descartadas (ya existían re-escaneadas para el owner)",
+		m.log.Warn("multi-owner backfill: conflicting orphan rows discarded (the rescaned rows of the owner already represented them)",
 			"owner", owner, "assets", rmAssets, "albums", rmAlbums)
 	}
-	m.log.Info("backfill multi-owner: filas de la era single-tenant adoptadas",
+	m.log.Info("backfill multi-owner: single-tenant era rows adopted",
 		"owner", owner, "assets", nAssets, "albums", nAlbums)
 }

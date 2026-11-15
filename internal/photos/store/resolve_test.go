@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-// TestAssetByPath: resolución por href DAV para el flujo "Abrir con"
-// (gnacho/ocapps #9). Cubre: hit del propietario, miss por path inexistente,
-// miss por owner ajeno (IDOR, misma respuesta) y miss tras soft-delete.
+// TestAssetByPath: resolution by DAV href for the "Open with" flow
+// (gnacho/ocapps #9). Covers: owner hit, miss for a non-existent path,
+// miss for a foreign owner (IDOR, same answer) and miss after a soft-delete.
 func TestAssetByPath(t *testing.T) {
-	st, ctx, _, _ := fixtureDosOwners(t)
+	st, ctx, _, _ := twoOwnersFixture(t)
 	const p = "/dav/spaces/x/Fotos/a.jpg"
 
 	a, err := st.AssetByPath(ctx, "alice", p)
@@ -20,25 +20,25 @@ func TestAssetByPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.Filename != "a.jpg" || a.Path != p {
-		t.Fatalf("asset inesperado: %+v", a)
+		t.Fatalf("unexpected asset: %+v", a)
 	}
 
-	// miss: path inexistente
+	// miss: non-existent path
 	if _, err := st.AssetByPath(ctx, "alice", "/dav/spaces/x/Fotos/otra.jpg"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("miss path -> %v", err)
 	}
 
-	// miss: path que solo existe en el índice de alice, preguntado como bob
-	// (no delata nada). El fixture da a bob LOS MISMOS paths, así que este
-	// caso necesita un path exclusivo de alice.
+	// miss: a path that only exists in alice's index, asked as bob
+	// (nothing is leaked). The fixture gives bob THE SAME paths, so this
+	// case needs a path exclusive to alice.
 	if _, _, err := st.UpsertByETag(ctx, "alice", "/dav/spaces/x/Fotos/solo-alice.jpg", "eA", "solo-alice.jpg", "image", time.Now(), 100); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.AssetByPath(ctx, "bob", "/dav/spaces/x/Fotos/solo-alice.jpg"); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("miss ajeno -> %v", err)
+		t.Fatalf("miss foreign -> %v", err)
 	}
 
-	// miss tras soft-delete (SoftDeleteExcept marca todo lo no visto)
+	// miss after a soft-delete (SoftDeleteExcept marks everything unseen)
 	if n, err := st.SoftDeleteExcept(ctx, "alice", "", map[string]bool{}); err != nil || n == 0 {
 		t.Fatalf("soft-delete: n=%d err=%v", n, err)
 	}
@@ -47,10 +47,10 @@ func TestAssetByPath(t *testing.T) {
 	}
 }
 
-// TestAssetByPathEscapado: el href indexado viene de url.PathUnescape en el
-// scanner, así que el lookup por el path ya desescapado debe dar hit
-// (nombres con espacios/acentos).
-func TestAssetByPathEscapado(t *testing.T) {
+// TestAssetByPathEscaped: the indexed href comes from url.PathUnescape in the
+// scanner, so the lookup with the already unescaped path must hit
+// (names with spaces and accents).
+func TestAssetByPathEscaped(t *testing.T) {
 	st, err := Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
@@ -63,13 +63,14 @@ func TestAssetByPathEscapado(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := st.AssetByPath(ctx, "id-alice", p); err != nil {
-		t.Fatalf("hit con path desescapado -> %v", err)
+		t.Fatalf("hit with unescaped path -> %v", err)
 	}
 }
 
-// TestAssetBySpaceItem: fallback por spaceId + ruta relativa para aliases en
-// forma <tipo>/<nombre>/<ruta> (OpenCloud 8.0.1, gnacho/ocapps #11). El path
-// indexado lleva el alias real "$<spaceId>"; el lookup no conoce el tipo.
+// TestAssetBySpaceItem: fallback by spaceId plus relative path for aliases in
+// the form <type>/<name>/<path> (OpenCloud 8.0.1, gnacho/ocapps #11). The
+// indexed path carries the real alias "$<spaceId>", the lookup does not know
+// the type.
 func TestAssetBySpaceItem(t *testing.T) {
 	st, err := Open(t.TempDir() + "/test.db")
 	if err != nil {
@@ -93,7 +94,7 @@ func TestAssetBySpaceItem(t *testing.T) {
 		t.Fatalf("id %d != %d", a.ID, id)
 	}
 
-	// miss: ruta distinta o spaceId distinto, misma respuesta
+	// miss: different path or different spaceId, same answer
 	for _, tc := range [][2]string{
 		{"7b251a66-5d40-4f4d-b1d0-01266acea88d", "Fotos/otra.jpg"},
 		{"11111111-2222-3333-4444-555555555555", "Fotos/la playa.jpg"},
@@ -103,13 +104,13 @@ func TestAssetBySpaceItem(t *testing.T) {
 		}
 	}
 
-	// comodines literales: un itemPath con % no se comporta como wildcard
+	// literal wildcards: an itemPath with % does not behave as a wildcard
 	if _, _, err := st.UpsertByETag(ctx, "id-alice",
 		"/dav/spaces/personal$7b251a66-5d40-4f4d-b1d0-01266acea88d/Fotos/100%.jpg",
 		"e2", "100%.jpg", "image", time.Now(), 100); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.AssetBySpaceItem(ctx, "id-alice", "7b251a66-5d40-4f4d-b1d0-01266acea88d", "Fotos/100%.jpg"); err != nil {
-		t.Fatalf("hit con %% literal -> %v", err)
+		t.Fatalf("hit with literal %% -> %v", err)
 	}
 }

@@ -1,5 +1,5 @@
--- Clustering de la misma noticia en varios feeds (#42): cluster_key normaliza
--- título+cuerpo para agrupar duplicados entre suscripciones.
+-- Clustering of the same story across several feeds (#42): cluster_key normalizes
+-- title+body to group duplicates across subscriptions.
 
 ALTER TABLE items ADD COLUMN cluster_key TEXT NOT NULL DEFAULT '';
 

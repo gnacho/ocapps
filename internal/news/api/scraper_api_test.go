@@ -13,38 +13,38 @@ func TestFeedScraperAPI(t *testing.T) {
 	}
 	decode(t, body, &feedResp)
 	if len(feedResp.Feeds) != 1 {
-		t.Fatalf("feed no creado: %s", body)
+		t.Fatalf("feed not created: %s", body)
 	}
 	feedID := feedResp.Feeds[0].ID
 
-	// selector inválido → 422
+	// invalid selector -> 422
 	if code, _ := e.do(t, "POST", fmt.Sprintf("/feeds/%d/scraper", feedID), e.user, e.pass,
 		map[string]string{"scraperSelector": "div["}); code != 422 {
-		t.Fatalf("selector inválido esperaba 422, tengo %d", code)
+		t.Fatalf("invalid selector expected 422, I have %d", code)
 	}
 
-	// selector válido → 200 y persistido
+	// valid selector -> 200 and persisted
 	code, body := e.do(t, "POST", fmt.Sprintf("/feeds/%d/scraper", feedID), e.user, e.pass,
 		map[string]string{"scraperSelector": "div#articleBody, article"})
 	if code != 200 {
-		t.Fatalf("guardar selector: %d %s", code, body)
+		t.Fatalf("store selector: %d %s", code, body)
 	}
 	var got struct {
 		ScraperSelector string `json:"scraperSelector"`
 	}
 	decode(t, body, &got)
 	if got.ScraperSelector != "div#articleBody, article" {
-		t.Errorf("selector no persistido: %s", body)
+		t.Errorf("selector not persisted: %s", body)
 	}
 
-	// vacío = quitar
+	// empty = remove
 	code, body = e.do(t, "POST", fmt.Sprintf("/feeds/%d/scraper", feedID), e.user, e.pass,
 		map[string]string{"scraperSelector": ""})
 	if code != 200 {
-		t.Fatalf("quitar selector: %d", code)
+		t.Fatalf("remove selector: %d", code)
 	}
 	decode(t, body, &got)
 	if got.ScraperSelector != "" {
-		t.Errorf("selector no quitado: %s", body)
+		t.Errorf("selector not removed: %s", body)
 	}
 }

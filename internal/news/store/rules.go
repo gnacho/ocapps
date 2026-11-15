@@ -7,7 +7,7 @@ import (
 	"github.com/gnacho/ocapps/internal/news/rules"
 )
 
-// Rules: filtro block/keep en formato texto multilínea "Campo=regex".
+// Rules: block/keep filter in "Field=regex" multiline text format.
 type Rules struct {
 	Block string `json:"block"`
 	Keep  string `json:"keep"`
@@ -17,7 +17,7 @@ func (r Rules) HasRules() bool {
 	return r.Block != "" || r.Keep != ""
 }
 
-// GetFeedRules devuelve las reglas del feed (vacías si no existen).
+// GetFeedRules returns the feed rules (empty if they do not exist).
 func (s *Store) GetFeedRules(feedID int64) (*Rules, error) {
 	r := &Rules{}
 	err := s.db.QueryRow(`SELECT block, keep FROM feed_rules WHERE feed_id = ?`, feedID).
@@ -31,7 +31,7 @@ func (s *Store) GetFeedRules(feedID int64) (*Rules, error) {
 	return r, nil
 }
 
-// SaveFeedRules inserta o actualiza las reglas del feed. Vacías = se borran.
+// SaveFeedRules inserts or updates the feed rules. Empty = they are deleted.
 func (s *Store) SaveFeedRules(feedID int64, r Rules) error {
 	if !r.HasRules() {
 		_, err := s.db.Exec(`DELETE FROM feed_rules WHERE feed_id = ?`, feedID)
@@ -49,7 +49,7 @@ func (s *Store) DeleteFeedRules(feedID int64) error {
 	return err
 }
 
-// GetGlobalRules devuelve las reglas globales del usuario (vacías si no hay).
+// GetGlobalRules returns the user global rules (empty if there are none).
 func (s *Store) GetGlobalRules(userID int64) (*Rules, error) {
 	r := &Rules{}
 	err := s.db.QueryRow(`SELECT block, keep FROM global_rules WHERE user_id = ?`, userID).
@@ -63,7 +63,7 @@ func (s *Store) GetGlobalRules(userID int64) (*Rules, error) {
 	return r, nil
 }
 
-// SaveGlobalRules guarda o elimina las reglas globales del usuario.
+// SaveGlobalRules stores or deletes the user global rules.
 func (s *Store) SaveGlobalRules(userID int64, r Rules) error {
 	if !r.HasRules() {
 		_, err := s.db.Exec(`DELETE FROM global_rules WHERE user_id = ?`, userID)
@@ -76,7 +76,7 @@ func (s *Store) SaveGlobalRules(userID int64, r Rules) error {
 	return err
 }
 
-// FeedUserID devuelve el propietario de un feed.
+// FeedUserID returns the owner of a feed.
 func (s *Store) FeedUserID(feedID int64) (int64, error) {
 	var uid int64
 	err := s.db.QueryRow(`SELECT user_id FROM feeds WHERE id = ?`, feedID).Scan(&uid)
@@ -89,8 +89,8 @@ func (s *Store) FeedUserID(feedID int64) (int64, error) {
 	return uid, nil
 }
 
-// HasAnyFilter: true si el feed tiene keywords, reglas o el usuario reglas
-// globales. Sirve para evitar re-evaluar items cuando no hay nada configurado.
+// HasAnyFilter: true if the feed has keywords, rules or the user has global
+// rules. It avoids re-evaluating items when nothing is configured.
 func (s *Store) HasAnyFilter(userID, feedID int64) (bool, error) {
 	var n int
 	err := s.db.QueryRow(
@@ -105,9 +105,9 @@ func (s *Store) HasAnyFilter(userID, feedID int64) (bool, error) {
 	return n > 0, nil
 }
 
-// itemFilter compone keywords (News 28.4.0) + reglas regex globales y del
-// feed. true = el item debe descartarse (filtered). Las reglas con regex
-// inválida (imposible vía API, que valida) se ignoran por robustez.
+// itemFilter composes keywords (News 28.4.0) + global and feed regex
+// rules. true = the item must be discarded (filtered). Rules with an invalid
+// regex (impossible through the API, which validates) are ignored for robustness.
 func (s *Store) itemFilter(userID, feedID int64, kw *FeedFilter) (func(NewItem) bool, error) {
 	gr, err := s.GetGlobalRules(userID)
 	if err != nil {

@@ -1,6 +1,6 @@
--- Búsquedas guardadas del usuario: una query persistida que se muestra en el
--- sidebar como un feed virtual (estilo FreshRSS user queries / tt-rss
--- generated feeds). No es una suscripción real.
+-- User saved searches: a persisted query shown in the
+-- sidebar as a virtual feed (FreshRSS user queries / tt-rss
+-- generated feeds style). It is not a real subscription.
 
 CREATE TABLE IF NOT EXISTS saved_searches (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

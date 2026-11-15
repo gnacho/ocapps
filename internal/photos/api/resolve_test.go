@@ -13,9 +13,9 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
-// TestResolve: GET /api/assets/resolve mapea driveAliasAndItem al href DAV
-// indexado y devuelve el asset; no indexado o ajeno -> {"asset": null}
-// (misma respuesta, IDOR); falta el parámetro -> 400.
+// TestResolve: GET /api/assets/resolve maps driveAliasAndItem to the indexed DAV
+// href and returns the asset, not indexed or foreign -> {"asset": null} (same
+// answer, IDOR), missing parameter -> 400.
 func TestResolve(t *testing.T) {
 	s, st, _ := newMultiServer(t)
 	h := s.Handler()
@@ -29,7 +29,7 @@ func TestResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// hit: alice resuelve su fichero (nombre con espacio, URL-escapado)
+	// hit: alice resolves her file (name with a space, URL escaped)
 	dai := url.QueryEscape("personal$sa/Fotos/la playa.jpg")
 	rr := do(t, h, http.MethodGet, PublicPrefix+"/api/assets/resolve?driveAliasAndItem="+dai, "Bearer tok-alice")
 	if rr.Code != http.StatusOK {
@@ -45,25 +45,25 @@ func TestResolve(t *testing.T) {
 		t.Fatalf("asset: %+v", body.Asset)
 	}
 
-	// miss: path no indexado
+	// miss: path not indexed
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/assets/resolve?driveAliasAndItem="+url.QueryEscape("personal$sa/Fotos/otra.jpg"), "Bearer tok-alice")
 	assertAssetNull(t, rr)
 
-	// miss: alice pregunta por un path que solo existe en el índice de bob
-	// (mismo nombre) -> no delata nada
+	// miss: alice asks for a path that only exists in bob's index (same name)
+	// -> nothing is leaked
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/assets/resolve?driveAliasAndItem="+url.QueryEscape("personal$sb/Fotos/a.jpg"), "Bearer tok-alice")
 	assertAssetNull(t, rr)
 
-	// fileId se acepta pero no cambia el resultado (aún no indexa oc:id)
+	// fileId is accepted but does not change the result (it does not index oc:id yet)
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/assets/resolve?driveAliasAndItem="+dai+"&fileId="+strconv.FormatInt(idA, 10), "Bearer tok-alice")
 	if rr.Code != http.StatusOK {
-		t.Fatalf("resolve con fileId -> %d", rr.Code)
+		t.Fatalf("resolve with fileId -> %d", rr.Code)
 	}
 
-	// falta el parámetro obligatorio -> 400
+	// missing mandatory parameter -> 400
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/assets/resolve", "Bearer tok-alice")
 	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("sin driveAliasAndItem -> %d", rr.Code)
+		t.Fatalf("without driveAliasAndItem -> %d", rr.Code)
 	}
 }
 
@@ -79,13 +79,13 @@ func assertAssetNull(t *testing.T, rr *httptest.ResponseRecorder) {
 		t.Fatal(err)
 	}
 	if body.Asset != nil {
-		t.Fatalf("se esperaba asset null, got %+v", body.Asset)
+		t.Fatalf("expected a null asset, got %+v", body.Asset)
 	}
 }
 
-// TestResolveNameAlias: fallback por spaceId del fileId cuando el host manda
-// driveAliasAndItem en forma <tipo>/<nombre>/<ruta> (E2E OpenCloud 8.0.1,
-// gnacho/ocapps #11). Shape real observado en drive.domatix.cloud.
+// TestResolveNameAlias: fallback by spaceId of the fileId when the host sends
+// driveAliasAndItem in the form <type>/<name>/<path> (E2E OpenCloud 8.0.1,
+// gnacho/ocapps #11). Real shape observed on drive.domatix.cloud.
 func TestResolveNameAlias(t *testing.T) {
 	s, st, _ := newMultiServer(t)
 	h := s.Handler()
@@ -114,7 +114,7 @@ func TestResolveNameAlias(t *testing.T) {
 		t.Fatalf("asset: %+v", body.Asset)
 	}
 
-	// miss: mismo shape pero el spaceId del fileId no está indexado
+	// miss: same shape but the spaceId of the fileId is not indexed
 	otherFileID := "7d443b01-21d3-484d-bf73-a2681d670fa1$11111111-2222-3333-4444-555555555555!41b22c35-2b5d-4998-94f6-4db877fa2993"
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/assets/resolve?driveAliasAndItem="+dai+"&fileId="+url.QueryEscape(otherFileID), "Bearer tok-alice")
 	assertAssetNull(t, rr)

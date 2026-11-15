@@ -20,10 +20,10 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
-// fakeProvider implementa SessionProvider para tests (sin registry real).
+// fakeProvider implements SessionProvider for tests (no real registry).
 type fakeProvider struct {
 	mu      sync.Mutex
-	legacy  string // owner del token estático; "" = error
+	legacy  string // owner of the static token, "" = error
 	dav     *webdav.Client
 	prefix  string
 	touched []string
@@ -39,7 +39,7 @@ func (f *fakeProvider) DavFor(_ context.Context, _ string) *webdav.Client { retu
 func (f *fakeProvider) SpacePrefix(_ context.Context, _ string) string    { return f.prefix }
 func (f *fakeProvider) LegacyOwner(_ context.Context) (string, error) {
 	if f.legacy == "" {
-		return "", errors.New("legacy no configurado")
+		return "", errors.New("legacy not configured")
 	}
 	return f.legacy, nil
 }
@@ -74,14 +74,14 @@ func do(t *testing.T, h http.Handler, method, path, authz string) *httptest.Resp
 	return rr
 }
 
-// TestRutasBajoPublicPrefix: todas las rutas cuelgan de PublicPrefix
-// (SPEC §4.3) y el prefijo es obligatorio (sin strip de proxy).
-func TestRutasBajoPublicPrefix(t *testing.T) {
+// TestRoutesUnderPublicPrefix: every route hangs from PublicPrefix
+// (SPEC §4.3) and the prefix is mandatory (no proxy strip).
+func TestRoutesUnderPublicPrefix(t *testing.T) {
 	s, _, _ := newTestServer(t)
 	h := s.Handler()
 	bearer := "Bearer test-token"
 
-	// con auth: las rutas existen bajo el prefijo
+	// with auth: the routes exist under the prefix
 	for _, p := range []string{
 		"/api/stats",
 		"/api/assets",
@@ -101,49 +101,49 @@ func TestRutasBajoPublicPrefix(t *testing.T) {
 		}
 	}
 
-	// sin prefijo: no hay ruta (el proxy ya no strip-pea)
+	// without the prefix: there is no route (the proxy no longer strips)
 	if rr := do(t, h, http.MethodGet, "/api/stats", bearer); rr.Code != http.StatusNotFound {
-		t.Fatalf("GET /api/stats sin prefijo -> %d, quiero 404", rr.Code)
+		t.Fatalf("GET /api/stats without prefix -> %d, want 404", rr.Code)
 	}
 
-	// Q7: endpoints muertos eliminados (sin consumidor en la extensión)
+	// Q7: dead endpoints removed (no consumer in the extension)
 	for _, p := range []string{
-		"/api/thumb?path=/Fotos/IMG.heic", // thumb por path
-		"/api/assets/1",                   // asset por id (bare GET)
+		"/api/thumb?path=/Fotos/IMG.heic", // thumb by path
+		"/api/assets/1",                   // asset by id (bare GET)
 		"/api/assets/1/hls/index.m3u8",    // HLS
 	} {
 		rr := do(t, h, http.MethodGet, PublicPrefix+p, bearer)
 		if rr.Code != http.StatusNotFound {
-			t.Fatalf("GET %s%s -> %d, quiero 404 (endpoint eliminado en Q7)", PublicPrefix, p, rr.Code)
+			t.Fatalf("GET %s%s -> %d, want 404 (endpoint removed in Q7)", PublicPrefix, p, rr.Code)
 		}
 	}
 
-	// sin auth: 401 (salvo video firmado y preflight)
+	// without auth: 401 (except the signed video and the preflight)
 	if rr := do(t, h, http.MethodGet, PublicPrefix+"/api/stats", ""); rr.Code != http.StatusUnauthorized {
-		t.Fatalf("stats sin auth -> %d, quiero 401", rr.Code)
+		t.Fatalf("stats without auth -> %d, want 401", rr.Code)
 	}
 	if rr := do(t, h, http.MethodGet, PublicPrefix+"/api/stats", "Bearer otro"); rr.Code != http.StatusUnauthorized {
-		t.Fatalf("stats con token erróneo -> %d, quiero 401", rr.Code)
+		t.Fatalf("stats with a wrong token -> %d, want 401", rr.Code)
 	}
 
-	// preflight OPTIONS sin auth: 204 (CORS común, SPEC §4.4)
+	// OPTIONS preflight without auth: 204 (common CORS, SPEC §4.4)
 	rr := do(t, h, http.MethodOptions, PublicPrefix+"/api/stats", "")
 	if rr.Code != http.StatusNoContent {
-		t.Fatalf("OPTIONS -> %d, quiero 204", rr.Code)
+		t.Fatalf("OPTIONS -> %d, want 204", rr.Code)
 	}
 	if acao := rr.Header().Get("Access-Control-Allow-Origin"); acao != "*" {
 		t.Fatalf("ACAO = %q", acao)
 	}
 }
 
-// TestTokenEstaticoOwnerLegacy: el Bearer estático DEPRECATED mapea al owner
-// legacy (oc_id de OCAPPS_PHOTOS_USER), H8 §6.2.
-func TestTokenEstaticoOwnerLegacy(t *testing.T) {
+// TestStaticTokenLegacyOwner: the DEPRECATED static Bearer maps to the legacy
+// owner (oc_id of OCAPPS_PHOTOS_USER), H8 §6.2.
+func TestStaticTokenLegacyOwner(t *testing.T) {
 	s, st, _ := newTestServer(t)
 	h := s.Handler()
 	ctx := context.Background()
-	// un asset del owner legacy y otro de otro owner: el token estático solo
-	// ve los suyos
+	// one asset of the legacy owner and another one of another owner: the
+	// static token only sees its own
 	if _, _, err := st.UpsertByETag(ctx, "legacy-owner", "/dav/x/a.jpg", "e1", "a.jpg", "image", time.Now(), 100); err != nil {
 		t.Fatal(err)
 	}
@@ -161,20 +161,20 @@ func TestTokenEstaticoOwnerLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(body.Assets) != 1 || body.Assets[0].Path != "/dav/x/a.jpg" {
-		t.Fatalf("el token estático debe ver solo lo del owner legacy: %+v", body.Assets)
+		t.Fatalf("the static token must only see the legacy owner's assets: %+v", body.Assets)
 	}
-	// token por query param (compat) también mapea
+	// token by query param (compat) also maps
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/stats?token=test-token", "")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("stats?token -> %d", rr.Code)
 	}
 }
 
-// TestVideoFirmado: la firma usa PublicPrefix y la ruta firmada está exenta
-// de auth (la firma HMAC es la credencial). video-url verifica ownership
-// ANTES de firmar (H8).
-func TestVideoFirmado(t *testing.T) {
-	// DAV falso que sirve el contenido del vídeo
+// TestSignedVideo: the signature uses PublicPrefix and the signed route is
+// exempt from auth (the HMAC signature is the credential). video-url verifies
+// ownership BEFORE signing (H8).
+func TestSignedVideo(t *testing.T) {
+	// fake DAV serving the video content
 	davSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "video/mp4")
 		_, _ = w.Write([]byte("video-data"))
@@ -187,17 +187,18 @@ func TestVideoFirmado(t *testing.T) {
 	bearer := "Bearer test-token"
 	ctx := context.Background()
 
-	// sin asset del owner: video-url -> 404 (no se firma lo ajeno/inexistente)
+	// without the owner asset: video-url -> 404 (nothing foreign or
+	// non-existent is signed)
 	rr := do(t, h, http.MethodPost, PublicPrefix+"/api/assets/42/video-url", bearer)
 	if rr.Code != http.StatusNotFound {
-		t.Fatalf("video-url de asset inexistente -> %d, quiero 404", rr.Code)
+		t.Fatalf("video-url of a non-existent asset -> %d, want 404", rr.Code)
 	}
 
 	id, _, err := st.UpsertByETag(ctx, "legacy-owner", "/dav/x/v.mp4", "e1", "v.mp4", "video", time.Now(), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// un asset con el mismo path de OTRO owner no sirve para firmar
+	// an asset with the same path OF ANOTHER owner is no good for signing
 	if _, _, err := st.UpsertByETag(ctx, "otro", "/dav/x/v.mp4", "e2", "v.mp4", "video", time.Now(), 100); err != nil {
 		t.Fatal(err)
 	}
@@ -213,51 +214,51 @@ func TestVideoFirmado(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(body.URL, PublicPrefix+"/api/video/"+strconv.FormatInt(id, 10)+"?exp=") {
-		t.Fatalf("url firmada sin PublicPrefix: %q", body.URL)
+		t.Fatalf("signed url without PublicPrefix: %q", body.URL)
 	}
 
-	// la URL firmada pasa la exemption de auth (sin Bearer) y sirve el vídeo
+	// the signed URL passes the auth exemption (no Bearer) and serves the video
 	rr = do(t, h, http.MethodGet, body.URL, "")
 	if rr.Code != http.StatusOK || rr.Body.String() != "video-data" {
-		t.Fatalf("GET %q sin auth -> %d %q", body.URL, rr.Code, rr.Body.String())
+		t.Fatalf("GET %q without auth -> %d %q", body.URL, rr.Code, rr.Body.String())
 	}
-	// firma manipulada -> 401 del propio handler
+	// tampered signature -> 401 from the handler itself
 	tampered := strings.Replace(body.URL, "sig=", "sig=0", 1)
 	if rr := do(t, h, http.MethodGet, tampered, ""); rr.Code != http.StatusUnauthorized {
-		t.Fatalf("firma manipulada -> %d, quiero 401", rr.Code)
+		t.Fatalf("tampered signature -> %d, want 401", rr.Code)
 	}
-	// expirada -> 401
+	// expired -> 401
 	exp := time.Now().Add(-time.Hour).Unix()
 	expired := PublicPrefix + "/api/video/" + strconv.FormatInt(id, 10) + "?exp=" + strconv.FormatInt(exp, 10) + "&sig=" + s.signVideo(id, exp)
 	if rr := do(t, h, http.MethodGet, expired, ""); rr.Code != http.StatusUnauthorized {
-		t.Fatalf("firma expirada -> %d, quiero 401", rr.Code)
+		t.Fatalf("expired signature -> %d, want 401", rr.Code)
 	}
 }
 
-// TestRescanPorOwner: POST /api/admin/rescan encola scan SOLO del owner del
-// request (H8 §6).
-func TestRescanPorOwner(t *testing.T) {
+// TestRescanPerOwner: POST /api/admin/rescan enqueues a scan OF THE OWNER of the
+// request only (H8 §6).
+func TestRescanPerOwner(t *testing.T) {
 	s, _, fp := newTestServer(t)
 	h := s.Handler()
 	for i := 0; i < 3; i++ {
 		rr := do(t, h, http.MethodPost, PublicPrefix+"/api/admin/rescan", "Bearer test-token")
-		if !strings.Contains(rr.Body.String(), "encolado") {
+		if !strings.Contains(rr.Body.String(), "queued") {
 			t.Fatalf("rescan %d: %d %s", i, rr.Code, rr.Body.String())
 		}
 	}
 	fp.mu.Lock()
 	defer fp.mu.Unlock()
 	if len(fp.scans) != 3 {
-		t.Fatalf("scans encolados: %v", fp.scans)
+		t.Fatalf("queued scans: %v", fp.scans)
 	}
 	for _, owner := range fp.scans {
 		if owner != "legacy-owner" {
-			t.Fatalf("rescan encolado para %q, quiero el owner del request", owner)
+			t.Fatalf("rescan queued for %q, want the owner of the request", owner)
 		}
 	}
 }
 
-// graphFake valida Bearer tokens: "tok-alice" -> id-alice, "tok-bob" -> id-bob.
+// graphFake validates Bearer tokens: "tok-alice" -> id-alice, "tok-bob" -> id-bob.
 func graphFake(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -278,7 +279,7 @@ func graphFake(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// newMultiServer monta la API con validador Graph real contra un fake.
+// newMultiServer mounts the API with a real Graph validator against a fake.
 func newMultiServer(t *testing.T) (*Server, *store.Store, *fakeProvider) {
 	t.Helper()
 	st, err := store.Open(t.TempDir() + "/test.db")
@@ -292,9 +293,9 @@ func newMultiServer(t *testing.T) (*Server, *store.Store, *fakeProvider) {
 	return s, st, fp
 }
 
-// TestMultiTenantAislamientoAPI: dos usuarios autenticados por OIDC no se
-// ven: assets, stats, álbumes, tags y thumb cruzado -> 404/vacío (H8 §9).
-func TestMultiTenantAislamientoAPI(t *testing.T) {
+// TestMultiTenantAPIIsolation: two users authenticated by OIDC do not see each
+// other: assets, stats, albums, tags and cross thumb -> 404/empty (H8 §9).
+func TestMultiTenantAPIIsolation(t *testing.T) {
 	s, st, _ := newMultiServer(t)
 	h := s.Handler()
 	ctx := context.Background()
@@ -308,7 +309,7 @@ func TestMultiTenantAislamientoAPI(t *testing.T) {
 	}
 	alA, _ := st.CreateAlbum(ctx, "id-alice", "Vacaciones")
 
-	// assets: cada uno solo ve el suyo
+	// assets: each one only sees its own
 	getAssets := func(token string) []store.Asset {
 		t.Helper()
 		rr := do(t, h, http.MethodGet, PublicPrefix+"/api/assets", "Bearer "+token)
@@ -324,13 +325,13 @@ func TestMultiTenantAislamientoAPI(t *testing.T) {
 		return body.Assets
 	}
 	if got := getAssets("tok-alice"); len(got) != 1 || got[0].ID != idA {
-		t.Fatalf("assets de alice: %+v", got)
+		t.Fatalf("alice's assets: %+v", got)
 	}
 	if got := getAssets("tok-bob"); len(got) != 1 || got[0].ID == idA {
-		t.Fatalf("assets de bob: %+v", got)
+		t.Fatalf("bob's assets: %+v", got)
 	}
 
-	// thumb / tags / álbum de un id ajeno -> 404 (regla IDOR, sin delatar)
+	// thumb / tags / album of a foreign id -> 404 (IDOR rule, no leak)
 	for _, p := range []string{
 		"/api/assets/" + strconv.FormatInt(idA, 10) + "/thumb",
 		"/api/assets/" + strconv.FormatInt(idA, 10) + "/tags",
@@ -343,38 +344,38 @@ func TestMultiTenantAislamientoAPI(t *testing.T) {
 		}
 		rr := do(t, h, method, PublicPrefix+p, "Bearer tok-bob")
 		if rr.Code != http.StatusNotFound {
-			t.Fatalf("%s %s como bob -> %d, quiero 404", method, p, rr.Code)
+			t.Fatalf("%s %s as bob -> %d, want 404", method, p, rr.Code)
 		}
 	}
-	// escribir sobre un id ajeno -> 404
+	// writing on a foreign id -> 404
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, PublicPrefix+"/api/assets/"+strconv.FormatInt(idA, 10)+"/favorite", strings.NewReader(`{"favorite":true}`))
 	req.Header.Set("Authorization", "Bearer tok-bob")
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
-		t.Fatalf("favorite ajeno -> %d, quiero 404", rr.Code)
+		t.Fatalf("foreign favorite -> %d, want 404", rr.Code)
 	}
 
-	// tags y álbumes: bob no ve los de alice
+	// tags and albums: bob does not see alice's
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/tags", "Bearer tok-bob")
 	if !strings.Contains(rr.Body.String(), `"tags":[]`) {
-		t.Fatalf("tags de bob: %s", rr.Body.String())
+		t.Fatalf("bob's tags: %s", rr.Body.String())
 	}
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/albums", "Bearer tok-bob")
 	if !strings.Contains(rr.Body.String(), `"albums":[]`) {
-		t.Fatalf("albums de bob: %s", rr.Body.String())
+		t.Fatalf("bob's albums: %s", rr.Body.String())
 	}
-	// y alice sí ve los suyos (sanity)
+	// and alice does see hers (sanity)
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/tags", "Bearer tok-alice")
 	if !strings.Contains(rr.Body.String(), "playa") {
-		t.Fatalf("tags de alice: %s", rr.Body.String())
+		t.Fatalf("alice's tags: %s", rr.Body.String())
 	}
 }
 
-// TestBasicAuthMultiTenant: Basic app-password también autentica (H8 §1) y el
-// owner es el oc_id resuelto.
+// TestBasicAuthMultiTenant: Basic app-password also authenticates (H8 §1) and
+// the owner is the resolved oc_id.
 func TestBasicAuthMultiTenant(t *testing.T) {
-	// el fake Graph solo valida Bearer; extiéndelo con Basic
+	// the fake Graph only validates Bearer, extend it with Basic
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, p, ok := r.BasicAuth(); ok && u == "alice" && p == "app-token" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "id-alice", "onPremisesSamAccountName": "alice"})
@@ -403,9 +404,9 @@ func TestBasicAuthMultiTenant(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"assets":1`) {
-		t.Fatalf("stats con Basic -> %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("stats with Basic -> %d %s", rr.Code, rr.Body.String())
 	}
-	// y Touch recibió la actividad de id-alice
+	// and Touch received the activity of id-alice
 	fp.mu.Lock()
 	defer fp.mu.Unlock()
 	if len(fp.touched) != 1 || fp.touched[0] != "id-alice" {
@@ -413,30 +414,31 @@ func TestBasicAuthMultiTenant(t *testing.T) {
 	}
 }
 
-// TestFoldersSinEspacio: un usuario sin espacio resuelto recibe respuesta
-// vacía coherente, no un 500 (H8 §6).
-func TestFoldersSinEspacio(t *testing.T) {
+// TestFoldersWithoutSpace: a user without a resolved space gets a coherent
+// empty answer, not a 500 (H8 §6).
+func TestFoldersWithoutSpace(t *testing.T) {
 	s, _, fp := newMultiServer(t)
-	fp.prefix = "" // espacio no resoluble
+	fp.prefix = "" // unresolvable space
 	h := s.Handler()
 	rr := do(t, h, http.MethodGet, PublicPrefix+"/api/folders", "Bearer tok-alice")
 	if rr.Code != http.StatusOK {
-		t.Fatalf("folders sin espacio -> %d, quiero 200 vacío", rr.Code)
+		t.Fatalf("folders without space -> %d, want an empty 200", rr.Code)
 	}
 	if !strings.Contains(rr.Body.String(), `"folders":[]`) || !strings.Contains(rr.Body.String(), `"assets":[]`) {
-		t.Fatalf("respuesta vacía coherente: %s", rr.Body.String())
+		t.Fatalf("coherent empty answer: %s", rr.Body.String())
 	}
-	// con espacio resuelto usa el prefijo de la sesión
+	// with a resolved space it uses the prefix of the session
 	fp.prefix = "/dav/spaces/sa"
 	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/folders", "Bearer tok-alice")
 	if rr.Code != http.StatusOK {
-		t.Fatalf("folders con espacio -> %d", rr.Code)
+		t.Fatalf("folders with space -> %d", rr.Code)
 	}
 }
 
-// TestFavoriteYTagEscribenSidecar: tras cambiar el favorito o una etiqueta, el
-// handler escribe el paquete XMP junto a la foto (estado derivado del índice).
-func TestFavoriteYTagEscribenSidecar(t *testing.T) {
+// TestFavoriteAndTagWriteSidecar: after changing the favourite flag or a tag,
+// the handler writes the XMP package next to the photo (state derived from the
+// index).
+func TestFavoriteAndTagWriteSidecar(t *testing.T) {
 	s, st, fp := newMultiServer(t)
 	var mu sync.Mutex
 	var puts []struct{ path, body string }
@@ -474,15 +476,15 @@ func TestFavoriteYTagEscribenSidecar(t *testing.T) {
 	mu.Lock()
 	if len(puts) != 1 {
 		mu.Unlock()
-		t.Fatalf("PUTs tras favorito: %d, quiero 1", len(puts))
+		t.Fatalf("PUTs after the favourite: %d, want 1", len(puts))
 	}
 	first := puts[0]
 	mu.Unlock()
 	if first.path != "/dav/spaces/sa/Fotos/a.jpg.xmp" {
-		t.Errorf("ruta del sidecar: %q", first.path)
+		t.Errorf("sidecar path: %q", first.path)
 	}
 	if !strings.Contains(first.body, "<xmp:Rating>5</xmp:Rating>") {
-		t.Errorf("falta Rating 5: %s", first.body)
+		t.Errorf("Rating 5 missing: %s", first.body)
 	}
 
 	if rr := post("/api/assets/"+asset+"/tags", `{"tag":"playa"}`); rr.Code != http.StatusNoContent {
@@ -491,19 +493,20 @@ func TestFavoriteYTagEscribenSidecar(t *testing.T) {
 	mu.Lock()
 	if len(puts) != 2 {
 		mu.Unlock()
-		t.Fatalf("PUTs tras etiqueta: %d, quiero 2", len(puts))
+		t.Fatalf("PUTs after the tag: %d, want 2", len(puts))
 	}
 	second := puts[1]
 	mu.Unlock()
 	if !strings.Contains(second.body, "<rdf:li>playa</rdf:li>") {
-		t.Errorf("falta la etiqueta en el sidecar: %s", second.body)
+		t.Errorf("tag missing in the sidecar: %s", second.body)
 	}
 	if !strings.Contains(second.body, "<xmp:Rating>5</xmp:Rating>") {
-		t.Errorf("el favorito se perdió al escribir la etiqueta: %s", second.body)
+		t.Errorf("the favourite flag was lost when writing the tag: %s", second.body)
 	}
 }
 
-// TestExifBacklog: sin worker la ruta responde 503 y sin sesión DAV tampoco.
+// TestExifBacklog: without a worker the route responds 503 and without a DAV
+// session as well.
 func TestExifBacklog(t *testing.T) {
 	s, st2, fp := newTestServer(t)
 	h := s.Handler()
@@ -511,13 +514,13 @@ func TestExifBacklog(t *testing.T) {
 
 	rr := do(t, h, http.MethodPost, "/ocphotos-api/api/admin/exif", bearer)
 	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("sin worker: %d, want 503", rr.Code)
+		t.Fatalf("without worker: %d, want 503", rr.Code)
 	}
 
-	fp.dav = nil // sin sesión DAV: la ruta debe limpiar el estado y responder 503
+	fp.dav = nil // no DAV session: the route must clean the state and respond 503
 	s.SetExifWorker(exif.NewWorker(st2, slog.Default()))
 	rr = do(t, h, http.MethodPost, "/ocphotos-api/api/admin/exif", bearer)
 	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("sin sesión: %d, want 503", rr.Code)
+		t.Fatalf("without session: %d, want 503", rr.Code)
 	}
 }

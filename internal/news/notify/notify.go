@@ -1,5 +1,5 @@
-// Package notify: notificaciones push vía ntfy (https://ntfy.sh o servidor
-// propio). El topic puede ser global (env) o por usuario (user_settings).
+// Package notify: push notifications through ntfy (https://ntfy.sh or a
+// self-hosted server). The topic can be global (env) or per user (user_settings).
 package notify
 
 import (
@@ -18,13 +18,13 @@ import (
 
 type Notifier struct {
 	baseURL string
-	topic   string // topic global (vacío = solo per-usuario)
+	topic   string // global topic (empty = per-user only)
 	client  *http.Client
 	log     *slog.Logger
 }
 
-// New crea un Notifier. topic puede quedar vacío (notificaciones solo con
-// topic por usuario).
+// New creates a Notifier. topic may be empty (notifications only with a
+// per-user topic).
 func New(baseURL, topic string, log *slog.Logger) *Notifier {
 	if baseURL == "" {
 		baseURL = "https://ntfy.sh"
@@ -37,7 +37,7 @@ func New(baseURL, topic string, log *slog.Logger) *Notifier {
 	}
 }
 
-// NewAllowLocal es como New pero permite loopback. SOLO tests (httptest).
+// NewAllowLocal is like New but allows loopback. TESTS only (httptest).
 func NewAllowLocal(baseURL, topic string, log *slog.Logger) *Notifier {
 	if baseURL == "" {
 		baseURL = "https://ntfy.sh"
@@ -50,13 +50,13 @@ func NewAllowLocal(baseURL, topic string, log *slog.Logger) *Notifier {
 	}
 }
 
-// Topic devuelve el topic global configurado ("" si no hay).
+// Topic returns the configured global topic ("" if none).
 func (n *Notifier) Topic() string { return n.topic }
 
-// Notify publica un mensaje en el topic dado (ntfy POST JSON).
+// Notify publishes a message on the given topic (ntfy POST JSON).
 func (n *Notifier) Notify(ctx context.Context, topic, title, message string) error {
 	if topic == "" {
-		return fmt.Errorf("topic vacío")
+		return fmt.Errorf("empty topic")
 	}
 	body, err := json.Marshal(map[string]string{
 		"topic":   topic,

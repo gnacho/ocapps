@@ -8,14 +8,14 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// filterBody: keywords separadas por coma (News 28.4.0).
+// filterBody: comma separated keywords (News 28.4.0).
 type filterBody struct {
 	TitleKeywords string `json:"titleKeywords"`
 	BodyKeywords  string `json:"bodyKeywords"`
 	URLKeywords   string `json:"urlKeywords"`
 }
 
-// sanitizeKeywords trima y normaliza (sin espacios colgantes por keyword).
+// sanitizeKeywords trims and normalizes (no trailing spaces per keyword).
 func sanitizeKeywords(s string) string {
 	parts := strings.Split(s, ",")
 	var out []string
@@ -36,7 +36,7 @@ func (b filterBody) toStore(feedID int64) store.FeedFilter {
 	}
 }
 
-// getFeedFilter devuelve el filtro del feed (GET /feeds/{id}/filter).
+// getFeedFilter returns the feed filter (GET /feeds/{id}/filter).
 func (s *Server) getFeedFilter(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -49,14 +49,14 @@ func (s *Server) getFeedFilter(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := s.store.GetFeedFilter(id)
 	if err != nil {
-		s.logError(w, r, "leer filtro", err)
+		s.logError(w, r, "read filter", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"filter": f})
 }
 
-// setFeedFilter crea o actualiza el filtro (POST /feeds/{id}/filter).
-// Keywords vacías → se elimina el filtro. Re-aplica sobre los items ya guardados.
+// setFeedFilter creates or updates the filter (POST /feeds/{id}/filter).
+// Empty keywords -> the filter is deleted. It re-applies over the items already stored.
 func (s *Server) setFeedFilter(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -74,22 +74,22 @@ func (s *Server) setFeedFilter(w http.ResponseWriter, r *http.Request) {
 	}
 	f := body.toStore(id)
 	if err := s.store.SaveFeedFilter(f); err != nil {
-		s.logError(w, r, "guardar filtro", err)
+		s.logError(w, r, "store filter", err)
 		return
 	}
 	if _, err := s.store.ReapplyFeedFilter(id, f); err != nil {
-		s.logError(w, r, "re-aplicar filtro", err)
+		s.logError(w, r, "re-apply filter", err)
 		return
 	}
 	saved, err := s.store.GetFeedFilter(id)
 	if err != nil {
-		s.logError(w, r, "leer filtro guardado", err)
+		s.logError(w, r, "read stored filter", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"filter": saved})
 }
 
-// deleteFeedFilter elimina el filtro y descongela los items (DELETE /feeds/{id}/filter).
+// deleteFeedFilter deletes the filter and unfreezes the items (DELETE /feeds/{id}/filter).
 func (s *Server) deleteFeedFilter(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -101,12 +101,12 @@ func (s *Server) deleteFeedFilter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeleteFeedFilter(id); err != nil {
-		s.logError(w, r, "borrar filtro", err)
+		s.logError(w, r, "delete filter", err)
 		return
 	}
-	// descongelar items previamente filtrados de este feed
+	// unfreeze items previously filtered from this feed
 	if _, err := s.store.ReapplyFeedFilter(id, store.FeedFilter{}); err != nil {
-		s.logError(w, r, "descongelar items", err)
+		s.logError(w, r, "unfreeze items", err)
 		return
 	}
 	writeEmpty(w)

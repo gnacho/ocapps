@@ -1,7 +1,7 @@
-// Package store: store de dominio de notes sobre el *sql.DB común
-// (SPEC §5.3). La apertura del fichero SQLite y los pragmas viven en
-// internal/common/store; aquí quedan el runner de adopción (backup
-// pre-migración + backfill de owner) y las operaciones de notas/settings.
+// Package store: domain store of notes on top of the shared *sql.DB
+// (SPEC §5.3). Opening the SQLite file and the pragmas live in
+// internal/common/store. Only the adoption runner (pre-migration backup plus
+// owner backfill) and the notes/settings operations remain here.
 package store
 
 import (
@@ -21,11 +21,11 @@ type dbRowScanner interface {
 	Scan(dest ...interface{}) error
 }
 
-// Open migra la base de datos (con backup pre-migración verificado y backfill
-// del owner, SPEC §5.3) y devuelve el store de dominio sobre el *sql.DB
-// abierto por common/store.Open. dbPath es la ruta del fichero notes.db, solo
-// se usa para nombrar el backup notes.db.<ts>.bak. El *sql.DB NO se cierra en
-// caso de error: su ciclo de vida es del llamador.
+// Open migrates the database (with a verified pre-migration backup and owner
+// backfill, SPEC §5.3) and returns the domain store on top of the *sql.DB
+// opened by common/store.Open. dbPath is the path of the notes.db file, only
+// used to name the notes.db.<ts>.bak backup. The *sql.DB is NOT closed on
+// error: its lifecycle belongs to the caller.
 func Open(db *sql.DB, dbPath, owner string) (*Store, error) {
 	if err := migrate(db, dbPath, owner); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)

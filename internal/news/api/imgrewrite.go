@@ -11,12 +11,12 @@ import (
 
 var imgSrcRe = regexp.MustCompile(`src="(https?://[^"]+)"`)
 
-// rewriteImages transforma los src http(s) del body hacia el proxy firmado
-// (la CSP del host impide imágenes externas; el navegador sí puede cargar
-// del propio dominio). El HTML ya viene sanitizado: los atributos src son
-// URLs limpias. El & del query va escapado como &amp; para HTML válido.
-// u viaja con url.QueryEscape (escapa % → %25): q.Get() del proxy recupera
-// la URL EXACTA que se firmó (con sus %2C etc. intactos).
+// rewriteImages transforms the http(s) src of the body towards the signed proxy
+// (the host CSP blocks external images, the browser can load
+// from its own domain). The HTML is already sanitized: the src attributes are
+// clean URLs. The & of the query is escaped as &amp; for valid HTML.
+// u travels with url.QueryEscape (it escapes % -> %25): q.Get() of the proxy recovers
+// the EXACT URL that was signed (with its %2C etc. intact).
 func (s *Server) rewriteImages(body string) string {
 	if body == "" || s.imgs == nil {
 		return body
@@ -26,16 +26,16 @@ func (s *Server) rewriteImages(body string) string {
 		if len(sub) < 2 {
 			return m
 		}
-		// el HTML sanitizado guarda entities en atributos (&amp;): la URL
-		// real que se firma y se fetchea es la desescapada
+		// the sanitized HTML stores entities in attributes (&amp;): the real
+		// URL that is signed and fetched is the unescaped one
 		u := html.UnescapeString(sub[1])
 		return `src="` + Base + `/img?u=` + url.QueryEscape(u) +
 			`&amp;t=` + s.imgs.Sign(u) + `"`
 	})
 }
 
-// rewriteAll aplica el proxy a todos los items de una respuesta: bodies
-// (imágenes y media embebida) y enclosures de audio/vídeo/imagen.
+// rewriteAll applies the proxy to all the items of a response: bodies
+// (images and embedded media) and audio/video/image enclosures.
 func (s *Server) rewriteAll(items []store.Item) {
 	for i := range items {
 		items[i].Body = s.rewriteImages(items[i].Body)
@@ -55,10 +55,10 @@ func (s *Server) mediaMime(m string) bool {
 		strings.HasPrefix(m, "image/")
 }
 
-// rewriteFavicon apunta al endpoint público del favicon servido desde el cache
-// del backend (/favicon/{urlHash}) en vez de firmar la URL del origen. Así el
-// cache es la única fuente (no se re-fetchea por instancia) y el <img> del
-// navegador no necesita auth (la ruta es pública, solo lee de disco).
+// rewriteFavicon points to the public favicon endpoint served from the backend
+// cache (/favicon/{urlHash}) instead of signing the origin URL. This way the
+// cache is the only source (it is not re-fetched per instance) and the browser
+// <img> does not need auth (the route is public, it only reads from disk).
 func (s *Server) rewriteFavicon(urlHash string) string {
 	if urlHash == "" || s.favicons == nil {
 		return ""

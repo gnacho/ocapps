@@ -8,7 +8,7 @@ import (
 	"fmt"
 )
 
-// Share: un artículo expuesto con URL pública (token aleatorio).
+// Share: an article exposed with a public URL (random token).
 type Share struct {
 	Token  string `json:"token"`
 	ItemID int64  `json:"itemId"`
@@ -23,8 +23,8 @@ func newShareToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// CreateShare habilita (o devuelve la existente) la URL pública del item.
-// Idempotente por (user, item).
+// CreateShare enables (or returns the existing one) the public URL of the item.
+// Idempotent by (user, item).
 func (s *Store) CreateShare(userID, itemID int64) (string, error) {
 	var tok string
 	err := s.db.QueryRow(`SELECT token FROM shared_items WHERE user_id = ? AND item_id = ?`, userID, itemID).Scan(&tok)
@@ -44,19 +44,19 @@ func (s *Store) CreateShare(userID, itemID int64) (string, error) {
 			userID, itemID, tok); err == nil {
 			return tok, nil
 		}
-		// colisión de token: reintentar con otro aleatorio
+		// token collision: retry with another random one
 	}
-	return "", fmt.Errorf("no se pudo crear el token de compartición")
+	return "", fmt.Errorf("could not create the share token")
 }
 
-// DeleteShare deshabilita la URL pública del item.
+// DeleteShare disables the public URL of the item.
 func (s *Store) DeleteShare(userID, itemID int64) error {
 	_, err := s.db.Exec(`DELETE FROM shared_items WHERE user_id = ? AND item_id = ?`, userID, itemID)
 	return err
 }
 
-// ItemByShareToken resuelve el item compartido y su feed desde el token
-// público. ErrNotFound si el token no existe.
+// ItemByShareToken resolves the shared item and its feed from the public
+// token. ErrNotFound if the token does not exist.
 func (s *Store) ItemByShareToken(token string) (*Item, *FeedRow, error) {
 	q := `SELECT ` + itemsCols + `
 		FROM shared_items sh

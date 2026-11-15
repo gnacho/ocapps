@@ -1,26 +1,26 @@
--- Baseline del esquema de photos (SPEC §5.3), ya multi-owner (H8).
+-- Baseline of the photos schema (SPEC §5.3), already multi-owner (H8).
 --
--- Es el esquema completo actual de ocphotos tal y como queda en una
--- memories.db viva: los CREATE TABLE originales + los dos ALTER históricos
--- (is_archived, phash) ya incorporados al CREATE de assets, más la columna
--- owner de H8 (multi-tenant): una BD NUEVA nace ya con el esquema
--- multi-owner y convergerá a user_version=2 cuando Migrate aplique también
--- 002_multiowner.sql (en una BD nueva 002 reconstruye tablas vacías: no-op
--- efectivo). Las BDs VIVAS pre-H8 se adoptan con Baseline(1) sin ejecutar
--- este SQL y es 002 quien les añade owner (rebuild de assets + ALTER de
+-- It is the current full schema of ocphotos as it ends up in a live
+-- memories.db: the original CREATE TABLE statements plus the two historical
+-- ALTERs (is_archived, phash) already folded into the assets CREATE, plus the
+-- H8 owner column (multi-tenant): a NEW database is born with the multi-owner
+-- schema and converges to user_version=2 when Migrate also applies
+-- 002_multiowner.sql (on a new database 002 rebuilds empty tables: effective
+-- no-op). LIVE pre-H8 databases are adopted with Baseline(1) without running
+-- this SQL and it is 002 that adds owner to them (rebuild of assets + ALTER of
 -- albums).
 --
--- Regla (§5.3): toda migración futura es un fichero 003_*.sql inmutable;
--- prohibido ALTERs tolerantes a error fuera del runner.
+-- Rule (§5.3): every future migration is an immutable 003_*.sql file.
+-- Tolerant ALTERs outside the runner are forbidden.
 
 CREATE TABLE IF NOT EXISTS assets (
     id          INTEGER PRIMARY KEY,
-    owner       TEXT NOT NULL DEFAULT '',  -- oc_id del dueño (H8); '' = era single-tenant, pendiente de backfill
-    path        TEXT NOT NULL,             -- ruta WebDAV completa (incluye el space-UUID del usuario)
+    owner       TEXT NOT NULL DEFAULT '',  -- oc_id of the owner (H8), '' = single-tenant era, pending backfill
+    path        TEXT NOT NULL,             -- full WebDAV path (includes the user space UUID)
     etag        TEXT NOT NULL,
     filename    TEXT NOT NULL,
     media_type  TEXT NOT NULL DEFAULT 'image',
-    taken_at    INTEGER NOT NULL,          -- unix epoch (EXIF o mtime)
+    taken_at    INTEGER NOT NULL,          -- unix epoch (EXIF or mtime)
     exif_done   INTEGER NOT NULL DEFAULT 0,
     width       INTEGER,
     height      INTEGER,
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS assets (
     created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
     is_archived INTEGER NOT NULL DEFAULT 0,
     phash       TEXT,
-    UNIQUE (owner, path)                   -- el mismo path puede coexistir en dos owners
+    UNIQUE (owner, path)                   -- the same path can coexist under two owners
 );
 CREATE INDEX IF NOT EXISTS assets_owner_taken ON assets (owner, taken_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS assets_owner_geo   ON assets (owner, lat, lon) WHERE deleted_at IS NULL AND lat IS NOT NULL;
@@ -48,8 +48,9 @@ CREATE TABLE IF NOT EXISTS scan_state (
     value TEXT
 );
 
--- albums sin owner en el baseline: 002 lo añade con ALTER (válido para la BD
--- nueva y para la viva adoptada; el estado final tras 001+002 es idéntico).
+-- albums without owner in the baseline: 002 adds it with an ALTER (valid for
+-- the new database and for the adopted live one, the final state after
+-- 001+002 is identical).
 CREATE TABLE IF NOT EXISTS albums (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL,
@@ -70,9 +71,9 @@ CREATE TABLE IF NOT EXISTS asset_tags (
 );
 CREATE INDEX IF NOT EXISTS asset_tags_tag ON asset_tags (tag);
 
--- caché de geocodificación inversa (Lugares): clave = coords redondeadas.
--- SIN owner a propósito (H8): es una caché global de nombres de lugares
--- (dato público de Nominatim), no información personal del usuario.
+-- reverse geocoding cache (Places): key = rounded coords.
+-- WITHOUT owner on purpose (H8): it is a global cache of place names
+-- (public Nominatim data), not personal information of the user.
 CREATE TABLE IF NOT EXISTS geocode (
     lat_key REAL NOT NULL,
     lon_key REAL NOT NULL,

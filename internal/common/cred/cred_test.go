@@ -25,42 +25,43 @@ func TestLoadOrCreateSecretCrea0600(t *testing.T) {
 		t.Fatal(err)
 	}
 	if perm := fi.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("permisos: got %o, want 600", perm)
+		t.Fatalf("permissions: got %o, want 600", perm)
 	}
-	// no queda fichero temporal
+	// no temporary file is left behind
 	if _, err := os.Stat(path + ".tmp"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("tmp residual: %v", err)
+		t.Fatalf("residual tmp: %v", err)
 	}
 
-	// segunda carga: reutiliza el mismo secreto
+	// second load: it reuses the same secret
 	s2, err := LoadOrCreateSecret(path)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	if string(s1) != string(s2) {
-		t.Fatal("no reutiliza el secreto persistido")
+		t.Fatal("it does not reuse the persisted secret")
 	}
 }
 
 func TestLoadOrCreateSecretLongitudInvalida(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secret")
-	if err := os.WriteFile(path, []byte("corto"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("short"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadOrCreateSecret(path); err == nil {
-		t.Fatal("esperaba error por longitud inválida")
-	} else if !strings.Contains(err.Error(), "mínimo") {
-		t.Fatalf("error inesperado: %v", err)
+		t.Fatal("expected an error for invalid length")
+	} else if !strings.Contains(err.Error(), "minimum") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-// TestCipherVectorAESGCM: vector fijo construido con la construcción exacta
-// del algoritmo (base64(nonce|AES-256-GCM(key, plaintext))). Garantiza que el
-// formato no cambia respecto a los datos ya cifrados por ocnews.
+// TestCipherVectorAESGCM: fixed vector built with the exact construction of
+// the algorithm (base64(nonce|AES-256-GCM(key, plaintext))). It guarantees
+// that the format does not change with respect to data already encrypted by
+// ocnews.
 func TestCipherVectorAESGCM(t *testing.T) {
-	key := []byte("0123456789abcdef0123456789abcdef") // 32 bytes fijos
-	nonce := []byte("nonce-fijo12")                   // 12 bytes (GCM estándar)
-	plain := "user:app-token-secreto"
+	key := []byte("0123456789abcdef0123456789abcdef") // 32 fixed bytes
+	nonce := []byte("nonce-abcdef")                   // 12 bytes (standard GCM)
+	plain := "user:app-token-secret"
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -78,39 +79,39 @@ func TestCipherVectorAESGCM(t *testing.T) {
 	}
 	got, err := c.Decrypt(want)
 	if err != nil {
-		t.Fatalf("Decrypt del vector fijo: %v", err)
+		t.Fatalf("Decrypt of the fixed vector: %v", err)
 	}
 	if got != plain {
 		t.Fatalf("Decrypt: got %q, want %q", got, plain)
 	}
 
-	// roundtrip con nonce aleatorio
+	// roundtrip with a random nonce
 	enc, err := c.Encrypt(plain)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if enc == want {
-		t.Fatal("Encrypt no usa nonce aleatorio")
+		t.Fatal("Encrypt does not use a random nonce")
 	}
 	dec, err := c.Decrypt(enc)
 	if err != nil || dec != plain {
 		t.Fatalf("roundtrip: %q %v", dec, err)
 	}
 
-	// cadena vacía pasa intacta; basura → ErrDecrypt
+	// the empty string goes through untouched, garbage -> ErrDecrypt
 	if s, err := c.Encrypt(""); s != "" || err != nil {
 		t.Fatalf("Encrypt(\"\"): %q %v", s, err)
 	}
 	if _, err := c.Decrypt("!!!"); !errors.Is(err, ErrDecrypt) {
-		t.Fatalf("Decrypt basura: %v", err)
+		t.Fatalf("Decrypt garbage: %v", err)
 	}
 	if _, err := c.Decrypt(enc[:len(enc)-4] + "AAAA"); !errors.Is(err, ErrDecrypt) {
-		t.Fatalf("Decrypt manipulado: %v", err)
+		t.Fatalf("Decrypt tampered: %v", err)
 	}
 }
 
 func TestNewCipherRechazaClaveCorta(t *testing.T) {
-	if _, err := NewCipher([]byte("corta")); err == nil {
-		t.Fatal("esperaba error por clave corta")
+	if _, err := NewCipher([]byte("short")); err == nil {
+		t.Fatal("expected an error for a short key")
 	}
 }

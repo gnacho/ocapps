@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// allVars: todas las variables del esquema §3.2 (nuevas y legacy). Cada test
-// las DESDEFINE para aislar el caso (M9: una OCAPPS_* definida vacía ya NO
-// equivale a no definida — blanquear con Setenv(k, "") no sirve).
+// allVars: every variable of the §3.2 schema (new and legacy). Each test
+// UNSETS them to isolate the case (M9: an OCAPPS_* defined as empty no longer
+// counts as not defined, so blanking with Setenv(k, "") does not work).
 var allVars = []string{
 	"OCAPPS_OPENCLOUD_URL", "OCNEWS_OPENCOLOUD_URL", "OCNOTES_GRAPH_URL", "OC_BASE_URL",
 	"OCAPPS_LISTEN_ADDR", "OCNEWS_ADDR", "OCNOTES_ADDR", "LISTEN_ADDR",
@@ -35,8 +35,8 @@ var allVars = []string{
 	"WEB_DIR",
 }
 
-// unsetEnv DESDEFINE cada variable y restaura su valor previo al terminar
-// el test (equivalente a t.Setenv pero para "no definida").
+// unsetEnv UNSETS every variable and restores its previous value when the
+// test ends (equivalent to t.Setenv but for "not defined").
 func unsetEnv(t *testing.T, keys ...string) {
 	t.Helper()
 	for _, k := range keys {
@@ -53,7 +53,7 @@ func unsetEnv(t *testing.T, keys ...string) {
 	}
 }
 
-// base prepara un entorno limpio y válido (auth opencloud + data dir propio).
+// base prepares a clean and valid environment (opencloud auth + own data dir).
 func base(t *testing.T) {
 	t.Helper()
 	unsetEnv(t, allVars...)
@@ -74,15 +74,15 @@ func legacyUsed(cfg *Config, legacy string) bool {
 
 func TestEmptyScanRootFallsBackToDefault(t *testing.T) {
 	base(t)
-	// Una línea en blanco en el env no debe convertirse en "recorrer todo el
-	// espacio" (issue #36): vacío = sin configurar.
+	// A blank line in the env must not become "walk the whole space"
+	// (issue #36): empty = not configured.
 	t.Setenv("OCAPPS_PHOTOS_SCAN_ROOT", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Photos.ScanRoot != DefaultScanRoot {
-		t.Errorf("ScanRoot vacío: got %q, want %q", cfg.Photos.ScanRoot, DefaultScanRoot)
+		t.Errorf("empty ScanRoot: got %q, want %q", cfg.Photos.ScanRoot, DefaultScanRoot)
 	}
 
 	t.Setenv("OCAPPS_PHOTOS_SCAN_ROOT", "/")
@@ -91,7 +91,7 @@ func TestEmptyScanRootFallsBackToDefault(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Photos.ScanRoot != "/" {
-		t.Errorf("ScanRoot explícito: got %q, want %q", cfg.Photos.ScanRoot, "/")
+		t.Errorf("explicit ScanRoot: got %q, want %q", cfg.Photos.ScanRoot, "/")
 	}
 }
 
@@ -111,9 +111,9 @@ func TestDefaults(t *testing.T) {
 		t.Errorf("LogLevel/AuthMode: %q %q", cfg.LogLevel, cfg.AuthMode)
 	}
 	if !cfg.NewsEnabled || !cfg.NotesEnabled || !cfg.PhotosEnabled {
-		t.Error("enabled por defecto debe ser true x3")
+		t.Error("default enabled must be true x3")
 	}
-	// subdirs por módulo (§5.1)
+	// subdirs per module (§5.1)
 	for m, dir := range map[string]string{"news": cfg.NewsDataDir, "notes": cfg.NotesDataDir, "photos": cfg.PhotosDataDir} {
 		if !strings.HasSuffix(dir, string([]byte{'/'})+m) {
 			t.Errorf("%sDataDir: %q", m, dir)
@@ -141,40 +141,40 @@ func TestDefaults(t *testing.T) {
 		}
 	}
 	if len(cfg.Legacy) != 0 {
-		t.Errorf("sin legacy esperada: %+v", cfg.Legacy)
+		t.Errorf("no legacy expected: %+v", cfg.Legacy)
 	}
 }
 
-// TestPrecedenciaNuevaSobreLegacy: para cada fila de §3.2 con legacy, el
-// valor OCAPPS_* gana al legacy, el legacy gana al default, y usar legacy
-// queda registrado (warning §3.1).
-func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
+// TestNewVarPrecedenceOverLegacy: for every §3.2 row with a legacy one, the
+// OCAPPS_* value wins over the legacy one, the legacy one wins over the
+// default, and using a legacy one is recorded (warning §3.1).
+func TestNewVarPrecedenceOverLegacy(t *testing.T) {
 	cases := []struct {
 		name      string
 		nueva     string
 		legacy    string
-		setNueva  string // "" = no se define la nueva
+		setNueva  string // "" = the new one is not defined
 		setLegacy string
 		check     func(t *testing.T, cfg *Config)
 	}{
-		{"opencloud_url nueva gana", "OCAPPS_OPENCLOUD_URL", "OCNEWS_OPENCOLOUD_URL",
+		{"new opencloud_url wins", "OCAPPS_OPENCLOUD_URL", "OCNEWS_OPENCOLOUD_URL",
 			"https://nueva.example.com", "https://legacy.example.com",
 			func(t *testing.T, c *Config) {
 				if c.OpenCloudURL != "https://nueva.example.com" {
 					t.Errorf("got %q", c.OpenCloudURL)
 				}
 				if legacyUsed(c, "OCNEWS_OPENCOLOUD_URL") {
-					t.Error("legacy registrada sin usarse")
+					t.Error("legacy recorded without being used")
 				}
 			}},
 		{"opencloud_url legacy typo", "OCAPPS_OPENCLOUD_URL", "OCNEWS_OPENCOLOUD_URL",
 			"", "https://legacy.example.com/",
 			func(t *testing.T, c *Config) {
-				if c.OpenCloudURL != "https://legacy.example.com" { // trailing / recortada
+				if c.OpenCloudURL != "https://legacy.example.com" { // trailing / trimmed
 					t.Errorf("got %q", c.OpenCloudURL)
 				}
 				if !legacyUsed(c, "OCNEWS_OPENCOLOUD_URL") {
-					t.Error("legacy typo no registrada")
+					t.Error("legacy typo not recorded")
 				}
 			}},
 		{"oc_base_url legacy", "OCAPPS_OPENCLOUD_URL", "OC_BASE_URL",
@@ -184,7 +184,7 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 					t.Errorf("got %q", c.OpenCloudURL)
 				}
 				if !legacyUsed(c, "OC_BASE_URL") {
-					t.Error("OC_BASE_URL no registrada")
+					t.Error("OC_BASE_URL not recorded")
 				}
 			}},
 		{"log_level legacy", "OCAPPS_LOG_LEVEL", "OCNEWS_LOG_LEVEL",
@@ -230,11 +230,11 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 					t.Errorf("got %d", c.News.RetentionDays)
 				}
 			}},
-		{"retention 0 desactiva", "OCAPPS_NEWS_RETENTION_DAYS", "OCNEWS_RETENTION_DAYS",
+		{"retention 0 disables", "OCAPPS_NEWS_RETENTION_DAYS", "OCNEWS_RETENTION_DAYS",
 			"0", "30",
 			func(t *testing.T, c *Config) {
 				if c.News.RetentionDays != 0 || c.News.Retention() != 0 {
-					t.Errorf("retención no desactivada: %+v", c.News)
+					t.Errorf("retention not disabled: %+v", c.News)
 				}
 			}},
 		{"ntfy_url legacy", "OCAPPS_NEWS_NTFY_URL", "OCNEWS_NTFY_URL",
@@ -245,9 +245,9 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 				}
 			}},
 		{"ntfy_topic legacy", "OCAPPS_NEWS_NTFY_TOPIC", "OCNEWS_NTFY_TOPIC",
-			"", "mi-topic",
+			"", "my-topic",
 			func(t *testing.T, c *Config) {
-				if c.News.NtfyTopic != "mi-topic" || !legacyUsed(c, "OCNEWS_NTFY_TOPIC") {
+				if c.News.NtfyTopic != "my-topic" || !legacyUsed(c, "OCNEWS_NTFY_TOPIC") {
 					t.Errorf("got %q", c.News.NtfyTopic)
 				}
 			}},
@@ -258,14 +258,14 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 					t.Errorf("got %q", c.News.PublicURL)
 				}
 			}},
-		{"auth_user legacy genérica", "OCAPPS_NEWS_AUTH_USER", "AUTH_USER",
+		{"generic auth_user legacy", "OCAPPS_NEWS_AUTH_USER", "AUTH_USER",
 			"", "admin",
 			func(t *testing.T, c *Config) {
 				if c.News.AuthUser != "admin" || !legacyUsed(c, "AUTH_USER") {
 					t.Errorf("got %q", c.News.AuthUser)
 				}
 			}},
-		{"auth_pass legacy genérica", "OCAPPS_NEWS_AUTH_PASS", "AUTH_PASS",
+		{"generic auth_pass legacy", "OCAPPS_NEWS_AUTH_PASS", "AUTH_PASS",
 			"", "s3cret",
 			func(t *testing.T, c *Config) {
 				if c.News.AuthPass != "s3cret" || !legacyUsed(c, "AUTH_PASS") {
@@ -301,9 +301,9 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 				}
 			}},
 		{"scan_root legacy", "OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT",
-			"", "Imágenes",
+			"", "Images",
 			func(t *testing.T, c *Config) {
-				if c.Photos.ScanRoot != "Imágenes" || !legacyUsed(c, "SCAN_ROOT") {
+				if c.Photos.ScanRoot != "Images" || !legacyUsed(c, "SCAN_ROOT") {
 					t.Errorf("got %q", c.Photos.ScanRoot)
 				}
 			}},
@@ -318,8 +318,8 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			base(t)
-			// la variable nueva del caso: con su valor, o DESDEFINIDA
-			// (base define algunas) para que gane la legacy
+			// the new variable of the case: with its value, or UNSET
+			// (base defines some) so that the legacy one wins
 			if tc.setNueva != "" {
 				t.Setenv(tc.nueva, tc.setNueva)
 			} else {
@@ -337,11 +337,11 @@ func TestPrecedenciaNuevaSobreLegacy(t *testing.T) {
 	}
 }
 
-// TestNuevaVaciaPrevaleceSobreLegacy (M9): una OCAPPS_* definida
-// EXPLÍCITAMENTE vacía ignora la legacy (es la forma de anular una legacy
-// heredada del entorno); una legacy vacía sigue contando como no definida.
-func TestNuevaVaciaPrevaleceSobreLegacy(t *testing.T) {
-	t.Run("string: nueva vacía anula la legacy", func(t *testing.T) {
+// TestEmptyNewVarWinsOverLegacy (M9): an OCAPPS_* explicitly defined as
+// empty ignores the legacy one (it is the way to cancel a legacy one inherited
+// from the environment), an empty legacy one still counts as not defined.
+func TestEmptyNewVarWinsOverLegacy(t *testing.T) {
+	t.Run("string: empty new one cancels the legacy one", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_NEWS_NTFY_TOPIC", "")
 		t.Setenv("OCNEWS_NTFY_TOPIC", "topic-legacy")
@@ -350,13 +350,13 @@ func TestNuevaVaciaPrevaleceSobreLegacy(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		if cfg.News.NtfyTopic != "" {
-			t.Fatalf("NtfyTopic: %q (la nueva vacía debe prevalecer sobre la legacy)", cfg.News.NtfyTopic)
+			t.Fatalf("NtfyTopic: %q (the empty new one must prevail over the legacy one)", cfg.News.NtfyTopic)
 		}
 		if legacyUsed(cfg, "OCNEWS_NTFY_TOPIC") {
-			t.Error("legacy registrada como usada con la nueva definida (vacía)")
+			t.Error("legacy recorded as used with the new one defined (empty)")
 		}
 	})
-	t.Run("duration: nueva vacía bloquea la legacy y cae al default", func(t *testing.T) {
+	t.Run("duration: empty new one blocks the legacy one and falls back to the default", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_NEWS_FEED_INTERVAL", "")
 		t.Setenv("OCNEWS_FEED_INTERVAL", "1h")
@@ -368,10 +368,10 @@ func TestNuevaVaciaPrevaleceSobreLegacy(t *testing.T) {
 			t.Fatalf("FeedInterval: %s, want default %s", cfg.News.FeedInterval, DefaultFeedInterval)
 		}
 		if legacyUsed(cfg, "OCNEWS_FEED_INTERVAL") {
-			t.Error("legacy registrada como usada con la nueva definida (vacía)")
+			t.Error("legacy recorded as used with the new one defined (empty)")
 		}
 	})
-	t.Run("legacy vacía = no definida (comportamiento conservado)", func(t *testing.T) {
+	t.Run("empty legacy = not defined (behavior kept)", func(t *testing.T) {
 		base(t)
 		unsetEnv(t, "OCAPPS_NEWS_NTFY_TOPIC")
 		t.Setenv("OCNEWS_NTFY_TOPIC", "")
@@ -380,16 +380,16 @@ func TestNuevaVaciaPrevaleceSobreLegacy(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		if cfg.News.NtfyTopic != "" {
-			t.Fatalf("NtfyTopic: %q (legacy vacía no debe contar)", cfg.News.NtfyTopic)
+			t.Fatalf("NtfyTopic: %q (an empty legacy must not count)", cfg.News.NtfyTopic)
 		}
 		if legacyUsed(cfg, "OCNEWS_NTFY_TOPIC") {
-			t.Error("legacy vacía registrada como usada")
+			t.Error("empty legacy recorded as used")
 		}
 	})
 }
 
-// TestOCNotesGraphURLStrip: OCNOTES_GRAPH_URL es la URL completa .../graph/v1.0/me;
-// al mapearla se deriva la raíz (§3.2 †).
+// TestOCNotesGraphURLStrip: OCNOTES_GRAPH_URL is the full URL .../graph/v1.0/me,
+// when mapping it the root is derived (§3.2 †).
 func TestOCNotesGraphURLStrip(t *testing.T) {
 	base(t)
 	unsetEnv(t, "OCAPPS_OPENCLOUD_URL")
@@ -399,13 +399,13 @@ func TestOCNotesGraphURLStrip(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.OpenCloudURL != "https://notes.example.com" {
-		t.Fatalf("raíz no derivada: %q", cfg.OpenCloudURL)
+		t.Fatalf("root not derived: %q", cfg.OpenCloudURL)
 	}
 	if !legacyUsed(cfg, "OCNOTES_GRAPH_URL") {
-		t.Fatal("legacy no registrada")
+		t.Fatal("legacy not recorded")
 	}
 
-	// si no trae el sufijo, se usa tal cual
+	// if it does not carry the suffix, it is used as is
 	base(t)
 	unsetEnv(t, "OCAPPS_OPENCLOUD_URL")
 	t.Setenv("OCNOTES_GRAPH_URL", "https://notes.example.com/")
@@ -418,8 +418,8 @@ func TestOCNotesGraphURLStrip(t *testing.T) {
 	}
 }
 
-// TestListenAddrLegacyNoHeredaPuerto: las legacy de addr solo loguean
-// (§3.2); el puerto no se hereda.
+// TestListenAddrLegacyNoHeredaPuerto: the addr legacy ones only log (§3.2),
+// the port is not inherited.
 func TestListenAddrLegacyNoHeredaPuerto(t *testing.T) {
 	base(t)
 	t.Setenv("OCNEWS_ADDR", ":8094")
@@ -430,15 +430,15 @@ func TestListenAddrLegacyNoHeredaPuerto(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.ListenAddr != DefaultListenAddr {
-		t.Fatalf("puerto heredado indebidamente: %q", cfg.ListenAddr)
+		t.Fatalf("port inherited improperly: %q", cfg.ListenAddr)
 	}
 	for _, legacy := range []string{"OCNEWS_ADDR", "OCNOTES_ADDR", "LISTEN_ADDR"} {
 		if !legacyUsed(cfg, legacy) {
-			t.Errorf("%s no registrada", legacy)
+			t.Errorf("%s not recorded", legacy)
 		}
 	}
 
-	// la nueva sí manda
+	// the new one does take precedence
 	base(t)
 	t.Setenv("OCAPPS_LISTEN_ADDR", "0.0.0.0:9000")
 	cfg2, err := Load()
@@ -450,9 +450,9 @@ func TestListenAddrLegacyNoHeredaPuerto(t *testing.T) {
 	}
 }
 
-// TestDataDirLegacy: fallback común y overrides por módulo (transición suave).
+// TestDataDirLegacy: common fallback and per module overrides (smooth transition).
 func TestDataDirLegacy(t *testing.T) {
-	t.Run("legacy por módulo define la ruta de ese módulo", func(t *testing.T) {
+	t.Run("per module legacy sets the path of that module", func(t *testing.T) {
 		base(t)
 		legacyDir := t.TempDir() + "/ocnews"
 		unsetEnv(t, "OCAPPS_DATA_DIR")
@@ -461,10 +461,10 @@ func TestDataDirLegacy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.DataDir != legacyDir { // primera legacy en precedencia
+		if cfg.DataDir != legacyDir { // first legacy in precedence
 			t.Errorf("DataDir: %q", cfg.DataDir)
 		}
-		if cfg.NewsDataDir != legacyDir { // sin subdir: transición suave
+		if cfg.NewsDataDir != legacyDir { // no subdir: smooth transition
 			t.Errorf("NewsDataDir: %q", cfg.NewsDataDir)
 		}
 		if cfg.NotesDataDir != legacyDir+"/notes" {
@@ -474,7 +474,7 @@ func TestDataDirLegacy(t *testing.T) {
 			t.Errorf("PhotosDataDir: %q", cfg.PhotosDataDir)
 		}
 	})
-	t.Run("OCAPPS_DATA_DIR gana y cuelgan subdirs", func(t *testing.T) {
+	t.Run("OCAPPS_DATA_DIR wins and subdirs hang from it", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCNEWS_DATA_DIR", "/var/lib/ocnews")
 		dir := t.TempDir()
@@ -486,7 +486,7 @@ func TestDataDirLegacy(t *testing.T) {
 		if cfg.DataDir != dir {
 			t.Errorf("DataDir: %q", cfg.DataDir)
 		}
-		// la legacy por módulo sigue mandando para news (§3.2)
+		// the per module legacy one still wins for news (§3.2)
 		if cfg.NewsDataDir != "/var/lib/ocnews" {
 			t.Errorf("NewsDataDir: %q", cfg.NewsDataDir)
 		}
@@ -496,7 +496,7 @@ func TestDataDirLegacy(t *testing.T) {
 	})
 }
 
-// TestWebDirIgnorada: WEB_DIR eliminada (Q6) → warn "ignorada".
+// TestWebDirIgnorada: WEB_DIR removed (Q6) -> "ignored" warning.
 func TestWebDirIgnorada(t *testing.T) {
 	base(t)
 	t.Setenv("WEB_DIR", "/app/web")
@@ -505,20 +505,20 @@ func TestWebDirIgnorada(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if !legacyUsed(cfg, "WEB_DIR") {
-		t.Fatal("WEB_DIR no registrada")
+		t.Fatal("WEB_DIR not recorded")
 	}
 }
 
-// TestValidacionFatal: §3.3 — solo lo común es fatal.
+// TestValidacionFatal: §3.3 - only the common part is fatal.
 func TestValidacionFatal(t *testing.T) {
-	t.Run("opencloud sin URL", func(t *testing.T) {
+	t.Run("opencloud without URL", func(t *testing.T) {
 		base(t)
 		unsetEnv(t, "OCAPPS_OPENCLOUD_URL")
 		if _, err := Load(); err == nil {
-			t.Fatal("esperaba error fatal")
+			t.Fatal("expected a fatal error")
 		}
 	})
-	t.Run("modo local no exige URL", func(t *testing.T) {
+	t.Run("local mode does not require a URL", func(t *testing.T) {
 		base(t)
 		unsetEnv(t, "OCAPPS_OPENCLOUD_URL")
 		t.Setenv("OCAPPS_AUTH_MODE", "local")
@@ -526,58 +526,58 @@ func TestValidacionFatal(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 	})
-	t.Run("log level inválido", func(t *testing.T) {
+	t.Run("invalid log level", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_LOG_LEVEL", "trace")
 		if _, err := Load(); err == nil {
-			t.Fatal("esperaba error fatal")
+			t.Fatal("expected a fatal error")
 		}
 	})
-	t.Run("auth mode inválido", func(t *testing.T) {
+	t.Run("invalid auth mode", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_AUTH_MODE", "oidc")
 		if _, err := Load(); err == nil {
-			t.Fatal("esperaba error fatal")
+			t.Fatal("expected a fatal error")
 		}
 	})
-	t.Run("data dir no escribible", func(t *testing.T) {
+	t.Run("data dir not writable", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_DATA_DIR", "/proc/ocapps-no-se-puede")
 		if _, err := Load(); err == nil {
-			t.Fatal("esperaba error fatal")
+			t.Fatal("expected a fatal error")
 		}
 	})
-	t.Run("enabled inválido", func(t *testing.T) {
+	t.Run("invalid enabled", func(t *testing.T) {
 		base(t)
-		t.Setenv("OCAPPS_NEWS_ENABLED", "tal vez")
+		t.Setenv("OCAPPS_NEWS_ENABLED", "maybe")
 		if _, err := Load(); err == nil {
-			t.Fatal("esperaba error fatal")
+			t.Fatal("expected a fatal error")
 		}
 	})
 }
 
-// TestErroresDeModuloNoFatales: durations inválidas de news y credenciales de
-// photos vacías degradan el módulo, no el proceso (§3.3).
-func TestErroresDeModuloNoFatales(t *testing.T) {
-	t.Run("duration inválida de news", func(t *testing.T) {
+// TestModuleErrorsAreNotFatal: invalid news durations and empty photos
+// credentials degrade the module, not the process (§3.3).
+func TestModuleErrorsAreNotFatal(t *testing.T) {
+	t.Run("invalid news duration", func(t *testing.T) {
 		base(t)
-		t.Setenv("OCAPPS_NEWS_FETCH_TIMEOUT", "no-es-una-duracion")
+		t.Setenv("OCAPPS_NEWS_FETCH_TIMEOUT", "not-a-duration")
 		cfg, err := Load()
 		if err != nil {
-			t.Fatalf("Load no debe ser fatal: %v", err)
+			t.Fatalf("Load must not be fatal: %v", err)
 		}
 		merr := cfg.ModuleErr("news")
 		if merr == nil || !strings.Contains(merr.Error(), "OCAPPS_NEWS_FETCH_TIMEOUT") {
 			t.Fatalf("ModuleErr(news): %v", merr)
 		}
 		if cfg.News.FetchTimeout != DefaultFetchTimeout {
-			t.Errorf("valor contaminado: %s", cfg.News.FetchTimeout)
+			t.Errorf("contaminated value: %s", cfg.News.FetchTimeout)
 		}
 		if cfg.ModuleErr("photos") != nil || cfg.ModuleErr("notes") != nil {
-			t.Error("otros módulos no deben degradarse")
+			t.Error("other modules must not degrade")
 		}
 	})
-	t.Run("duration legacy inválida nombra la legacy", func(t *testing.T) {
+	t.Run("invalid legacy duration names the legacy one", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCNEWS_FEED_INTERVAL", "xyz")
 		cfg, err := Load()
@@ -588,7 +588,7 @@ func TestErroresDeModuloNoFatales(t *testing.T) {
 			t.Fatalf("ModuleErr(news): %v", merr)
 		}
 		if !legacyUsed(cfg, "OCNEWS_FEED_INTERVAL") {
-			t.Error("legacy inválida no registrada")
+			t.Error("invalid legacy not recorded")
 		}
 	})
 	t.Run("max_gap < feed_interval", func(t *testing.T) {
@@ -600,10 +600,10 @@ func TestErroresDeModuloNoFatales(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		if cfg.ModuleErr("news") == nil {
-			t.Fatal("esperaba ModuleErr(news)")
+			t.Fatal("expected ModuleErr(news)")
 		}
 	})
-	t.Run("retention negativa", func(t *testing.T) {
+	t.Run("negative retention", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_NEWS_RETENTION_DAYS", "-5")
 		cfg, err := Load()
@@ -611,61 +611,61 @@ func TestErroresDeModuloNoFatales(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		if cfg.ModuleErr("news") == nil {
-			t.Fatal("esperaba ModuleErr(news)")
+			t.Fatal("expected ModuleErr(news)")
 		}
 	})
-	// H8: photos es multi-tenant; OCAPPS_PHOTOS_USER/APP_TOKEN ya no son
-	// obligatorios y su ausencia NO degrada el módulo.
-	t.Run("photos sin user/token es válido (H8)", func(t *testing.T) {
+	// H8: photos is multi-tenant, OCAPPS_PHOTOS_USER/APP_TOKEN are no longer
+	// mandatory and their absence does NOT degrade the module.
+	t.Run("photos without user/token is valid (H8)", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_PHOTOS_USER", "")
 		t.Setenv("OCAPPS_PHOTOS_APP_TOKEN", "")
 		cfg, err := Load()
 		if err != nil {
-			t.Fatalf("Load no debe ser fatal: %v", err)
+			t.Fatalf("Load must not be fatal: %v", err)
 		}
 		if cfg.ModuleErr("photos") != nil {
-			t.Fatalf("sin user/token ya no degrada el módulo (H8): %v", cfg.ModuleErr("photos"))
+			t.Fatalf("without user/token it no longer degrades the module (H8): %v", cfg.ModuleErr("photos"))
 		}
 		if len(cfg.Photos.Users) != 0 {
-			t.Errorf("Users sin nada configurado: %+v", cfg.Photos.Users)
+			t.Errorf("Users with nothing configured: %+v", cfg.Photos.Users)
 		}
 		if cfg.ModuleErr("news") != nil {
-			t.Error("news no debe degradarse")
+			t.Error("news must not degrade")
 		}
 	})
-	// H8: el Bearer estático DEPRECATED sin USER no tiene identidad -> error.
-	t.Run("photos token estático sin user (H8)", func(t *testing.T) {
+	// H8: the DEPRECATED static Bearer without USER has no identity -> error.
+	t.Run("static photos token without user (H8)", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_PHOTOS_USER", "")
 		t.Setenv("OCAPPS_PHOTOS_APP_TOKEN", "")
 		t.Setenv("OCAPPS_PHOTOS_TOKEN", "static-tok")
 		cfg, err := Load()
 		if err != nil {
-			t.Fatalf("Load no debe ser fatal: %v", err)
+			t.Fatalf("Load must not be fatal: %v", err)
 		}
 		merr := cfg.ModuleErr("photos")
 		if merr == nil || !strings.Contains(merr.Error(), "OCAPPS_PHOTOS_TOKEN") {
 			t.Fatalf("ModuleErr(photos): %v", merr)
 		}
 		if cfg.ModuleErr("news") != nil {
-			t.Error("news no debe degradarse")
+			t.Error("news must not degrade")
 		}
 	})
-	// H8: OCAPPS_PHOTOS_USERS malformado -> error del módulo (D3).
-	t.Run("photos users malformado (H8)", func(t *testing.T) {
+	// H8: malformed OCAPPS_PHOTOS_USERS -> module error (D3).
+	t.Run("malformed photos users (H8)", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_PHOTOS_USERS", "alice:tok1,bob-sin-token")
 		cfg, err := Load()
 		if err != nil {
-			t.Fatalf("Load no debe ser fatal: %v", err)
+			t.Fatalf("Load must not be fatal: %v", err)
 		}
 		merr := cfg.ModuleErr("photos")
 		if merr == nil || !strings.Contains(merr.Error(), "OCAPPS_PHOTOS_USERS") {
 			t.Fatalf("ModuleErr(photos): %v", merr)
 		}
 	})
-	t.Run("photos disabled no exige credenciales", func(t *testing.T) {
+	t.Run("photos disabled does not require credentials", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_PHOTOS_USER", "")
 		t.Setenv("OCAPPS_PHOTOS_APP_TOKEN", "")
@@ -675,13 +675,13 @@ func TestErroresDeModuloNoFatales(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		if cfg.PhotosEnabled {
-			t.Fatal("photos debe estar disabled")
+			t.Fatal("photos must be disabled")
 		}
 		if cfg.ModuleErr("photos") != nil {
 			t.Fatalf("ModuleErr(photos): %v", cfg.ModuleErr("photos"))
 		}
 	})
-	t.Run("scan_every inválido", func(t *testing.T) {
+	t.Run("invalid scan_every", func(t *testing.T) {
 		base(t)
 		t.Setenv("SCAN_EVERY", "-5m")
 		cfg, err := Load()
@@ -689,15 +689,15 @@ func TestErroresDeModuloNoFatales(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		if cfg.ModuleErr("photos") == nil {
-			t.Fatal("esperaba ModuleErr(photos)")
+			t.Fatal("expected ModuleErr(photos)")
 		}
 	})
 }
 
-// TestPhotosUsers: parseo de OCAPPS_PHOTOS_USERS y pliegue del par legacy
-// USER+APP_TOKEN en la misma lista (H8 §6.2).
+// TestPhotosUsers: parsing of OCAPPS_PHOTOS_USERS and folding of the legacy
+// USER+APP_TOKEN pair into the same list (H8 §6.2).
 func TestPhotosUsers(t *testing.T) {
-	t.Run("varios usuarios", func(t *testing.T) {
+	t.Run("several users", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_PHOTOS_USER", "")
 		t.Setenv("OCAPPS_PHOTOS_APP_TOKEN", "")
@@ -714,17 +714,17 @@ func TestPhotosUsers(t *testing.T) {
 			t.Fatalf("Users: %+v", cfg.Photos.Users)
 		}
 	})
-	t.Run("pliegue legacy", func(t *testing.T) {
-		base(t) // define OCAPPS_PHOTOS_USER=alice + APP_TOKEN=tok
+	t.Run("legacy folding", func(t *testing.T) {
+		base(t) // defines OCAPPS_PHOTOS_USER=alice + APP_TOKEN=tok
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
 		if len(cfg.Photos.Users) != 1 || cfg.Photos.Users[0] != (AppUser{User: "alice", Token: "tok"}) {
-			t.Fatalf("pliegue legacy: %+v", cfg.Photos.Users)
+			t.Fatalf("legacy folding: %+v", cfg.Photos.Users)
 		}
 	})
-	t.Run("legacy ya listado no se duplica", func(t *testing.T) {
+	t.Run("legacy already listed is not duplicated", func(t *testing.T) {
 		base(t)
 		t.Setenv("OCAPPS_PHOTOS_USERS", "alice:apptoken1,bob:apptoken2")
 		cfg, err := Load()
@@ -732,17 +732,17 @@ func TestPhotosUsers(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		if len(cfg.Photos.Users) != 2 {
-			t.Fatalf("alice ya estaba listada: %+v", cfg.Photos.Users)
+			t.Fatalf("alice was already listed: %+v", cfg.Photos.Users)
 		}
 	})
-	t.Run("entradas malformadas", func(t *testing.T) {
+	t.Run("malformed entries", func(t *testing.T) {
 		for _, raw := range []string{"alice", ":tok", "alice:", "alice:tok,bob"} {
 			if _, err := parsePhotosUsers(raw); err == nil {
-				t.Errorf("parsePhotosUsers(%q) debería fallar", raw)
+				t.Errorf("parsePhotosUsers(%q) should fail", raw)
 			}
 		}
 		if got, err := parsePhotosUsers(""); err != nil || got != nil {
-			t.Errorf("vacío: %v %v", got, err)
+			t.Errorf("empty: %v %v", got, err)
 		}
 	})
 }

@@ -23,7 +23,7 @@ func TestStripParams(t *testing.T) {
 
 func TestStripParamsCaseInsensitive(t *testing.T) {
 	if got := StripParams("https://x.com/a?UTM_SOURCE=rss"); got != "https://x.com/a" {
-		t.Errorf("params en mayúsculas no limpiados: %q", got)
+		t.Errorf("uppercase params not cleaned: %q", got)
 	}
 }
 
@@ -35,13 +35,13 @@ func TestRemovePixels(t *testing.T) {
 <p>fin</p>`
 	out := RemovePixels(body)
 	if contains(out, "R0lGODlh") {
-		t.Errorf("pixel data:gif no eliminado: %s", out)
+		t.Errorf("data:gif pixel not removed: %s", out)
 	}
 	if contains(out, "tracker.example") {
-		t.Errorf("pixel 1x1 no eliminado: %s", out)
+		t.Errorf("1x1 pixel not removed: %s", out)
 	}
 	if contains(out, "utm_source") {
-		t.Errorf("utm_source no limpiado: %s", out)
+		t.Errorf("utm_source not cleaned: %s", out)
 	}
 	if !contains(out, "site/a.jpg") {
 		t.Errorf("imagen real perdida: %s", out)
@@ -49,17 +49,17 @@ func TestRemovePixels(t *testing.T) {
 }
 
 func TestRemovePixelsNoImgs(t *testing.T) {
-	if got := RemovePixels("<p>sin img</p>"); got != "<p>sin img</p>" {
-		t.Errorf("body sin img alterado: %q", got)
+	if got := RemovePixels("<p>without img</p>"); got != "<p>without img</p>" {
+		t.Errorf("body without img altered: %q", got)
 	}
 }
 
 func TestIsTrackingPixel(t *testing.T) {
 	if !IsTrackingPixel(`<img src="about:blank" width="1" height="1">`) {
-		t.Error("about:blank 1x1 no detectado")
+		t.Error("about:blank 1x1 not detected")
 	}
 	if IsTrackingPixel(`<img src="https://site/a.jpg" width="400" height="300" alt="foto">`) {
-		t.Error("imagen real marcada como pixel")
+		t.Error("real image flagged as pixel")
 	}
 }
 

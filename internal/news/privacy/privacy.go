@@ -1,5 +1,5 @@
-// Package privacy: higiene de privacidad aplicada al ingesto de feeds —
-// elimina parámetros de tracking de las URLs y pixel trackers del HTML.
+// Package privacy: privacy hygiene applied to feed ingestion -
+// it removes URL tracking parameters and pixel trackers from the HTML.
 package privacy
 
 import (
@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-// trackingPrefixes: prefijos de parámetros de query que se descartan
-// (utm_*, fbclid, gclid…). Se comparan en minúsculas.
+// trackingPrefixes: query parameter prefixes that are dropped
+// (utm_*, fbclid, gclid...). They are compared in lowercase.
 var trackingPrefixes = []string{
-	"utm_",        // Google Analytics / campañas
+	"utm_",        // Google Analytics / campaigns
 	"fbclid",      // Facebook
 	"gclid",       // Google Ads
 	"gclsrc",      // Google Ads
@@ -46,8 +46,8 @@ var trackingPrefixes = []string{
 	"cmpid",    // varios
 }
 
-// StripParams elimina los parámetros de tracking de una URL conservando el
-// resto de la query. Devuelve la URL original si no se puede parsear.
+// StripParams removes the tracking parameters of a URL keeping the
+// rest of the query. It returns the original URL if it cannot be parsed.
 func StripParams(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" {
@@ -79,7 +79,7 @@ var (
 	pixelSrcRe = regexp.MustCompile(`(?i)^(data:image/(gif|png|webp|jpeg);base64,[a-z0-9+/=]{0,96}|about:blank)$`)
 )
 
-// attr devuelve el valor del atributo name de un tag (entrecomillado).
+// attr returns the value of the name attribute of a tag (quoted).
 func attr(tag, name string) string {
 	for _, m := range attrValRe.FindAllStringSubmatch(tag, -1) {
 		if strings.EqualFold(m[1], name) {
@@ -92,13 +92,13 @@ func attr(tag, name string) string {
 	return ""
 }
 
-// IsTrackingPixel decide si un tag <img> es un pixel de tracking: sin src
-// real, src transparente o dimensiones 1x1.
+// IsTrackingPixel decides whether an <img> tag is a tracking pixel: no
+// real src, transparent src or 1x1 dimensions.
 func IsTrackingPixel(tag string) bool {
 	lower := strings.ToLower(tag)
 	src := attr(tag, "src")
 	if src == "" {
-		// sin src ni srcset no es una imagen real
+		// no src and no srcset is not a real image
 		return attr(tag, "srcset") == ""
 	}
 	if pixelSrcRe.MatchString(src) {
@@ -117,7 +117,7 @@ func IsTrackingPixel(tag string) bool {
 	return strings.Contains(lower, "width:1px") && strings.Contains(lower, "height:1px")
 }
 
-// attrInt parsea un atributo numérico; -1 si no está o no es numérico.
+// attrInt parses a numeric attribute, -1 if it is missing or not numeric.
 func attrInt(lowerTag, name string) int {
 	v := attr(lowerTag, name)
 	if v == "" {
@@ -130,8 +130,8 @@ func attrInt(lowerTag, name string) int {
 	return n
 }
 
-// RemovePixels elimina los <img> que son trackers y limpia parámetros de
-// tracking de los src de las imágenes restantes. Best-effort con regex.
+// RemovePixels removes the <img> tags that are trackers and strips tracking
+// parameters from the src of the remaining images. Best-effort with regex.
 func RemovePixels(html string) string {
 	if !strings.Contains(strings.ToLower(html), "<img") {
 		return html

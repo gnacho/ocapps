@@ -1,5 +1,5 @@
-// Package geo — geocodificación inversa (Lugares) con caché en SQLite.
-// Usa Nominatim/OpenStreetMap: requiere User-Agent propio y max 1 req/s
+// Package geo - reverse geocoding (Places) with an SQLite cache.
+// Uses Nominatim/OpenStreetMap: it requires its own User-Agent and max 1 req/s
 // (https://operations.osmfoundation.org/policies/nominatim/).
 package geo
 
@@ -16,18 +16,18 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
-// nominatimURL es el endpoint por defecto; se puede sustituir en tests.
+// nominatimURL is the default endpoint, it can be replaced in tests.
 const nominatimURL = "https://nominatim.openstreetmap.org"
 
 type Geocoder struct {
 	client  *http.Client
 	store   *store.Store
 	log     *slog.Logger
-	baseURL string // endpoint Nominatim (tests: httptest)
+	baseURL string // Nominatim endpoint (tests: httptest)
 
-	// mu protege last (quick-win Q2: data race del throttle). Se mantiene
-	// durante la espera del throttle para que el 1 req/s se cumpla también
-	// con peticiones concurrentes.
+	// mu protects last (quick win Q2: data race in the throttle). It is held
+	// during the throttle wait so that 1 req/s is also honoured with
+	// concurrent requests.
 	mu   sync.Mutex
 	last time.Time
 }
@@ -46,14 +46,14 @@ func roundKey(v float64, decimals int) float64 {
 	return math.Round(v*p) / p
 }
 
-// Name devuelve el nombre del lugar (de caché o consultando Nominatim).
+// Name returns the place name (from the cache or by querying Nominatim).
 func (g *Geocoder) Name(ctx context.Context, lat, lon float64, decimals int) (string, error) {
 	latKey, lonKey := roundKey(lat, decimals), roundKey(lon, decimals)
 	if name, ok, err := g.store.GetGeocode(ctx, latKey, lonKey); err == nil && ok {
 		return name, nil
 	}
 
-	// throttle global 1 req/s (bajo lock, Q2)
+	// global throttle of 1 req/s (under the lock, Q2)
 	g.mu.Lock()
 	if since := time.Since(g.last); since < 1100*time.Millisecond {
 		select {

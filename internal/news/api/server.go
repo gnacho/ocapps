@@ -1,6 +1,6 @@
-// Package api: servidor HTTP del módulo news con la News REST API v1.3
-// (contrato: docs/development/api/api-v1-3.md del repo nextcloud/news)
-// bajo /index.php/apps/news/api/v1-3/ + la API propia /api/me|users.
+// Package api: HTTP server of the news module with the News REST API v1.3
+// (contract: docs/development/api/api-v1-3.md from the nextcloud/news repo)
+// under /index.php/apps/news/api/v1-3/ + our own /api/me|users API.
 package api
 
 import (
@@ -21,11 +21,11 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// Base path exacta que usan los clientes News (Nextcloud incluido).
+// Exact base path used by News clients (Nextcloud included).
 const Base = "/index.php/apps/news/api/v1-3"
 
-// reportedVersion es la versión de la app News que reportamos; los clientes
-// la usan para decidir features. Filtro de feeds requiere >= 28.4.0.
+// reportedVersion is the version of the News app we report, clients
+// use it to decide features. Feed filtering requires >= 28.4.0.
 const reportedVersion = "28.4.0"
 
 type Server struct {
@@ -48,10 +48,10 @@ func NewServer(s *store.Store, v auth.Validator, f feed.Fetcher, r *refresher.Re
 		extract: ex, cred: c, retention: retention, log: log}
 }
 
-// Handler monta el router completo standalone (tests y uso fuera del mux
-// unificado). En ocapps el módulo registra las rutas con RegisterOn sobre el
-// mux compartido; /healthz lo sirve common (SPEC §4.1), aquí solo se
-// mantiene para los tests del paquete.
+// Handler mounts the full standalone router (tests and use outside the
+// unified mux). In ocapps the module registers the routes with RegisterOn on
+// the shared mux, /healthz is served by common (SPEC §4.1), here it is only
+// kept for the package tests.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
@@ -62,54 +62,54 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// RegisterOn registra las rutas del módulo news en un mux compartido
-// (SPEC §4.1): la base del contrato News API v1.3 con auth (salvo las
-// excepciones públicas /img, /favicon/, /share/, /websub/), la API propia
-// /api/me|users con PATRONES EXACTOS (no catch-all /api/) y los preflight
-// OPTIONS. NO registra /healthz (es de common) ni /ocs/v2.php/cloud/user
-// (colisión §4.2: lo sirve notes).
+// RegisterOn registers the news module routes on a shared mux
+// (SPEC §4.1): the News API v1.3 contract base with auth (except the
+// public exceptions /img, /favicon/, /share/, /websub/), our own
+// /api/me|users API with EXACT PATTERNS (no /api/ catch-all) and the
+// OPTIONS preflight. It does NOT register /healthz (common owns it) nor
+// /ocs/v2.php/cloud/user (§4.2 collision: notes serves it).
 func (s *Server) RegisterOn(mux *http.ServeMux) {
 	api := http.NewServeMux()
 	s.routes(api)
 	authed := auth.Middleware(s.validator, httpx.CORS(api))
 
-	// Proxy de imágenes PÚBLICO (el <img> del navegador no puede mandar auth):
-	// la seguridad la aporta la firma HMAC de la URL. Con método explícito para
-	// no chocar con el patrón OPTIONS de preflight.
+	// PUBLIC image proxy (the browser <img> cannot send auth):
+	// the security comes from the HMAC signature of the URL. With an explicit method to
+	// avoid clashing with the OPTIONS preflight pattern.
 	mux.Handle("GET "+Base+"/img", http.StripPrefix(Base, httpx.CORS(http.HandlerFunc(s.imgs.Serve))))
 
-	// Favicon PÚBLICO: el <img> del navegador no lleva auth. Solo sirve desde el
-	// cache en disco (sin fetch en demanda), así que no hay superficie SSRF.
+	// PUBLIC favicon: the browser <img> carries no auth. It only serves from the
+	// on-disk cache (no fetch on demand), so there is no SSRF surface.
 	mux.Handle("GET "+Base+"/favicon/", http.StripPrefix(Base, httpx.CORS(s.faviconRouter())))
 
-	// Artículo compartido PÚBLICO: la URL lleva un token aleatorio (share).
+	// PUBLIC shared article: the URL carries a random token (share).
 	mux.Handle("GET "+Base+"/share/", http.StripPrefix(Base, httpx.CORS(s.shareRouter())))
 
-	// WebSub callback PÚBLICO (lo llama el hub): GET verificación + POST delivery.
+	// PUBLIC WebSub callback (the hub calls it): GET verification + POST delivery.
 	mux.Handle("GET "+Base+"/websub/", http.StripPrefix(Base, httpx.CORS(s.websubRouter())))
 	mux.Handle("POST "+Base+"/websub/", http.StripPrefix(Base, httpx.CORS(s.websubRouter())))
 
 	mux.Handle(Base+"/", http.StripPrefix(Base, authed))
-	// API propia de la app (perfil/usuarios): patrones EXACTOS, no catch-all
-	// /api/ (SPEC §4.1/§4.3), con su preflight OPTIONS por path (sin auth).
+	// App own API (profile/users): EXACT patterns, no /api/ catch-all
+	// (SPEC §4.1/§4.3), with its per-path OPTIONS preflight (no auth).
 	pre := httpx.CORS(httpx.Preflight())
 	optionsDone := map[string]bool{}
 	for _, rt := range s.userAPIRoutes() {
 		mux.Handle(rt.pattern, auth.Middleware(s.validator, httpx.CORS(rt.h)))
-		if !optionsDone[rt.path] { // varios métodos comparten path: un solo OPTIONS
+		if !optionsDone[rt.path] { // several methods share path: a single OPTIONS
 			optionsDone[rt.path] = true
 			mux.Handle("OPTIONS "+rt.path, pre)
 		}
 	}
-	// /ocs/v2.php/cloud/user NO se registra aquí (colisión SPEC §4.2): desde
-	// H5 lo sirve solo notes con su handler extendido (XML por defecto, JSON
-	// OCS para news-android con ?format=json).
-	// Preflight de CORS antes de auth (no lleva credenciales).
+	// /ocs/v2.php/cloud/user is NOT registered here (SPEC §4.2 collision): since
+	// H5 only notes serves it with its extended handler (XML by default, OCS
+	// JSON for news-android with ?format=json).
+	// CORS preflight before auth (it carries no credentials).
 	mux.Handle("OPTIONS "+Base+"/", http.StripPrefix(Base, httpx.CORS(httpx.Preflight())))
 }
 
-// writeJSON es un shim sobre httpx.WriteJSON (el helper unificado fija
-// Content-Type antes de WriteHeader, SPEC §2.1).
+// writeJSON is a shim over httpx.WriteJSON (the unified helper sets
+// Content-Type before WriteHeader, SPEC §2.1).
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	httpx.WriteJSON(w, code, v)
 }
@@ -118,8 +118,8 @@ func writeEmpty(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// errorStatus escribe el envelope de error con code estable y mensaje
-// traducido al idioma negociado de la petición.
+// errorStatus writes the error envelope with a stable code and a message
+// translated to the negotiated language of the request.
 func errorStatus(w http.ResponseWriter, r *http.Request, status int, key string) {
 	var b struct {
 		Error struct {
@@ -132,13 +132,13 @@ func errorStatus(w http.ResponseWriter, r *http.Request, status int, key string)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(b); err != nil {
-		slog.Error("escribir error JSON", "err", err)
+		slog.Error("write JSON error", "err", err)
 	}
 }
 
-// decodeBody es un shim sobre httpx.DecodeBody (decodifica JSON tolerante:
-// decide por el CONTENIDO, no por el Content-Type; si no es JSON deja el
-// body intacto para ParseForm).
+// decodeBody is a shim over httpx.DecodeBody (tolerant JSON decoding:
+// it decides by the CONTENT, not by the Content-Type, if it is not JSON it leaves
+// the body untouched for ParseForm).
 func decodeBody(r *http.Request, v any) error {
 	return httpx.DecodeBody(r, v)
 }

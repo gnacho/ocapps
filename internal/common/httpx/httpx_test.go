@@ -17,7 +17,7 @@ func TestWriteJSON(t *testing.T) {
 	res := rec.Result()
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusTeapot {
-		t.Fatalf("código: got %d", res.StatusCode)
+		t.Fatalf("code: got %d", res.StatusCode)
 	}
 	if ct := res.Header.Get("Content-Type"); ct != "application/json; charset=utf-8" {
 		t.Fatalf("Content-Type: got %q", ct)
@@ -32,11 +32,11 @@ func TestErrorStatus(t *testing.T) {
 	t.Run("HTTPError", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/x", nil)
-		ErrorStatus(rec, r, NewError(http.StatusConflict, "conflict", "ya existe"))
+		ErrorStatus(rec, r, NewError(http.StatusConflict, "conflict", "already exists"))
 		res := rec.Result()
 		defer res.Body.Close()
 		if res.StatusCode != http.StatusConflict {
-			t.Fatalf("código: got %d", res.StatusCode)
+			t.Fatalf("code: got %d", res.StatusCode)
 		}
 		var b struct {
 			Error struct {
@@ -47,28 +47,28 @@ func TestErrorStatus(t *testing.T) {
 		if err := json.NewDecoder(res.Body).Decode(&b); err != nil {
 			t.Fatal(err)
 		}
-		if b.Error.Code != "conflict" || b.Error.Message != "ya existe" {
+		if b.Error.Code != "conflict" || b.Error.Message != "already exists" {
 			t.Fatalf("envelope: %+v", b.Error)
 		}
 	})
-	t.Run("error genérico → 500 sin filtrar mensaje", func(t *testing.T) {
+	t.Run("generic error -> 500 without leaking the message", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/x", nil)
-		ErrorStatus(rec, r, fmt.Errorf("detalle interno: %w", errors.New("boom")))
+		ErrorStatus(rec, r, fmt.Errorf("internal detail: %w", errors.New("boom")))
 		res := rec.Result()
 		defer res.Body.Close()
 		if res.StatusCode != http.StatusInternalServerError {
-			t.Fatalf("código: got %d", res.StatusCode)
+			t.Fatalf("code: got %d", res.StatusCode)
 		}
 		body, _ := io.ReadAll(res.Body)
 		if strings.Contains(string(body), "boom") {
-			t.Fatalf("filtra detalle interno al cliente: %s", body)
+			t.Fatalf("it leaks internal detail to the client: %s", body)
 		}
 	})
 }
 
 func TestDecodeBody(t *testing.T) {
-	t.Run("JSON con content-type incorrecto", func(t *testing.T) {
+	t.Run("JSON with a wrong content-type", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(` {"a":1}`))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		var dst struct {
@@ -81,7 +81,7 @@ func TestDecodeBody(t *testing.T) {
 			t.Fatalf("dst: %+v", dst)
 		}
 	})
-	t.Run("no JSON: body intacto para ParseForm", func(t *testing.T) {
+	t.Run("not JSON: body intact for ParseForm", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("a=1&b=2"))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		var dst map[string]any
@@ -95,11 +95,11 @@ func TestDecodeBody(t *testing.T) {
 			t.Fatalf("form: %v", r.Form)
 		}
 	})
-	t.Run("JSON inválido → error", func(t *testing.T) {
+	t.Run("invalid JSON -> error", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"a":`))
 		var dst map[string]any
 		if err := DecodeBody(r, &dst); err == nil {
-			t.Fatal("esperaba error")
+			t.Fatal("expected an error")
 		}
 	})
 	t.Run("body nil", func(t *testing.T) {
@@ -120,7 +120,7 @@ func TestCORS(t *testing.T) {
 	})
 	h := CORS(next)
 
-	t.Run("preflight 204 sin pasar por el handler", func(t *testing.T) {
+	t.Run("preflight 204 without reaching the handler", func(t *testing.T) {
 		called = false
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/api/x", nil))
@@ -130,12 +130,12 @@ func TestCORS(t *testing.T) {
 			t.Fatalf("preflight: got %d", res.StatusCode)
 		}
 		if called {
-			t.Fatal("preflight llegó al handler (pasaría por auth)")
+			t.Fatal("the preflight reached the handler (it would go through auth)")
 		}
 		assertCORSHeaders(t, res)
 	})
 
-	t.Run("petición normal lleva las cabeceras unión exactas", func(t *testing.T) {
+	t.Run("normal request carries the exact union headers", func(t *testing.T) {
 		called = false
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/x", nil))

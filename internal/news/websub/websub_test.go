@@ -13,7 +13,7 @@ func TestSubscribe(t *testing.T) {
 	var got url.Values
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			t.Errorf("método: %s", r.Method)
+			t.Errorf("method: %s", r.Method)
 		}
 		b, _ := io.ReadAll(r.Body)
 		got, _ = url.ParseQuery(string(b))
@@ -47,13 +47,13 @@ func TestSubscribeError(t *testing.T) {
 	defer ts.Close()
 	c := NewAllowLocal()
 	if err := c.Subscribe(context.Background(), ts.URL, "t", "c", ""); err == nil {
-		t.Error("HTTP 400 debería devolver error")
+		t.Error("HTTP 400 should return an error")
 	}
 }
 
 func TestSubscribeInvalidHub(t *testing.T) {
 	c := NewAllowLocal()
 	if err := c.Subscribe(context.Background(), "ftp://hub.example", "t", "c", ""); err == nil {
-		t.Error("hub sin http/https debería fallar")
+		t.Error("hub without http/https should fail")
 	}
 }

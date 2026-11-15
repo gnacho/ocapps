@@ -25,15 +25,15 @@ func newStore(t *testing.T) *store.Store {
 	return st
 }
 
-// newShadowValidator: glue sobre el validador Graph común (MultiTenant, como
-// en el wiring del módulo, SPEC §6.2).
+// newShadowValidator: glue on top of the common Graph validator (MultiTenant, as
+// in the module wiring, SPEC §6.2).
 func newShadowValidator(st *store.Store, graphURL string, log *slog.Logger) *ShadowValidator {
 	gv := commonauth.NewGraphValidator(graphURL, commonauth.MultiTenant(), log)
 	return NewShadowValidator(gv, st, log)
 }
 
-// fakeGraph: OpenCloud de mentira; valida Basic (user fijo) y Bearer (token fijo),
-// ambos resuelven al MISMO /me (mismo oc_id).
+// fakeGraph: a fake OpenCloud, it validates Basic (fixed user) and Bearer (fixed token),
+// both resolve to the SAME /me (same oc_id).
 type fakeGraph struct {
 	mu       sync.Mutex
 	meHits   int
@@ -74,58 +74,58 @@ func TestOpenCloudValidatorBasicAndBearerUnify(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	v := newShadowValidator(st, ts.URL, log)
 
-	// Basic malo → false. OJO: el validador común cachea los 401 durante 30 s
-	// por clave basic:<user> (SPEC §6.1), así que el intento malo usa OTRO
-	// username para no envenenar la entrada de "nacho" en este test.
-	if u, ok := v.Validate(context.Background(), Credential{Username: "nadie", Password: "malapass"}); ok || u != nil {
-		t.Fatal("pass mala debe fallar")
+	// Bad Basic -> false. NOTE: the common validator caches the 401s for 30 s
+	// by key basic:<user> (SPEC §6.1), so the bad attempt uses ANOTHER
+	// username so as not to poison the "nacho" entry in this test.
+	if u, ok := v.Validate(context.Background(), Credential{Username: "nobody", Password: "badpass"}); ok || u != nil {
+		t.Fatal("a bad password must fail")
 	}
-	// Basic bueno → shadow admin con displayName del Graph
+	// Good Basic -> admin shadow with the Graph displayName
 	uBasic, ok := v.Validate(context.Background(), Credential{Username: "nacho", Password: "app-token-xyz"})
 	if !ok || uBasic.Username != "nacho" || uBasic.DisplayName != "Nacho Real" || uBasic.OCID != "uuid-1234" {
 		t.Fatalf("shadow Basic mal: %+v", uBasic)
 	}
 	if uBasic.Role != "admin" {
-		t.Fatalf("primer usuario debe ser admin: %s", uBasic.Role)
+		t.Fatalf("the first user must be admin: %s", uBasic.Role)
 	}
 
-	// Bearer (sesión web) → MISMO usuario (oc_id), sin duplicar
+	// Bearer (web session) -> SAME user (oc_id), without duplicating
 	uBearer, ok := v.Validate(context.Background(), Credential{Bearer: "oidc-access-tok"})
 	if !ok {
-		t.Fatal("bearer válido rechazado")
+		t.Fatal("valid bearer rejected")
 	}
 	if uBearer.ID != uBasic.ID {
-		t.Fatalf("Basic y Bearer deben resolver al mismo shadow: %d vs %d", uBasic.ID, uBearer.ID)
+		t.Fatalf("Basic and Bearer must resolve to the same shadow: %d vs %d", uBasic.ID, uBearer.ID)
 	}
 
-	// Bearer malo → false
-	if _, ok := v.Validate(context.Background(), Credential{Bearer: "caducado"}); ok {
-		t.Fatal("bearer malo debe fallar")
+	// Bad Bearer -> false
+	if _, ok := v.Validate(context.Background(), Credential{Bearer: "expired"}); ok {
+		t.Fatal("a bad bearer must fail")
 	}
 
-	// cache: misma credencial no golpea el Graph de nuevo
+	// cache: the same credential does not hit the Graph again
 	before := fg.meHits
 	if _, ok := v.Validate(context.Background(), Credential{Bearer: "oidc-access-tok"}); !ok {
-		t.Fatal("revalidación bearer falló")
+		t.Fatal("bearer revalidation failed")
 	}
 	if fg.meHits != before {
-		t.Fatalf("cache no aplicada: %d hits nuevos", fg.meHits-before)
+		t.Fatalf("cache not applied: %d new hits", fg.meHits-before)
 	}
 
-	// LocalValidator NUNCA acepta Bearer ni el hash shadow
+	// LocalValidator NEVER accepts Bearer nor the shadow hash
 	lv := &LocalValidator{Store: st}
 	if _, ok := lv.Validate(context.Background(), Credential{Bearer: "oidc-access-tok"}); ok {
-		t.Fatal("local no debe aceptar bearer")
+		t.Fatal("local must not accept bearer")
 	}
 	if _, ok := lv.Validate(context.Background(), Credential{Username: "nacho", Password: "app-token-xyz"}); ok {
-		t.Fatal("el shadow no debe autenticar localmente")
+		t.Fatal("the shadow must not authenticate locally")
 	}
 }
 
-// TestOpenCloudValidatorConcurrentShadowCreate: dos credenciales del MISMO
-// usuario OpenCloud (Basic app-token y Bearer sesión web) entran a la vez en
-// una BD vacía. Ambas deben resolver al mismo shadow SIN error de UNIQUE
-// (carrera read-then-create de upsertShadow, issue #18).
+// TestOpenCloudValidatorConcurrentShadowCreate: two credentials of the SAME
+// OpenCloud user (Basic app-token and Bearer web session) come in at the same time into
+// an empty DB. Both must resolve to the same shadow WITHOUT a UNIQUE error
+// (read-then-create race in upsertShadow, issue #18).
 func TestOpenCloudValidatorConcurrentShadowCreate(t *testing.T) {
 	st := newStore(t)
 	fg := &fakeGraph{password: "app-token-xyz", bearer: "oidc-access-tok"}
@@ -154,7 +154,7 @@ func TestOpenCloudValidatorConcurrentShadowCreate(t *testing.T) {
 			defer wg.Done()
 			u, ok := v.Validate(context.Background(), creds[i])
 			if !ok {
-				errs[i] = fmt.Errorf("validate falló con credencial %d", i)
+				errs[i] = fmt.Errorf("validate failed with credential %d", i)
 				return
 			}
 			ids[i] = u.ID
@@ -165,16 +165,16 @@ func TestOpenCloudValidatorConcurrentShadowCreate(t *testing.T) {
 	var firstID int64
 	for i := range creds {
 		if errs[i] != nil {
-			t.Fatalf("request %d: %v (¿carrera UNIQUE?)", i, errs[i])
+			t.Fatalf("request %d: %v (UNIQUE race?)", i, errs[i])
 		}
 		if i == 0 {
 			firstID = ids[i]
 		} else if ids[i] != firstID {
-			t.Fatalf("request %d resuelve a otro shadow: %d != %d", i, ids[i], firstID)
+			t.Fatalf("request %d resolves to another shadow: %d != %d", i, ids[i], firstID)
 		}
 	}
-	// la BD debe tener UN solo shadow user
+	// the DB must have a SINGLE shadow user
 	if nUsers, err := st.CountUsers(); err != nil || nUsers != 1 {
-		t.Fatalf("esperaba 1 usuario, hay %d (err=%v)", nUsers, err)
+		t.Fatalf("expected 1 user, there are %d (err=%v)", nUsers, err)
 	}
 }

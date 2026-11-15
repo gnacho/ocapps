@@ -14,10 +14,10 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
-// TestNameConcurrentThrottle ejerce el data race histórico de Geocoder.last
-// (quick-win Q2): dos Name() concurrentes sobre coordenadas no cacheadas
-// deben serializar el throttle (1 req/s) sin carrera (lo valida -race) y
-// respetar el 1 req/s contra el endpoint.
+// TestNameConcurrentThrottle exercises the historical data race on
+// Geocoder.last (quick win Q2): two concurrent Name() calls on coordinates
+// that are not cached must serialise the throttle (1 req/s) with no race (-race
+// validates it) and honour the 1 req/s against the endpoint.
 func TestNameConcurrentThrottle(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {
@@ -43,7 +43,7 @@ func TestNameConcurrentThrottle(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			// coords distintas para que ninguna venga de caché
+			// different coords so that none comes from the cache
 			name, err := g.Name(context.Background(), 40.4168+float64(i)*0.01, -3.7038, 2)
 			if err != nil {
 				t.Errorf("Name: %v", err)
@@ -55,15 +55,15 @@ func TestNameConcurrentThrottle(t *testing.T) {
 	wg.Wait()
 
 	if calls.Load() != 2 {
-		t.Fatalf("llamadas al endpoint = %d, quiero 2", calls.Load())
+		t.Fatalf("endpoint calls = %d, want 2", calls.Load())
 	}
 	for i, n := range results {
 		if n != "Madrid" {
-			t.Fatalf("results[%d] = %q, quiero Madrid", i, n)
+			t.Fatalf("results[%d] = %q, want Madrid", i, n)
 		}
 	}
-	// el throttle global es ~1.1 s: dos peticiones serializadas tardan >= 1 s
+	// the global throttle is ~1.1 s: two serialised requests take >= 1 s
 	if d := time.Since(start); d < time.Second {
-		t.Fatalf("throttle no respetado con concurrencia: %s", d)
+		t.Fatalf("throttle not honoured under concurrency: %s", d)
 	}
 }

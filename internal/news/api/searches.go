@@ -8,17 +8,17 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// listSearches: búsquedas guardadas del usuario (GET /searches).
+// listSearches: user saved searches (GET /searches).
 func (s *Server) listSearches(w http.ResponseWriter, r *http.Request) {
 	searches, err := s.store.ListSavedSearches(user(r).ID)
 	if err != nil {
-		s.logError(w, r, "listar búsquedas guardadas", err)
+		s.logError(w, r, "list saved searches", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"searches": searches})
 }
 
-// createSearch: guarda una búsqueda (POST /searches).
+// createSearch: stores a search (POST /searches).
 func (s *Server) createSearch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name  string `json:"name"`
@@ -36,13 +36,13 @@ func (s *Server) createSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	ss, err := s.store.CreateSavedSearch(user(r).ID, body.Name, body.Query)
 	if err != nil {
-		s.logError(w, r, "crear búsqueda guardada", err)
+		s.logError(w, r, "create saved search", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"search": ss})
 }
 
-// deleteSearch: borra una búsqueda guardada (DELETE /searches/{searchId}).
+// deleteSearch: deletes a saved search (DELETE /searches/{searchId}).
 func (s *Server) deleteSearch(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "searchId")
 	if !ok {
@@ -53,13 +53,13 @@ func (s *Server) deleteSearch(w http.ResponseWriter, r *http.Request) {
 		errorStatus(w, r, http.StatusNotFound, "search_not_found")
 		return
 	} else if err != nil {
-		s.logError(w, r, "borrar búsqueda guardada", err)
+		s.logError(w, r, "delete saved search", err)
 		return
 	}
 	writeEmpty(w)
 }
 
-// searchSavedItems: ejecuta la búsqueda guardada (GET /searches/{searchId}/items).
+// searchSavedItems: runs the saved search (GET /searches/{searchId}/items).
 func (s *Server) searchSavedItems(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "searchId")
 	if !ok {
@@ -73,7 +73,7 @@ func (s *Server) searchSavedItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.logError(w, r, "leer búsqueda guardada", err)
+		s.logError(w, r, "read saved search", err)
 		return
 	}
 	f, valid := itemFilterFromRequest(r, u, false)
@@ -86,7 +86,7 @@ func (s *Server) searchSavedItems(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.store.SearchItems(f, ss.Query, int(f.BatchSize))
 	if err != nil {
-		s.logError(w, r, "buscar items de búsqueda guardada", err)
+		s.logError(w, r, "search items of the saved search", err)
 		return
 	}
 	s.annotateClusters(u, items)

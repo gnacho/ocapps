@@ -7,15 +7,15 @@ import (
 	"strings"
 )
 
-// itemsCols: columnas del item + full_content del feed (en el orden exacto
-// que espera scanItem).
+// itemsCols: item columns + full_content of the feed (in the exact order
+// scanItem expects).
 const itemsCols = "i.id, i.guid, i.guid_hash, i.url, i.title, i.author, i.pub_date, i.body, " +
 	"i.enclosure_mime, i.enclosure_link, i.media_thumbnail, i.media_description, " +
 	"i.feed_id, i.unread, i.starred, i.last_modified, i.fingerprint, i.filtered, " +
 	"COALESCE(x.full_content, 0)"
 
-// buildItemQuery construye el WHERE según el filtro (type 0=feed, 1=folder,
-// 2=starred, 3=all) + getRead/offset/updatedSince, y el ORDER/LIMIT.
+// buildItemQuery builds the WHERE according to the filter (type 0=feed, 1=folder,
+// 2=starred, 3=all) + getRead/offset/updatedSince, and the ORDER/LIMIT.
 func buildItemQuery(f ItemFilter, countOnly bool) (string, []any, error) {
 	var where []string
 	var args []any
@@ -26,14 +26,14 @@ func buildItemQuery(f ItemFilter, countOnly bool) (string, []any, error) {
 	case 0: // feed
 		where = append(where, "i.feed_id = ?")
 		args = append(args, f.ID)
-	case 1: // folder (incluye subcarpetas, un nivel; #41)
+	case 1: // folder (includes subfolders, one level, #41)
 		where = append(where, "i.feed_id IN (SELECT id FROM feeds WHERE user_id = ? AND (folder_id = ? OR folder_id IN (SELECT id FROM folders WHERE parent_id = ?)))")
 		args = append(args, f.UserID, f.ID, f.ID)
 	case 2: // starred
 		where = append(where, "i.starred = 1")
 	case 3: // all
 	default:
-		return "", nil, fmt.Errorf("type inválido: %d", f.Type)
+		return "", nil, fmt.Errorf("invalid type: %d", f.Type)
 	}
 
 	if !f.GetRead {
@@ -86,7 +86,7 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	return it, nil
 }
 
-// ListItems aplica el filtro y devuelve los items.
+// ListItems applies the filter and returns the items.
 func (s *Store) ListItems(f ItemFilter) ([]Item, error) {
 	q, args, err := buildItemQuery(f, false)
 	if err != nil {
@@ -108,7 +108,7 @@ func (s *Store) ListItems(f ItemFilter) ([]Item, error) {
 	return out, rows.Err()
 }
 
-// CountItems cuenta los items que casan con el filtro (ignora paginación).
+// CountItems counts the items that match the filter (ignores pagination).
 func (s *Store) CountItems(f ItemFilter) (int64, error) {
 	f.BatchSize = -1
 	q, args, err := buildItemQuery(f, true)
@@ -122,9 +122,9 @@ func (s *Store) CountItems(f ItemFilter) (int64, error) {
 	return n, nil
 }
 
-// SearchItems busca artículos del usuario cuyo título, cuerpo o URL contenga
-// la query (case-insensitive). Reutiliza el mismo scoping de ItemFilter
-// (type/id) y excluye los filtered por defecto.
+// SearchItems searches the user articles whose title, body or URL contains
+// the query (case-insensitive). It reuses the same ItemFilter scoping
+// (type/id) and excludes the filtered ones by default.
 func (s *Store) SearchItems(f ItemFilter, query string, limit int) ([]Item, error) {
 	like := "%" + strings.ToLower(query) + "%"
 	var where []string
@@ -136,14 +136,14 @@ func (s *Store) SearchItems(f ItemFilter, query string, limit int) ([]Item, erro
 	case 0: // feed
 		where = append(where, "i.feed_id = ?")
 		args = append(args, f.ID)
-	case 1: // folder (incluye subcarpetas, un nivel; #41)
+	case 1: // folder (includes subfolders, one level, #41)
 		where = append(where, "i.feed_id IN (SELECT id FROM feeds WHERE user_id = ? AND (folder_id = ? OR folder_id IN (SELECT id FROM folders WHERE parent_id = ?)))")
 		args = append(args, f.UserID, f.ID, f.ID)
 	case 2: // starred
 		where = append(where, "i.starred = 1")
 	case 3: // all
 	default:
-		return nil, fmt.Errorf("type inválido: %d", f.Type)
+		return nil, fmt.Errorf("invalid type: %d", f.Type)
 	}
 	if !f.GetRead {
 		where = append(where, "i.unread = 1")
@@ -181,7 +181,7 @@ func (s *Store) SearchItems(f ItemFilter, query string, limit int) ([]Item, erro
 	return out, rows.Err()
 }
 
-// NewestItemID devuelve MAX(id) del usuario (0 si no hay items).
+// NewestItemID returns MAX(id) of the user (0 if there are no items).
 func (s *Store) NewestItemID(userID int64) (int64, error) {
 	var n sql.NullInt64
 	if err := s.db.QueryRow(`SELECT MAX(id) FROM items WHERE user_id = ?`, userID).Scan(&n); err != nil {
@@ -190,7 +190,7 @@ func (s *Store) NewestItemID(userID int64) (int64, error) {
 	return n.Int64, nil
 }
 
-// StarredCount cuenta los items destacados del usuario.
+// StarredCount counts the starred items of the user.
 func (s *Store) StarredCount(userID int64) (int64, error) {
 	var n int64
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM items WHERE user_id = ? AND starred = 1`, userID).Scan(&n); err != nil {
@@ -199,9 +199,9 @@ func (s *Store) StarredCount(userID int64) (int64, error) {
 	return n, nil
 }
 
-// markItems actualiza una columna booleana (unread|starred) para una lista de
-// ids del usuario, tocando last_modified (requisito de /items/updated).
-// isStarStamp: para star/unstar, unread=0 implícito no aplica.
+// markItems updates a boolean column (unread|starred) for a list of
+// user ids, touching last_modified (requirement of /items/updated).
+// isStarStamp: for star/unstar, an implicit unread=0 does not apply.
 func (s *Store) markItems(userID int64, ids []int64, col string, val bool) error {
 	if len(ids) == 0 {
 		return nil
@@ -211,7 +211,7 @@ func (s *Store) markItems(userID int64, ids []int64, col string, val bool) error
 		v = 1
 	}
 	if col != "unread" && col != "starred" {
-		return fmt.Errorf("columna inválida: %s", col)
+		return fmt.Errorf("invalid column: %s", col)
 	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("UPDATE items SET %s = ?, last_modified = ? WHERE user_id = ? AND id IN (", col))
@@ -228,17 +228,17 @@ func (s *Store) markItems(userID int64, ids []int64, col string, val bool) error
 	return err
 }
 
-// MarkItemsUnreadFlag fija unread=true/false para los ids dados.
+// MarkItemsUnreadFlag sets unread=true/false for the given ids.
 func (s *Store) MarkItemsUnreadFlag(userID int64, ids []int64, unread bool) error {
 	return s.markItems(userID, ids, "unread", unread)
 }
 
-// MarkItemsStarFlag fija starred=true/false para los ids dados.
+// MarkItemsStarFlag sets starred=true/false for the given ids.
 func (s *Store) MarkItemsStarFlag(userID int64, ids []int64, starred bool) error {
 	return s.markItems(userID, ids, "starred", starred)
 }
 
-// ItemExists comprueba que el item pertenece al usuario.
+// ItemExists checks that the item belongs to the user.
 func (s *Store) ItemExists(userID, itemID int64) (bool, error) {
 	var one int
 	err := s.db.QueryRow(`SELECT 1 FROM items WHERE user_id = ? AND id = ?`, userID, itemID).Scan(&one)
@@ -248,8 +248,8 @@ func (s *Store) ItemExists(userID, itemID int64) (bool, error) {
 	return err == nil, err
 }
 
-// MarkAllRead marca como leídos todos los items del usuario con id <= maxID.
-// maxID = 0 → sin tope (todo). Devuelve los afectados.
+// MarkAllRead marks as read all the user items with id <= maxID.
+// maxID = 0 -> no cap (everything). It returns the affected ones.
 func (s *Store) MarkAllRead(userID int64, maxID int64, scope string, scopeID int64) (int64, error) {
 	q := `UPDATE items SET unread = 0, last_modified = ? WHERE user_id = ? AND unread = 1`
 	args := []any{now(), userID}
@@ -266,7 +266,7 @@ func (s *Store) MarkAllRead(userID int64, maxID int64, scope string, scopeID int
 		q += ` AND feed_id IN (SELECT id FROM feeds WHERE user_id = ? AND (folder_id = ? OR folder_id IN (SELECT id FROM folders WHERE parent_id = ?)))`
 		args = append(args, userID, scopeID, scopeID)
 	default:
-		return 0, fmt.Errorf("scope inválido: %s", scope)
+		return 0, fmt.Errorf("invalid scope: %s", scope)
 	}
 	res, err := s.db.Exec(q, args...)
 	if err != nil {
@@ -275,9 +275,9 @@ func (s *Store) MarkAllRead(userID int64, maxID int64, scope string, scopeID int
 	return res.RowsAffected()
 }
 
-// PurgeOldItems borra items leídos no destacados con last_modified anterior
-// al umbral (retención global), EXCEPTO los feeds que tienen override propio
-// (esos se gestionan en PurgeOldItemsByFeed). Devuelve los borrados.
+// PurgeOldItems deletes read non-starred items with last_modified before
+// the threshold (global retention), EXCEPT the feeds that have their own override
+// (those are handled in PurgeOldItemsByFeed). It returns the deleted ones.
 func (s *Store) PurgeOldItems(olderThan int64) (int64, error) {
 	res, err := s.db.Exec(
 		`DELETE FROM items WHERE unread = 0 AND starred = 0 AND last_modified < ? AND
@@ -288,8 +288,8 @@ func (s *Store) PurgeOldItems(olderThan int64) (int64, error) {
 	return res.RowsAffected()
 }
 
-// PurgeOldItemsByFeed borra items leídos no destacados de un feed concreto con
-// last_modified anterior al umbral (retención por feed). Devuelve los borrados.
+// PurgeOldItemsByFeed deletes read non-starred items of a given feed with
+// last_modified before the threshold (per-feed retention). It returns the deleted ones.
 func (s *Store) PurgeOldItemsByFeed(feedID, olderThan int64) (int64, error) {
 	res, err := s.db.Exec(
 		`DELETE FROM items WHERE feed_id = ? AND unread = 0 AND starred = 0 AND last_modified < ?`,
@@ -300,7 +300,7 @@ func (s *Store) PurgeOldItemsByFeed(feedID, olderThan int64) (int64, error) {
 	return res.RowsAffected()
 }
 
-// SetFeedRetentionDays fija el override de retención del feed (0 = usar la global).
+// SetFeedRetentionDays sets the retention override of the feed (0 = use the global one).
 func (s *Store) SetFeedRetentionDays(feedID, userID, days int64) error {
 	res, err := s.db.Exec(`UPDATE feeds SET retention_days = ? WHERE id = ? AND user_id = ?`,
 		days, feedID, userID)
@@ -313,7 +313,7 @@ func (s *Store) SetFeedRetentionDays(feedID, userID, days int64) error {
 	return nil
 }
 
-// FeedsWithRetentionOverride devuelve los ids de feeds con retención propia.
+// FeedsWithRetentionOverride returns the ids of feeds with their own retention.
 func (s *Store) FeedsWithRetentionOverride() ([]struct {
 	ID   int64
 	Days int64
@@ -340,7 +340,7 @@ func (s *Store) FeedsWithRetentionOverride() ([]struct {
 	return out, rows.Err()
 }
 
-// GetItemFull devuelve el cuerpo completo cacheado ("" si no hay).
+// GetItemFull returns the cached full body ("" if there is none).
 func (s *Store) GetItemFull(itemID int64) (string, error) {
 	var body string
 	err := s.db.QueryRow(`SELECT body FROM item_full WHERE item_id = ?`, itemID).Scan(&body)
@@ -353,7 +353,7 @@ func (s *Store) GetItemFull(itemID int64) (string, error) {
 	return body, nil
 }
 
-// SaveItemFull guarda/actualiza el cuerpo completo extraído.
+// SaveItemFull stores/updates the extracted full body.
 func (s *Store) SaveItemFull(itemID int64, body string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO item_full (item_id, body, fetched_at) VALUES (?, ?, ?)
@@ -362,7 +362,7 @@ func (s *Store) SaveItemFull(itemID int64, body string) error {
 	return err
 }
 
-// GetItemURL devuelve la URL original del item (para extraer el completo).
+// GetItemURL returns the original URL of the item (to extract the full body).
 func (s *Store) GetItemURL(userID, itemID int64) (string, error) {
 	var u string
 	err := s.db.QueryRow(`SELECT url FROM items WHERE user_id = ? AND id = ?`, userID, itemID).Scan(&u)
@@ -372,7 +372,7 @@ func (s *Store) GetItemURL(userID, itemID int64) (string, error) {
 	return u, err
 }
 
-// GetItemFeedID devuelve el feed al que pertenece un item del usuario.
+// GetItemFeedID returns the feed an item of the user belongs to.
 func (s *Store) GetItemFeedID(userID, itemID int64) (int64, error) {
 	var fid int64
 	err := s.db.QueryRow(`SELECT feed_id FROM items WHERE user_id = ? AND id = ?`, userID, itemID).Scan(&fid)
@@ -382,13 +382,13 @@ func (s *Store) GetItemFeedID(userID, itemID int64) (int64, error) {
 	return fid, err
 }
 
-// SetItemURLForTesting reescribe la URL de un item (solo tests de extracción).
+// SetItemURLForTesting rewrites the URL of an item (extraction tests only).
 func (s *Store) SetItemURLForTesting(itemID int64, url string) error {
 	_, err := s.db.Exec(`UPDATE items SET url = ? WHERE id = ?`, url, itemID)
 	return err
 }
 
-// ItemClusterKeys devuelve el cluster_key de los ids dados ("" si no tiene).
+// ItemClusterKeys returns the cluster_key of the given ids ("" if it has none).
 func (s *Store) ItemClusterKeys(userID int64, ids []int64) (map[int64]string, error) {
 	out := map[int64]string{}
 	if len(ids) == 0 {
@@ -420,14 +420,14 @@ func (s *Store) ItemClusterKeys(userID int64, ids []int64) (map[int64]string, er
 	return out, rows.Err()
 }
 
-// Cluster: agrupación de una misma noticia en varios feeds.
+// Cluster: grouping of the same story across several feeds.
 type Cluster struct {
 	Size      int64
 	PrimaryID int64
 }
 
-// Clusters devuelve, para los cluster_keys dados, el tamaño del cluster y el
-// item principal (el de mayor id = más recientemente insertado).
+// Clusters returns, for the given cluster_keys, the cluster size and the
+// primary item (the one with the highest id = most recently inserted).
 func (s *Store) Clusters(userID int64, keys []string) (map[string]Cluster, error) {
 	out := map[string]Cluster{}
 	if len(keys) == 0 {

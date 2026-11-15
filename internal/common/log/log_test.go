@@ -14,7 +14,7 @@ func TestNewRespetaNivel(t *testing.T) {
 		"info":  false,
 		"warn":  false,
 		"error": false,
-		"raro":  false, // nivel desconocido → info
+		"weird": false, // unknown level -> info
 	} {
 		log := New(level)
 		if got := log.Enabled(context.Background(), slog.LevelDebug); got != debugVisible {
@@ -23,15 +23,15 @@ func TestNewRespetaNivel(t *testing.T) {
 	}
 }
 
-func TestModuleAñadeAtributo(t *testing.T) {
+func TestModuleAddsAttribute(t *testing.T) {
 	var buf bytes.Buffer
 	base := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	Module(base, "news").Info("hola")
+	Module(base, "news").Info("hello")
 	out := buf.String()
 	if !strings.Contains(out, `"module":"news"`) {
-		t.Fatalf("falta attr module: %s", out)
+		t.Fatalf("missing module attr: %s", out)
 	}
-	if !strings.Contains(out, `"msg":"hola"`) {
-		t.Fatalf("salida no es JSON slog: %s", out)
+	if !strings.Contains(out, `"msg":"hello"`) {
+		t.Fatalf("output is not slog JSON: %s", out)
 	}
 }

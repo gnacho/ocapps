@@ -9,17 +9,17 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// listAutoRead: reglas de auto-marcado del usuario (GET /auto-read).
+// listAutoRead: user auto-mark rules (GET /auto-read).
 func (s *Server) listAutoRead(w http.ResponseWriter, r *http.Request) {
 	rules, err := s.store.ListAutoRead(user(r).ID)
 	if err != nil {
-		s.logError(w, r, "listar reglas de auto-marcado", err)
+		s.logError(w, r, "list auto-mark rules", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
 }
 
-// addAutoRead: crea una regla de auto-marcado (POST /auto-read).
+// addAutoRead: creates an auto-mark rule (POST /auto-read).
 func (s *Server) addAutoRead(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		FeedID       int64  `json:"feedId"`
@@ -45,13 +45,13 @@ func (s *Server) addAutoRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.logError(w, r, "crear regla de auto-marcado", err)
+		s.logError(w, r, "create auto-mark rule", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"rule": rule})
 }
 
-// deleteAutoRead: borra una regla de auto-marcado (DELETE /auto-read/{ruleId}).
+// deleteAutoRead: deletes an auto-mark rule (DELETE /auto-read/{ruleId}).
 func (s *Server) deleteAutoRead(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "ruleId")
 	if !ok {
@@ -62,7 +62,7 @@ func (s *Server) deleteAutoRead(w http.ResponseWriter, r *http.Request) {
 		errorStatus(w, r, http.StatusNotFound, "rule_not_found")
 		return
 	} else if err != nil {
-		s.logError(w, r, "borrar regla de auto-marcado", err)
+		s.logError(w, r, "delete auto-mark rule", err)
 		return
 	}
 	writeEmpty(w)

@@ -13,18 +13,18 @@ func TestSavedSearchesAPI(t *testing.T) {
 	}
 	decode(t, body, &feedResp)
 	if len(feedResp.Feeds) != 1 {
-		t.Fatalf("feed no creado: %s", body)
+		t.Fatalf("feed not created: %s", body)
 	}
 
-	// sin nombre o sin query → 422
+	// without name or without query -> 422
 	if code, _ := e.do(t, "POST", "/searches", e.user, e.pass, map[string]string{"name": "x"}); code != 422 {
-		t.Fatalf("sin query esperaba 422, tengo %d", code)
+		t.Fatalf("without query expected 422, I have %d", code)
 	}
 
 	code, body := e.do(t, "POST", "/searches", e.user, e.pass,
 		map[string]string{"name": "Item 1", "query": "Item 1"})
 	if code != 200 {
-		t.Fatalf("crear búsqueda: %d %s", code, body)
+		t.Fatalf("create search: %d %s", code, body)
 	}
 	var created struct {
 		Search struct {
@@ -35,39 +35,39 @@ func TestSavedSearchesAPI(t *testing.T) {
 	}
 	decode(t, body, &created)
 	if created.Search.ID == 0 || created.Search.Name != "Item 1" {
-		t.Fatalf("búsqueda creada rara: %s", body)
+		t.Fatalf("weird created search: %s", body)
 	}
 
 	code, body = e.do(t, "GET", "/searches", e.user, e.pass, nil)
 	if code != 200 {
-		t.Fatalf("listar búsquedas: %d", code)
+		t.Fatalf("list searches: %d", code)
 	}
 	var list struct {
 		Searches []struct{ ID int64 }
 	}
 	decode(t, body, &list)
 	if len(list.Searches) != 1 {
-		t.Fatalf("esperaba 1 búsqueda: %s", body)
+		t.Fatalf("expected 1 search: %s", body)
 	}
 
-	// items de la búsqueda guardada
+	// items of the saved search
 	code, body = e.do(t, "GET", fmt.Sprintf("/searches/%d/items", created.Search.ID), e.user, e.pass, nil)
 	if code != 200 {
-		t.Fatalf("items de búsqueda guardada: %d", code)
+		t.Fatalf("saved search items: %d", code)
 	}
 	var items struct {
 		Items []struct{ Title string }
 	}
 	decode(t, body, &items)
 	if len(items.Items) == 0 {
-		t.Errorf("sin items para la búsqueda: %s", body)
+		t.Errorf("no items for the search: %s", body)
 	}
 
-	// borrar
+	// delete
 	if code, _ := e.do(t, "DELETE", fmt.Sprintf("/searches/%d", created.Search.ID), e.user, e.pass, nil); code != 204 {
-		t.Fatalf("borrar búsqueda: %d", code)
+		t.Fatalf("delete search: %d", code)
 	}
 	if code, _ := e.do(t, "GET", fmt.Sprintf("/searches/%d/items", created.Search.ID), e.user, e.pass, nil); code != 404 {
-		t.Fatalf("items tras borrar esperaba 404, tengo %d", code)
+		t.Fatalf("items after delete expected 404, I have %d", code)
 	}
 }

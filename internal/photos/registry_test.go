@@ -14,11 +14,11 @@ import (
 	"github.com/gnacho/ocapps/internal/common/config"
 )
 
-// TestRegistryConcurrenciaTouchDavFor: Touch (escritor) contra DavFor/get/
-// SpacePrefix/scanOne (lectores) — el race del review H8 (sess.dav leído
-// fuera del mutex). Debe correr con -race.
-func TestRegistryConcurrenciaTouchDavFor(t *testing.T) {
-	srv := fakeOpenCloud(t, propfindUnaFoto)
+// TestRegistryConcurrencyTouchDavFor: Touch (writer) against DavFor/get/
+// SpacePrefix/scanOne (readers) - the race of the H8 review (sess.dav read
+// outside the mutex). It must run with -race.
+func TestRegistryConcurrencyTouchDavFor(t *testing.T) {
+	srv := fakeOpenCloud(t, propfindOnePhoto)
 	m, err := New(testConfig(config.Common{OpenCloudURL: srv.URL, PhotosDataDir: t.TempDir()},
 		config.PhotosConfig{ScanEvery: time.Hour}), slog.Default(), nil)
 	if err != nil {
@@ -28,13 +28,13 @@ func TestRegistryConcurrenciaTouchDavFor(t *testing.T) {
 	var wg sync.WaitGroup
 	for w := 0; w < 4; w++ {
 		wg.Add(2)
-		go func(w int) { // escritores: Touch con tokens cambiantes
+		go func(w int) { // writers: Touch with changing tokens
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
 				m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: fmt.Sprintf("tok-%d-%d", w, i)})
 			}
 		}(w)
-		go func() { // lectores: DavFor + get + SpacePrefix + resolveSpace (como scanOne)
+		go func() { // readers: DavFor + get + SpacePrefix + resolveSpace (like scanOne)
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
 				_ = m.reg.DavFor(ctx, "user-1")
@@ -48,19 +48,19 @@ func TestRegistryConcurrenciaTouchDavFor(t *testing.T) {
 	wg.Wait()
 }
 
-// TestTouchNoDegradaSesionSembrada: un usuario de OCAPPS_PHOTOS_USERS que
-// abre la web (Touch con Bearer OIDC efímero) NO pierde su app-token: el
-// background scan del ticker sigue usando Basic tras caducar el Bearer
-// (H8 review FIX 2).
-func TestTouchNoDegradaSesionSembrada(t *testing.T) {
-	// OpenCloud cuyo PROPFIND SOLO acepta el app-token Basic (el Bearer
-	// caducado recibe 401): si el scan usara el Bearer, fallaría.
+// TestTouchDoesNotDegradeSeededSession: a user of OCAPPS_PHOTOS_USERS who opens
+// the web (Touch with an ephemeral OIDC Bearer) does NOT lose its app token: the
+// background scan of the ticker keeps using Basic after the Bearer expires (H8
+// review FIX 2).
+func TestTouchDoesNotDegradeSeededSession(t *testing.T) {
+	// OpenCloud whose PROPFIND ONLY accepts the Basic app token (the expired
+	// Bearer receives a 401): if the scan used the Bearer it would fail.
 	srv := fakeOpenCloudReq(t, func(r *http.Request) (int, string) {
 		u, p, ok := r.BasicAuth()
 		if !ok || u != "admin" || p != "app-token" {
 			return http.StatusUnauthorized, ""
 		}
-		return propfindUnaFoto(r.URL.Path)
+		return propfindOnePhoto(r.URL.Path)
 	})
 	m, err := New(testConfig(config.Common{OpenCloudURL: srv.URL, PhotosDataDir: t.TempDir()},
 		config.PhotosConfig{ScanRoot: "Fotos", ScanEvery: time.Hour}), slog.Default(), nil)
@@ -74,31 +74,31 @@ func TestTouchNoDegradaSesionSembrada(t *testing.T) {
 	}
 	davSembrado := m.reg.DavFor(ctx, owner)
 	if davSembrado == nil {
-		t.Fatal("sin dav tras sembrar")
+		t.Fatal("no dav after seeding")
 	}
-	// el usuario abre la web: Touch con su Bearer OIDC
+	// the user opens the web: Touch with its OIDC Bearer
 	m.reg.Touch(ctx, &auth.User{ID: owner}, auth.Credential{Bearer: "oidc-efimero"})
 
-	// la sesión conserva el cliente Basic con app-token
+	// the session keeps the Basic client with the app token
 	sess := m.reg.get(owner)
 	if sess == nil || !sess.isBasic || !sess.seeded {
-		t.Fatalf("sesión tras Touch Bearer: %+v, debe seguir sembrada y Basic", sess)
+		t.Fatalf("session after the Bearer Touch: %+v, it must stay seeded and Basic", sess)
 	}
 	if got := m.reg.DavFor(ctx, owner); got != davSembrado {
-		t.Fatal("Touch reemplazó el dav sembrado por el Bearer efímero")
+		t.Fatal("Touch replaced the seeded dav with the ephemeral Bearer")
 	}
-	// y el scan (ticker) sigue indexando con el app-token
+	// and the scan (ticker) keeps indexing with the app token
 	m.sched.scanOne(ctx, owner)
 	stats, err := m.st.Stats(ctx, owner)
 	if err != nil || stats["assets"].(int64) != 1 {
-		t.Fatalf("scan con app-token tras Touch Bearer: %v %v", stats, err)
+		t.Fatalf("scan with the app token after the Bearer Touch: %v %v", stats, err)
 	}
 }
 
-// TestDavForOcultaSesionesCaducadas: DavFor devuelve nil para una sesión
-// Bearer marcada como caducada (401/403 detectado por un scan) hasta que el
-// próximo Touch del usuario la refresca con su token nuevo (H8 review).
-func TestDavForOcultaSesionesCaducadas(t *testing.T) {
+// TestDavForHidesExpiredSessions: DavFor returns nil for a Bearer session marked
+// as expired (401/403 detected by a scan) until the next Touch of the user
+// refreshes it with the new token (H8 review).
+func TestDavForHidesExpiredSessions(t *testing.T) {
 	m, err := New(testConfig(config.Common{OpenCloudURL: "http://127.0.0.1:1", PhotosDataDir: t.TempDir()},
 		config.PhotosConfig{ScanEvery: time.Hour}), slog.Default(), nil)
 	if err != nil {
@@ -107,23 +107,23 @@ func TestDavForOcultaSesionesCaducadas(t *testing.T) {
 	ctx := context.Background()
 	m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: "tok-1"})
 	if m.reg.DavFor(ctx, "user-1") == nil {
-		t.Fatal("dav esperado tras Touch")
+		t.Fatal("dav expected after Touch")
 	}
 	m.reg.markExpired("user-1")
 	if m.reg.DavFor(ctx, "user-1") != nil {
-		t.Fatal("una sesión caducada no debe servir su dav")
+		t.Fatal("an expired session must not serve its dav")
 	}
-	// el próximo request del usuario (Touch con token nuevo) la recupera
+	// the next user request (Touch with a new token) recovers it
 	m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: "tok-2"})
 	if m.reg.DavFor(ctx, "user-1") == nil {
-		t.Fatal("Touch con token fresco debe recuperar la sesión")
+		t.Fatal("Touch with a fresh token must recover the session")
 	}
 }
 
-// El scan se puede acotar a un drive concreto (issue #39): el personal no
-// sirve cuando las fotos viven en otro drive del mismo owner.
-func TestResolveSpaceConfigurado(t *testing.T) {
-	srv := fakeOpenCloud(t, propfindUnaFoto)
+// The scan can be limited to a specific drive (issue #39): the personal one is no
+// good when the photos live in another drive of the same owner.
+func TestResolveSpaceConfigured(t *testing.T) {
+	srv := fakeOpenCloud(t, propfindOnePhoto)
 	m, err := New(testConfig(config.Common{OpenCloudURL: srv.URL, PhotosDataDir: t.TempDir()},
 		config.PhotosConfig{ScanEvery: time.Hour, ScanSpace: "d1"}), slog.Default(), nil)
 	if err != nil {
@@ -138,13 +138,13 @@ func TestResolveSpaceConfigurado(t *testing.T) {
 		t.Fatalf("resolveSpace: %v", err)
 	}
 	if !strings.Contains(got, "/dav/spaces/1") {
-		t.Errorf("espacio: got %q", got)
+		t.Errorf("space: got %q", got)
 	}
 
-	// Un id que no está entre los drives visibles es un error claro, no un
-	// fallback silencioso al personal.
+	// An id that is not among the visible drives is a clear error, not a silent
+	// fallback to the personal one.
 	m.reg.space = "no-existe"
 	if _, err := m.reg.resolveSpace(ctx, sess, "user-1"); err == nil {
-		t.Error("esperaba error con un espacio inexistente")
+		t.Error("expected an error with a non-existent space")
 	}
 }

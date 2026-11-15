@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// graphStub simula el /graph/v1.0/me de OpenCloud.
+// graphStub simulates OpenCloud's /graph/v1.0/me.
 type graphStub struct {
 	srv      *httptest.Server
 	requests atomic.Int32
@@ -66,27 +66,27 @@ func (g *graphStub) validator(p Policy) *GraphValidator {
 	return NewGraphValidator(g.srv.URL, p, slog.Default())
 }
 
-// (1) cache hit: dentro del TTL no se re-emite petición a Graph.
-func TestCacheHitNoReemite(t *testing.T) {
+// (1) cache hit: within the TTL no request is re-issued to Graph.
+func TestCacheHitDoesNotRequestAgain(t *testing.T) {
 	g := newGraphStub(t)
 	v := g.validator(MultiTenant())
 
 	for i := 0; i < 3; i++ {
 		u, ok := v.Validate(context.Background(), Credential{Bearer: "good-token"})
 		if !ok || u.ID != "id-alice" {
-			t.Fatalf("validación %d: ok=%v u=%+v", i, ok, u)
+			t.Fatalf("validation %d: ok=%v u=%+v", i, ok, u)
 		}
 	}
 	if n := g.requests.Load(); n != 1 {
-		t.Fatalf("peticiones a Graph: got %d, want 1 (cache hit no funciona)", n)
+		t.Fatalf("requests to Graph: got %d, want 1 (cache hit not working)", n)
 	}
 }
 
-// (2) singleflight: N validaciones concurrentes con el mismo token →
-// UNA sola petición a Graph.
-func TestSingleflightUnaPeticion(t *testing.T) {
+// (2) singleflight: N concurrent validations with the same token ->
+// a SINGLE request to Graph.
+func TestSingleflightOneRequest(t *testing.T) {
 	g := newGraphStub(t)
-	g.delay = 100 * time.Millisecond // garantiza solape de las N goroutines
+	g.delay = 100 * time.Millisecond // guarantees the N goroutines overlap
 	v := g.validator(MultiTenant())
 
 	const n = 16
@@ -103,101 +103,101 @@ func TestSingleflightUnaPeticion(t *testing.T) {
 	}
 	wg.Wait()
 	if got := okCount.Load(); got != n {
-		t.Fatalf("validaciones ok: got %d, want %d", got, n)
+		t.Fatalf("ok validations: got %d, want %d", got, n)
 	}
 	if got := g.requests.Load(); got != 1 {
-		t.Fatalf("peticiones a Graph: got %d, want 1 (singleflight roto)", got)
+		t.Fatalf("requests to Graph: got %d, want 1 (singleflight broken)", got)
 	}
 }
 
-// (3) 401 cacheado 30 s: un token malo en bucle no martillea Graph.
-func TestNegativaCacheada(t *testing.T) {
+// (3) 401 cached for 30 s: a bad token in a loop does not hammer Graph.
+func TestNegativeCachedResult(t *testing.T) {
 	g := newGraphStub(t)
 	v := g.validator(MultiTenant())
 
 	for i := 0; i < 5; i++ {
 		if _, ok := v.Validate(context.Background(), Credential{Bearer: "bad-token"}); ok {
-			t.Fatalf("token malo validado en intento %d", i)
+			t.Fatalf("bad token validated on attempt %d", i)
 		}
 	}
 	if n := g.requests.Load(); n != 1 {
-		t.Fatalf("peticiones a Graph: got %d, want 1 (401 no cacheado)", n)
+		t.Fatalf("requests to Graph: got %d, want 1 (401 not cached)", n)
 	}
 }
 
-// (4) políticas: MultiTenant admite a todos; SingleTenant solo a su oc_id.
+// (4) policies: MultiTenant admits everyone, SingleTenant only its oc_id.
 func TestPoliticas(t *testing.T) {
 	g := newGraphStub(t)
 	cred := Credential{Bearer: "good-token"}
 
 	if _, ok := g.validator(MultiTenant()).Validate(context.Background(), cred); !ok {
-		t.Fatal("MultiTenant rechazó un usuario válido")
+		t.Fatal("MultiTenant rejected a valid user")
 	}
 	if _, ok := g.validator(SingleTenant("id-alice")).Validate(context.Background(), cred); !ok {
-		t.Fatal("SingleTenant(id correcto) rechazó al tenant")
+		t.Fatal("SingleTenant(correct id) rejected the tenant")
 	}
-	if _, ok := g.validator(SingleTenant("id-otro")).Validate(context.Background(), cred); ok {
-		t.Fatal("SingleTenant(id distinto) admitió a otro usuario")
+	if _, ok := g.validator(SingleTenant("id-other")).Validate(context.Background(), cred); ok {
+		t.Fatal("SingleTenant(different id) admitted another user")
 	}
 	if SingleTenant("").Admit(&User{ID: ""}) {
-		t.Fatal("SingleTenant(\"\") no debe admitir nunca")
+		t.Fatal("SingleTenant(\"\") must never admit")
 	}
 }
 
-// (5) Basic y Bearer resuelven al MISMO usuario por oc_id.
-func TestBasicBearerMismoUsuario(t *testing.T) {
+// (5) Basic and Bearer resolve to the SAME user by oc_id.
+func TestBasicBearerSameUser(t *testing.T) {
 	g := newGraphStub(t)
 	v := g.validator(MultiTenant())
 
 	ub, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "app-token"})
 	if !ok {
-		t.Fatal("basic rechazado")
+		t.Fatal("basic rejected")
 	}
 	ut, ok := v.Validate(context.Background(), Credential{Bearer: "good-token"})
 	if !ok {
-		t.Fatal("bearer rechazado")
+		t.Fatal("bearer rejected")
 	}
 	if ub.ID != ut.ID || ub.ID != "id-alice" {
-		t.Fatalf("oc_id distinto: basic=%q bearer=%q", ub.ID, ut.ID)
+		t.Fatalf("different oc_id: basic=%q bearer=%q", ub.ID, ut.ID)
 	}
 	if ub.Username != "alice" || ut.Username != "alice" {
 		t.Fatalf("username: basic=%q bearer=%q", ub.Username, ut.Username)
 	}
 	if ub.Email != "alice@example.com" || ub.DisplayName != "Alice Liddell" {
-		t.Fatalf("mapeo graphMe: %+v", ub)
+		t.Fatalf("graphMe mapping: %+v", ub)
 	}
 }
 
-// La caché Basic se indexa por usuario Y contraseña (hash, SPEC §6.1): una
-// contraseña distinta para el mismo usuario NO sale de caché — va a Graph y
-// falla (B1: con la clave antigua `basic:<user>` cualquier password entraba
-// durante 5 min tras un login legítimo).
-func TestCacheBasicPorUsuario(t *testing.T) {
+// The Basic cache is indexed by user AND password (hash, SPEC §6.1): a
+// different password for the same user does NOT come from the cache - it goes
+// to Graph and fails (B1: with the old key `basic:<user>` any password got in
+// for 5 min after a legitimate login).
+func TestBasicCachePerUser(t *testing.T) {
 	g := newGraphStub(t)
 	v := g.validator(MultiTenant())
 
 	if _, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "app-token"}); !ok {
-		t.Fatal("basic rechazado")
+		t.Fatal("basic rejected")
 	}
-	if _, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "otra"}); ok {
-		t.Fatal("contraseña distinta admitida desde caché (B1)")
+	if _, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "other"}); ok {
+		t.Fatal("different password admitted from cache (B1)")
 	}
-	// 2 peticiones: la buena (200) y la mala (401): la segunda NO fue cache hit.
+	// 2 requests: the good one (200) and the bad one (401), the second was NOT a cache hit.
 	if n := g.requests.Load(); n != 2 {
-		t.Fatalf("peticiones a Graph: got %d, want 2 (la password distinta no debe salir de caché)", n)
+		t.Fatalf("requests to Graph: got %d, want 2 (the different password must not come from cache)", n)
 	}
-	// y la buena sigue saliendo de caché sin nueva petición.
+	// and the good one still comes from the cache with no new request.
 	if _, ok := v.Validate(context.Background(), Credential{Username: "alice", Password: "app-token"}); !ok {
-		t.Fatal("la credencial buena debería seguir saliendo de caché")
+		t.Fatal("the good credential should still come from the cache")
 	}
 	if n := g.requests.Load(); n != 2 {
-		t.Fatalf("peticiones a Graph: got %d, want 2", n)
+		t.Fatalf("requests to Graph: got %d, want 2", n)
 	}
 }
 
-// DoS por caché negativa (B1): un intento con password MALA no puede
-// invalidar la entrada cacheada de la password buena del mismo usuario —
-// cada contraseña tiene su propia clave.
+// DoS through a negative cache (B1): an attempt with a BAD password cannot
+// invalidate the cached entry of the good password of the same user - each
+// password has its own key.
 func TestPasswordMalaNoInvalidaLaBuena(t *testing.T) {
 	g := newGraphStub(t)
 	v := g.validator(MultiTenant())
@@ -206,33 +206,33 @@ func TestPasswordMalaNoInvalidaLaBuena(t *testing.T) {
 	bad := Credential{Username: "alice", Password: "mala"}
 
 	if _, ok := v.Validate(context.Background(), good); !ok {
-		t.Fatal("basic bueno rechazado")
+		t.Fatal("good basic rejected")
 	}
-	// atacante: password mala en bucle → 401 cacheado 30 s BAJO SU CLAVE.
+	// attacker: bad password in a loop -> 401 cached for 30 s UNDER ITS KEY.
 	for i := 0; i < 3; i++ {
 		if _, ok := v.Validate(context.Background(), bad); ok {
-			t.Fatal("password mala validada")
+			t.Fatal("bad password validated")
 		}
 	}
-	// el usuario legítimo sigue entrando por caché, sin nueva petición a Graph.
+	// the legitimate user still gets in through the cache, with no new request to Graph.
 	before := g.requests.Load()
 	if _, ok := v.Validate(context.Background(), good); !ok {
-		t.Fatal("DoS: la password mala invalidó la entrada cacheada de la buena")
+		t.Fatal("DoS: the bad password invalidated the cached entry of the good one")
 	}
 	if n := g.requests.Load(); n != before {
-		t.Fatalf("peticiones extra a Graph: got %d, want %d", n, before)
+		t.Fatalf("extra requests to Graph: got %d, want %d", n, before)
 	}
-	// y el bucle malo solo costó UNA petición (negativa cacheada bajo su clave).
+	// and the bad loop only cost ONE request (negative cached under its key).
 	if n := g.requests.Load(); n != 2 {
-		t.Fatalf("peticiones a Graph: got %d, want 2 (1 buena + 1 mala cacheada)", n)
+		t.Fatalf("requests to Graph: got %d, want 2 (1 good + 1 bad cached)", n)
 	}
 }
 
-// M7: un fallo de red o un 5xx de Graph NO se cachea como negativo — cada
-// intento reintenta contra Graph y un Graph recuperado vuelve a validar al
-// instante (sin esperar los 30 s de la caché negativa).
-func TestFallosTransitoriosNoSeCachean(t *testing.T) {
-	t.Run("5xx no cacheado", func(t *testing.T) {
+// M7: a network failure or a 5xx from Graph is NOT cached as negative - every
+// attempt retries against Graph and a recovered Graph validates again
+// immediately (without waiting for the 30 s of the negative cache).
+func TestTransientFailuresAreNotCached(t *testing.T) {
+	t.Run("5xx not cached", func(t *testing.T) {
 		var requests atomic.Int32
 		var fail atomic.Bool
 		fail.Store(true)
@@ -251,29 +251,29 @@ func TestFallosTransitoriosNoSeCachean(t *testing.T) {
 
 		for i := 0; i < 3; i++ {
 			if _, ok := v.Validate(context.Background(), cred); ok {
-				t.Fatal("validó con Graph 502")
+				t.Fatal("validated with Graph 502")
 			}
 		}
 		if n := requests.Load(); n != 3 {
-			t.Fatalf("peticiones a Graph: got %d, want 3 (el 5xx no debe cachearse como negativo)", n)
+			t.Fatalf("requests to Graph: got %d, want 3 (the 5xx must not be cached as negative)", n)
 		}
-		// Graph se recupera: la siguiente validación entra sin esperar 30 s.
+		// Graph recovers: the next validation gets in without waiting 30 s.
 		fail.Store(false)
 		if _, ok := v.Validate(context.Background(), cred); !ok {
-			t.Fatal("Graph recuperado pero la validación sigue fallando (negativa cacheada indebidamente)")
+			t.Fatal("Graph recovered but validation still fails (negative cached improperly)")
 		}
 	})
 
-	t.Run("red caida no cacheada", func(t *testing.T) {
+	t.Run("network down not cached", func(t *testing.T) {
 		v := NewGraphValidator("http://127.0.0.1:1", MultiTenant(), slog.Default())
 		for i := 0; i < 2; i++ {
 			if _, ok := v.Validate(context.Background(), Credential{Bearer: "x"}); ok {
-				t.Fatal("validó con Graph inalcanzable")
+				t.Fatal("validated with Graph unreachable")
 			}
 		}
-		// sin caché negativa: la clave no existe en la caché.
+		// no negative cache: the key does not exist in the cache.
 		if _, _, hit := v.lookup(cacheKey(Credential{Bearer: "x"})); hit {
-			t.Fatal("fallo de red cacheado como negativo (M7)")
+			t.Fatal("network failure cached as negative (M7)")
 		}
 	})
 }
@@ -291,26 +291,26 @@ func TestURLNormalizacion(t *testing.T) {
 	}
 }
 
-func TestCredencialVacia(t *testing.T) {
+func TestEmptyCredential(t *testing.T) {
 	g := newGraphStub(t)
 	v := g.validator(MultiTenant())
 	if _, ok := v.Validate(context.Background(), Credential{}); ok {
-		t.Fatal("credencial vacía validada")
+		t.Fatal("empty credential validated")
 	}
 	if n := g.requests.Load(); n != 0 {
-		t.Fatalf("Graph llamado con credencial vacía: %d peticiones", n)
+		t.Fatalf("Graph called with an empty credential: %d requests", n)
 	}
 }
 
 func TestGraphInalcanzable(t *testing.T) {
 	v := NewGraphValidator("http://127.0.0.1:1", MultiTenant(), slog.Default())
 	if _, ok := v.Validate(context.Background(), Credential{Bearer: "x"}); ok {
-		t.Fatal("validó con Graph inalcanzable")
+		t.Fatal("validated with Graph unreachable")
 	}
 }
 
-// Middleware: 401 con WWW-Authenticate sin credenciales; pasa el *User al
-// contexto con credenciales válidas.
+// Middleware: 401 with WWW-Authenticate without credentials, it passes the
+// *User to the context with valid credentials.
 func TestMiddleware(t *testing.T) {
 	g := newGraphStub(t)
 	v := g.validator(MultiTenant())
@@ -322,7 +322,7 @@ func TestMiddleware(t *testing.T) {
 	})
 	h := Middleware(v, next)
 
-	t.Run("sin credenciales → 401 + WWW-Authenticate", func(t *testing.T) {
+	t.Run("no credentials -> 401 + WWW-Authenticate", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
 		res := rec.Result()
@@ -335,7 +335,7 @@ func TestMiddleware(t *testing.T) {
 		}
 	})
 
-	t.Run("basic válido → 200 y user en contexto", func(t *testing.T) {
+	t.Run("valid basic -> 200 and user in context", func(t *testing.T) {
 		gotUser = nil
 		r := httptest.NewRequest(http.MethodGet, "/x", nil)
 		r.SetBasicAuth("alice", "app-token")
@@ -345,11 +345,11 @@ func TestMiddleware(t *testing.T) {
 			t.Fatalf("got %d", rec.Result().StatusCode)
 		}
 		if gotUser == nil || gotUser.ID != "id-alice" || gotUser.Username != "alice" {
-			t.Fatalf("user en ctx: %+v", gotUser)
+			t.Fatalf("user in ctx: %+v", gotUser)
 		}
 	})
 
-	t.Run("bearer válido → 200", func(t *testing.T) {
+	t.Run("valid bearer -> 200", func(t *testing.T) {
 		gotUser = nil
 		r := httptest.NewRequest(http.MethodGet, "/x", nil)
 		r.Header.Set("Authorization", "Bearer good-token")
@@ -360,7 +360,7 @@ func TestMiddleware(t *testing.T) {
 		}
 	})
 
-	t.Run("bearer malo → 401", func(t *testing.T) {
+	t.Run("bad bearer -> 401", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/x", nil)
 		r.Header.Set("Authorization", "Bearer bad-token")
 		rec := httptest.NewRecorder()
@@ -370,7 +370,7 @@ func TestMiddleware(t *testing.T) {
 		}
 	})
 
-	t.Run("basic malformado → 401", func(t *testing.T) {
+	t.Run("malformed basic -> 401", func(t *testing.T) {
 		for _, hval := range []string{"Basic !!!", "Basic " + "c2luLWRvcy1wdW50b3M=", "Bearer "} {
 			r := httptest.NewRequest(http.MethodGet, "/x", nil)
 			r.Header.Set("Authorization", hval)
@@ -383,35 +383,35 @@ func TestMiddleware(t *testing.T) {
 	})
 }
 
-// WithPolicy (H5, SPEC §6.2): el validador derivado comparte la caché con el
-// base (una sola petición a Graph entre módulos) pero aplica su propia
-// política — SingleTenant en photos no hereda la admisión MultiTenant.
-func TestWithPolicyComparteCacheNoPolitica(t *testing.T) {
+// WithPolicy (H5, SPEC §6.2): the derived validator shares the cache with the
+// base one (a single request to Graph across modules) but applies its own
+// policy - SingleTenant in photos does not inherit the MultiTenant admission.
+func TestWithPolicySharesCacheNotPolicy(t *testing.T) {
 	g := newGraphStub(t)
 	base := g.validator(MultiTenant())
-	photos := base.WithPolicy(SingleTenant("id-otro"))
+	photos := base.WithPolicy(SingleTenant("id-other"))
 
-	// photos valida primero: usuario válido pero NO es el tenant → rechazado.
+	// photos validates first: valid user but NOT the tenant -> rejected.
 	if _, ok := photos.Validate(context.Background(), Credential{Bearer: "good-token"}); ok {
-		t.Fatal("WithPolicy(SingleTenant otro) admitió al usuario")
+		t.Fatal("WithPolicy(SingleTenant other) admitted the user")
 	}
-	// la admisión quedó cacheada: base (MultiTenant) entra SIN nueva petición.
+	// the admission stayed cached: base (MultiTenant) gets in WITHOUT a new request.
 	before := g.requests.Load()
 	if _, ok := base.Validate(context.Background(), Credential{Bearer: "good-token"}); !ok {
-		t.Fatal("base MultiTenant rechazó con la caché ya caliente")
+		t.Fatal("MultiTenant base rejected with the cache already warm")
 	}
 	if n := g.requests.Load(); n != before || n != 1 {
-		t.Fatalf("peticiones a Graph: got %d, want 1 (caché no compartida)", n)
+		t.Fatalf("requests to Graph: got %d, want 1 (cache not shared)", n)
 	}
-	// y el validador single-tenant correcto sí admite al tenant.
+	// and the correct single-tenant validator does admit the tenant.
 	if _, ok := base.WithPolicy(SingleTenant("id-alice")).Validate(context.Background(),
 		Credential{Bearer: "good-token"}); !ok {
-		t.Fatal("WithPolicy(SingleTenant correcto) rechazó al tenant")
+		t.Fatal("WithPolicy(SingleTenant correct) rejected the tenant")
 	}
 }
 
 func ExampleCredential() {
-	c := Credential{Bearer: "token-de-sesion"}
+	c := Credential{Bearer: "session-token"}
 	fmt.Println(c.Bearer != "")
 	// Output: true
 }

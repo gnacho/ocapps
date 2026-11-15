@@ -257,14 +257,14 @@ func TestPruneBeforeReturnsStubs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// /ocs/v2.php/cloud/user extendido (SPEC §4.2, H5): único handler de la ruta
-// en el servicio unificado. Modo XML por defecto (Iotas) + modo JSON para
-// news-android (id=username, displayname, display-name; 401 sin auth).
+// Extended /ocs/v2.php/cloud/user (SPEC §4.2, H5): the only handler on the
+// route in the unified service. XML mode by default (Iotas) plus JSON mode for
+// news-android (id=username, displayname, display-name, 401 with no auth).
 // ---------------------------------------------------------------------------
 
-// newTestServerConGraph builds a Server whose validator talks to a fake
+// newTestServerWithGraph builds a Server whose validator talks to a fake
 // Graph that only admits Basic nacho:app-token.
-func newTestServerConGraph(t *testing.T) *Server {
+func newTestServerWithGraph(t *testing.T) *Server {
 	t.Helper()
 	graph := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, p, ok := r.BasicAuth()
@@ -294,8 +294,8 @@ func newTestServerConGraph(t *testing.T) *Server {
 	return NewServer(Base, "", s, v, nil, nil)
 }
 
-func TestUserInfoJSONConAuth(t *testing.T) {
-	s := newTestServerConGraph(t)
+func TestUserInfoJSONWithAuth(t *testing.T) {
+	s := newTestServerWithGraph(t)
 	for _, variant := range []string{"?format=json", "accept"} {
 		req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user", nil)
 		if variant == "?format=json" {
@@ -315,54 +315,54 @@ func TestUserInfoJSONConAuth(t *testing.T) {
 		for _, want := range []string{`"ocs"`, `"status":"ok"`, `"statuscode":200`,
 			`"id":"nacho"`, `"displayname":"Nacho"`, `"display-name":"Nacho"`} {
 			if !strings.Contains(body, want) {
-				t.Fatalf("%s: falta %s en %s", variant, want, body)
+				t.Fatalf("%s: missing %s in %s", variant, want, body)
 			}
 		}
 	}
 }
 
-func TestUserInfoJSONSinAuth(t *testing.T) {
-	s := newTestServerConGraph(t)
+func TestUserInfoJSONWithoutAuth(t *testing.T) {
+	s := newTestServerWithGraph(t)
 	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user?format=json", nil)
 	w := httptest.NewRecorder()
 	s.handleUserInfo(w, req)
 
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("JSON sin auth: status = %d, want 401", w.Code)
+		t.Fatalf("JSON without auth: status = %d, want 401", w.Code)
 	}
 	if w.Header().Get("WWW-Authenticate") == "" {
-		t.Fatal("JSON sin auth: falta WWW-Authenticate")
+		t.Fatal("JSON without auth: missing WWW-Authenticate")
 	}
 	if !strings.Contains(w.Body.String(), `"statuscode":401`) {
-		t.Fatalf("JSON sin auth: body = %s", w.Body.String())
+		t.Fatalf("JSON without auth: body = %s", w.Body.String())
 	}
 }
 
-func TestUserInfoXMLModoPorDefecto(t *testing.T) {
-	s := newTestServerConGraph(t)
+func TestUserInfoXMLDefaultMode(t *testing.T) {
+	s := newTestServerWithGraph(t)
 
-	// sin auth: comportamiento histórico (Iotas) → 200 "User"
+	// no auth: historical behaviour (Iotas) -> 200 "User"
 	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user", nil)
 	w := httptest.NewRecorder()
 	s.handleUserInfo(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("XML sin auth: status = %d, want 200", w.Code)
+		t.Fatalf("XML without auth: status = %d, want 200", w.Code)
 	}
 	body := w.Body.String()
 	if !strings.Contains(body, "<id>User</id>") || !strings.Contains(body, "<displayname>User</displayname>") {
-		t.Fatalf("XML sin auth: body = %s", body)
+		t.Fatalf("XML without auth: body = %s", body)
 	}
 	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/xml") {
-		t.Fatalf("XML sin auth: Content-Type = %q", ct)
+		t.Fatalf("XML without auth: Content-Type = %q", ct)
 	}
 
-	// con auth: id/displayname = display name del usuario Graph
+	// with auth: id/displayname = display name of the Graph user
 	req2 := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/user", nil)
 	req2.SetBasicAuth("nacho", "app-token")
 	w2 := httptest.NewRecorder()
 	s.handleUserInfo(w2, req2)
 	if w2.Code != http.StatusOK || !strings.Contains(w2.Body.String(), "<id>Nacho</id>") {
-		t.Fatalf("XML con auth: %d %s", w2.Code, w2.Body.String())
+		t.Fatalf("XML with auth: %d %s", w2.Code, w2.Body.String())
 	}
 }
 
@@ -390,10 +390,10 @@ func TestCapabilitiesMergeCoreJSON(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
 	}
 	if gotAuth == "" {
-		t.Fatal("el core no recibio la cabecera Authorization")
+		t.Fatal("the core did not receive the Authorization header")
 	}
 	if gotFormat != "json" {
-		t.Fatalf("el core recibio format=%q, want json", gotFormat)
+		t.Fatalf("the core received format=%q, want json", gotFormat)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
@@ -401,11 +401,11 @@ func TestCapabilitiesMergeCoreJSON(t *testing.T) {
 	}
 	caps := doc["ocs"].(map[string]any)["data"].(map[string]any)["capabilities"].(map[string]any)
 	if _, ok := caps["core"]; !ok {
-		t.Fatalf("falta el bloque core: %s", w.Body.String())
+		t.Fatalf("missing the core block: %s", w.Body.String())
 	}
 	notes, ok := caps["notes"].(map[string]any)
 	if !ok {
-		t.Fatalf("falta el bloque notes: %s", w.Body.String())
+		t.Fatalf("missing the notes block: %s", w.Body.String())
 	}
 	if notes["version"] != Version {
 		t.Fatalf("notes.version = %v, want %s", notes["version"], Version)
@@ -429,13 +429,13 @@ func TestCapabilitiesMergeCoreXML(t *testing.T) {
 
 	body := w.Body.String()
 	if !strings.Contains(body, "<core>") || !strings.Contains(body, "8.0.1") {
-		t.Fatalf("falta el bloque core: %s", body)
+		t.Fatalf("missing the core block: %s", body)
 	}
 	if !strings.Contains(body, "<notes>") || !strings.Contains(body, Version) {
-		t.Fatalf("falta el bloque notes: %s", body)
+		t.Fatalf("missing the notes block: %s", body)
 	}
 	if i := strings.Index(body, "</capabilities>"); i < 0 || strings.Index(body, "<notes>") > i {
-		t.Fatalf("notes debe ir dentro de capabilities: %s", body)
+		t.Fatalf("notes must go inside capabilities: %s", body)
 	}
 }
 
@@ -468,7 +468,7 @@ func TestCapabilitiesMergeCoreFromPublicEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
 	}
 	if len(paths) != 2 || paths[1] != "/ocs/v1.php/cloud/capabilities" {
-		t.Fatalf("endpoints pedidos = %#v, want v2 y despues v1", paths)
+		t.Fatalf("requested endpoints = %#v, want v2 and then v1", paths)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
@@ -477,14 +477,14 @@ func TestCapabilitiesMergeCoreFromPublicEndpoint(t *testing.T) {
 	caps := doc["ocs"].(map[string]any)["data"].(map[string]any)["capabilities"].(map[string]any)
 	coreBlock, ok := caps["core"].(map[string]any)
 	if !ok {
-		t.Fatalf("falta el bloque core: %s", w.Body.String())
+		t.Fatalf("missing the core block: %s", w.Body.String())
 	}
 	status, ok := coreBlock["status"].(map[string]any)
 	if !ok || status["productversion"] != "9.1.0" {
 		t.Fatalf("productversion = %v, want 9.1.0", status["productversion"])
 	}
 	if _, ok := caps["notes"].(map[string]any); !ok {
-		t.Fatalf("falta el bloque notes: %s", w.Body.String())
+		t.Fatalf("missing the notes block: %s", w.Body.String())
 	}
 }
 
@@ -509,10 +509,10 @@ func TestCapabilitiesMergeCoreXMLFromPublicEndpoint(t *testing.T) {
 
 	body := w.Body.String()
 	if !strings.Contains(body, "<core>") || !strings.Contains(body, "9.1.0") {
-		t.Fatalf("falta el bloque core: %s", body)
+		t.Fatalf("missing the core block: %s", body)
 	}
 	if !strings.Contains(body, "<notes>") {
-		t.Fatalf("falta el bloque notes: %s", body)
+		t.Fatalf("missing the notes block: %s", body)
 	}
 }
 
@@ -535,9 +535,9 @@ func TestCapabilitiesFallbackWhenCoreFails(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Ocs.Data.Capabilities.Notes.Version != Version {
-		t.Fatalf("fallback no devolvio notes: %s", w.Body.String())
+		t.Fatalf("the fallback did not return notes: %s", w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), `"core"`) {
-		t.Fatalf("el fallback no debe incluir core: %s", w.Body.String())
+		t.Fatalf("the fallback must not include core: %s", w.Body.String())
 	}
 }

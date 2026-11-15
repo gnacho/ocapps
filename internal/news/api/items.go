@@ -8,7 +8,7 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// parseID convierte un id en string a int64 (>0).
+// parseID converts a string id to int64 (>0).
 func parseID(s string) (int64, error) {
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
@@ -17,7 +17,7 @@ func parseID(s string) (int64, error) {
 	return n, nil
 }
 
-// boolParam lee un booleano de query (true|1).
+// boolParam reads a boolean from the query (true|1).
 func boolParam(r *http.Request, key string, def bool) bool {
 	v := r.URL.Query().Get(key)
 	if v == "" {
@@ -26,7 +26,7 @@ func boolParam(r *http.Request, key string, def bool) bool {
 	return v == "true" || v == "1"
 }
 
-// newestItemID lee {"newestItemId": N} del cuerpo (0 = sin tope).
+// newestItemID reads {"newestItemId": N} from the body (0 = no cap).
 func newestItemID(r *http.Request, w http.ResponseWriter) (int64, bool) {
 	var body struct {
 		NewestItemID int64 `json:"newestItemId"`
@@ -38,7 +38,7 @@ func newestItemID(r *http.Request, w http.ResponseWriter) (int64, bool) {
 	return body.NewestItemID, true
 }
 
-// itemFilterFromRequest construye el filtro común de /items y /items/updated.
+// itemFilterFromRequest builds the common filter of /items and /items/updated.
 func itemFilterFromRequest(r *http.Request, u *store.User, updated bool) (store.ItemFilter, bool) {
 	q := r.URL.Query()
 	f := store.ItemFilter{UserID: u.ID}
@@ -60,9 +60,9 @@ func itemFilterFromRequest(r *http.Request, u *store.User, updated bool) (store.
 		if v, err := parseID(q.Get("lastModified")); err == nil {
 			f.UpdatedSince = v
 		}
-		f.GetRead = true         // updated informa cambios de estado, leídos incluidos
-		f.BatchSize = -1         // la spec no define batchSize en /items/updated
-		f.IncludeFiltered = true // updated también reporta el estado filtered
+		f.GetRead = true         // updated reports state changes, read items included
+		f.BatchSize = -1         // the spec does not define batchSize in /items/updated
+		f.IncludeFiltered = true // updated also reports the filtered state
 	} else {
 		f.GetRead = boolParam(r, "getRead", true)
 		f.IncludeFiltered = boolParam(r, "getFiltered", false)
@@ -79,8 +79,8 @@ func itemFilterFromRequest(r *http.Request, u *store.User, updated bool) (store.
 	return f, true
 }
 
-// annotateClusters rellena clusterSize/clusterPrimaryId de los items listados
-// (#42): consulta los cluster_keys de la página y su tamaño global por usuario.
+// annotateClusters fills clusterSize/clusterPrimaryId of the listed items
+// (#42): it queries the cluster_keys of the page and their global size per user.
 func (s *Server) annotateClusters(u *store.User, items []store.Item) {
 	if len(items) == 0 {
 		return
@@ -124,7 +124,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.store.ListItems(f)
 	if err != nil {
-		s.logError(w, r, "listar items", err)
+		s.logError(w, r, "list items", err)
 		return
 	}
 	s.annotateClusters(u, items)
@@ -141,7 +141,7 @@ func (s *Server) updatedItems(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.store.ListItems(f)
 	if err != nil {
-		s.logError(w, r, "items actualizados", err)
+		s.logError(w, r, "updated items", err)
 		return
 	}
 	s.annotateClusters(u, items)
@@ -149,8 +149,8 @@ func (s *Server) updatedItems(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// searchItems: búsqueda de artículos por query en título/cuerpo/URL.
-// Ruta propia de la app bajo la base v1-3 (la spec v1.3 no define search).
+// searchItems: article search by query in title/body/URL.
+// App own route under the v1-3 base (the v1.3 spec does not define search).
 func (s *Server) searchItems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := strings.TrimSpace(q.Get("query"))
@@ -164,7 +164,7 @@ func (s *Server) searchItems(w http.ResponseWriter, r *http.Request) {
 		errorStatus(w, r, http.StatusUnprocessableEntity, "invalid_type")
 		return
 	}
-	// búsqueda: un límite razonable (los clientes paginan a partir de ahí)
+	// search: a reasonable limit (clients paginate from there)
 	if f.BatchSize < 0 || f.BatchSize > 200 {
 		f.BatchSize = 100
 	}
@@ -178,8 +178,8 @@ func (s *Server) searchItems(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// markItem devuelve un handler para marcar un item individual.
-// val=true → unread/starred según col; false → lo quita.
+// markItem returns a handler to mark an individual item.
+// val=true -> unread/starred according to col, false -> it removes it.
 func (s *Server) markItem(val bool, col string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := parseID(r.PathValue("itemId"))
@@ -190,7 +190,7 @@ func (s *Server) markItem(val bool, col string) http.HandlerFunc {
 		u := user(r)
 		exists, err := s.store.ItemExists(u.ID, id)
 		if err != nil {
-			s.logError(w, r, "comprobar item", err)
+			s.logError(w, r, "check item", err)
 			return
 		}
 		if !exists {
@@ -204,15 +204,15 @@ func (s *Server) markItem(val bool, col string) http.HandlerFunc {
 			mErr = s.store.MarkItemsStarFlag(u.ID, []int64{id}, val)
 		}
 		if mErr != nil {
-			s.logError(w, r, "marcar item", mErr)
+			s.logError(w, r, "mark item", mErr)
 			return
 		}
 		writeEmpty(w)
 	}
 }
 
-// multipleBody acepta "itemIds" (definiciones de la spec) y "items"
-// (sección How To Sync): los clientes reales mandan ambas formas.
+// multipleBody accepts "itemIds" (spec definitions) and "items"
+// (How To Sync section): real clients send both forms.
 type multipleBody struct {
 	ItemIDs []int64 `json:"itemIds"`
 	Items   []int64 `json:"items"`
@@ -241,21 +241,21 @@ func (s *Server) markMultiple(val bool, col string) http.HandlerFunc {
 			err = s.store.MarkItemsStarFlag(user(r).ID, ids, val)
 		}
 		if err != nil {
-			s.logError(w, r, "marcar items", err)
+			s.logError(w, r, "mark items", err)
 			return
 		}
 		writeEmpty(w)
 	}
 }
 
-// markAllRead marca todos los items del usuario hasta newestItemId.
+// markAllRead marks all the user items up to newestItemId.
 func (s *Server) markAllRead(w http.ResponseWriter, r *http.Request) {
 	maxID, ok := newestItemID(r, w)
 	if !ok {
 		return
 	}
 	if _, err := s.store.MarkAllRead(user(r).ID, maxID, "all", 0); err != nil {
-		s.logError(w, r, "marcar todo leído", err)
+		s.logError(w, r, "mark all read", err)
 		return
 	}
 	writeEmpty(w)

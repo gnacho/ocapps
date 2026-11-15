@@ -20,7 +20,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /feeds", s.createFeed)
 	mux.HandleFunc("GET /feeds/discover", s.discoverFeed)
 	mux.HandleFunc("DELETE /feeds/{feedId}", s.deleteFeed)
-	// move/rename: la spec v1.3 dice POST pero news-android usa PUT → ambos
+	// move/rename: the v1.3 spec says POST but news-android uses PUT -> both
 	for _, m := range []string{http.MethodPost, http.MethodPut} {
 		mux.HandleFunc(m+" /feeds/{feedId}/move", s.moveFeed)
 		mux.HandleFunc(m+" /feeds/{feedId}/rename", s.renameFeed)
@@ -37,7 +37,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /feeds/{feedId}/scraper", s.getFeedScraper)
 	mux.HandleFunc("POST /feeds/{feedId}/scraper", s.setFeedScraper)
 	mux.HandleFunc("POST /feeds/{feedId}/credentials", s.setFeedCredentials)
-	mux.HandleFunc("GET /feeds/update", s.updateFeed) // updater API, solo admin
+	mux.HandleFunc("GET /feeds/update", s.updateFeed) // updater API, admin only
 
 	// Items
 	mux.HandleFunc("GET /items", s.listItems)
@@ -52,9 +52,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /items/{itemId}/share", s.createShare)
 	mux.HandleFunc("DELETE /items/{itemId}/share", s.deleteShare)
 
-	// Marcado múltiple: la spec oficial se contradice (definiciones: POST con
-	// "itemIds"; sección How To Sync: PUT con "items") → registramos ambos
-	// métodos y aceptamos ambas claves.
+	// Bulk marking: the official spec contradicts itself (definitions: POST with
+	// "itemIds", How To Sync section: PUT with "items") -> we register both
+	// methods and accept both keys.
 	for _, m := range []string{http.MethodPost, http.MethodPut} {
 		mux.HandleFunc(m+" /items/read/multiple", s.markMultiple(false, "unread"))
 		mux.HandleFunc(m+" /items/unread/multiple", s.markMultiple(true, "unread"))
@@ -62,38 +62,38 @@ func (s *Server) routes(mux *http.ServeMux) {
 		mux.HandleFunc(m+" /items/unstar/multiple", s.markMultiple(false, "starred"))
 	}
 
-	// Favicon (spec v1.3, News 27.2+): hash md5 de la URL del feed.
-	// Se registra como ruta PÚBLICA en Handler() (no requiere auth: solo
-	// lee del cache en disco, sin SSRF).
+	// Favicon (v1.3 spec, News 27.2+): md5 hash of the feed URL.
+	// It is registered as a PUBLIC route in Handler() (it does not require auth: it only
+	// reads from the on-disk cache, no SSRF).
 
-	// Updater API (spec): cleanup + feeds/all, solo admin.
+	// Updater API (spec): cleanup + feeds/all, admin only.
 	mux.HandleFunc("GET /cleanup/before-update", s.adminOnly(s.cleanupBefore))
 	mux.HandleFunc("GET /cleanup/after-update", s.adminOnly(s.cleanupAfter))
 	mux.HandleFunc("GET /feeds/all", s.adminOnly(s.allFeedsForUpdater))
 
-	// OPML (ruta propia de la app, no de la spec v1.3): export/import de
-	// suscripciones para la PWA y migración desde otros lectores.
+	// OPML (app own route, not in the v1.3 spec): export/import of
+	// subscriptions for the PWA and migration from other readers.
 	mux.HandleFunc("GET /export/opml", s.exportOPML)
 	mux.HandleFunc("POST /import/opml", s.importOPML)
 
-	// Refresco manual (extensión propia bajo la base v1.3; la ruta updater
-	// de la spec es solo-admin). OJO: NADA bajo /api/ — ese prefijo es de
-	// OpenCloud (api/v0/settings) y no se puede proxificar a ocnews.
+	// Manual refresh (own extension under the v1.3 base, the spec updater
+	// route is admin only). NOTE: NOTHING under /api/, that prefix belongs to
+	// OpenCloud (api/v0/settings) and cannot be proxied to ocnews.
 	mux.HandleFunc("POST /refresh", s.refreshUserFeeds)
 
-	// Búsquedas guardadas (extensión propia, feed virtual).
+	// Saved searches (own extension, virtual feed).
 	mux.HandleFunc("GET /searches", s.listSearches)
 	mux.HandleFunc("POST /searches", s.createSearch)
 	mux.HandleFunc("DELETE /searches/{searchId}", s.deleteSearch)
 	mux.HandleFunc("GET /searches/{searchId}/items", s.searchSavedItems)
 
-	// Auto-marcado como leído al llegar (extensión propia).
+	// Auto-mark as read on arrival (own extension).
 	mux.HandleFunc("GET /auto-read", s.listAutoRead)
 	mux.HandleFunc("POST /auto-read", s.addAutoRead)
 	mux.HandleFunc("DELETE /auto-read/{ruleId}", s.deleteAutoRead)
 }
 
-// adminOnly envuelve un handler exigiendo rol admin.
+// adminOnly wraps a handler requiring the admin role.
 func (s *Server) adminOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if user(r).Role != "admin" {
@@ -124,7 +124,7 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		"userId":             u.Username,
 		"displayName":        u.DisplayName,
 		"lastLoginTimestamp": u.LastLoginAt,
-		"language":           u.Language, // extensión propia; la spec permite atributos nuevos
+		"language":           u.Language, // own extension, the spec allows new attributes
 		"avatar":             nil,
 	})
 }

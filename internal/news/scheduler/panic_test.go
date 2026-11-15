@@ -1,8 +1,8 @@
 package scheduler
 
-// Tests de I3: un pánico en una goroutine interna del scheduler NO tumba el
-// proceso ni el loop; un pánico en el loop principal se recupera y vuelve
-// como error de Run (el wiring marca el módulo failed, D3).
+// I3 tests: a panic in an internal scheduler goroutine does NOT take down the
+// process nor the loop, a panic in the main loop is recovered and returned
+// as a Run error (the wiring marks the module failed, D3).
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// panicRefresher paniquea en cada Refresh (un feed "envenenado").
+// panicRefresher panics on every Refresh (a "poisoned" feed).
 type panicRefresher struct{ calls atomic.Int32 }
 
 func (p *panicRefresher) Refresh(context.Context, *store.Feed) refresher.Result {
@@ -29,9 +29,9 @@ func (p *panicRefresher) Refresh(context.Context, *store.Feed) refresher.Result 
 
 func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// feedVencido crea usuario + feed con next_update en el pasado para que el
-// primer ciclo del scheduler lo recoja.
-func feedVencido(t *testing.T, st *store.Store) {
+// expiredFeed creates a user + feed with next_update in the past so that the
+// first scheduler cycle picks it up.
+func expiredFeed(t *testing.T, st *store.Store) {
 	t.Helper()
 	hash, _ := auth.HashPassword("x")
 	uid, err := st.CreateUser("u", hash, "u", "user")
@@ -45,16 +45,16 @@ func feedVencido(t *testing.T, st *store.Store) {
 	st.SetNextUpdate(f.ID, time.Now().Unix()-1)
 }
 
-// Un pánico en un worker de cycle() se recupera: el proceso sigue, el loop
-// principal continúa programando ciclos (el refresher vuelve a ser llamado)
-// y Run retorna nil al cancelar (apagado normal).
-func TestPanicoEnWorkerNoTumbaElLoop(t *testing.T) {
+// A panic in a cycle() worker is recovered: the process goes on, the main
+// loop keeps scheduling cycles (the refresher is called again)
+// and Run returns nil on cancel (normal shutdown).
+func TestPanicInWorkerDoesNotKillLoop(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	feedVencido(t, st)
+	expiredFeed(t, st)
 
 	pr := &panicRefresher{}
 	s := New(st, pr, nil, discardLog(), 20*time.Millisecond, 2, 0, nil, "")
@@ -63,23 +63,23 @@ func TestPanicoEnWorkerNoTumbaElLoop(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 
-	// Varios ciclos con pánico recuperado en cada uno: el loop sigue vivo.
+	// Several cycles with a recovered panic in each one: the loop stays alive.
 	waitFor(t, 5*time.Second, func() bool { return pr.calls.Load() >= 3 })
 
 	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("Run tras pánico en worker: %v (el pánico era en goroutine interna, debía ser apagado normal)", err)
+			t.Fatalf("Run after a worker panic: %v (the panic was in an internal goroutine, it should be a normal shutdown)", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run no retornó tras cancelar (¿worker colgado por el pánico?)")
+		t.Fatal("Run did not return after cancelling (worker hung by the panic?)")
 	}
 }
 
-// Un pánico en el loop PRINCIPAL (aquí: dentro de cycle, vía hook de test)
-// se recupera y Run devuelve error → el wiring marca el módulo failed.
-func TestPanicoEnLoopPrincipalDevuelveError(t *testing.T) {
+// A panic in the MAIN loop (here: inside cycle, through the test hook)
+// is recovered and Run returns an error -> the wiring marks the module failed.
+func TestPanicInMainLoopReturnsError(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -91,12 +91,12 @@ func TestPanicoEnLoopPrincipalDevuelveError(t *testing.T) {
 	var once atomic.Bool
 	s.cycleHook = func() {
 		if once.CompareAndSwap(false, true) {
-			panic("boom en el loop principal")
+			panic("boom in the main loop")
 		}
 	}
 
 	err = s.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "pánico") {
-		t.Fatalf("Run debería devolver el pánico del loop principal como error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "panic") {
+		t.Fatalf("Run should return the main loop panic as an error, got %v", err)
 	}
 }

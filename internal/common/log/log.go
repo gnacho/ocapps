@@ -1,6 +1,6 @@
-// Package log: slog JSON unificado (SPEC §2.1). Un solo slog.SetDefault en
-// cmd/ocapps/main.go; los paquetes reciben el logger por constructor y los
-// módulos añaden el atributo "module" con Module.
+// Package log: unified slog JSON (SPEC §2.1). A single slog.SetDefault in
+// cmd/ocapps/main.go, the packages receive the logger by constructor and the
+// modules add the "module" attribute with Module.
 package log
 
 import (
@@ -8,9 +8,9 @@ import (
 	"os"
 )
 
-// New devuelve un logger JSON a stdout con el nivel pedido
-// (debug|info|warn|error). Un nivel desconocido cae a info — la validación
-// estricta del nivel es responsabilidad de common/config.
+// New returns a JSON logger to stdout with the requested level
+// (debug|info|warn|error). An unknown level falls back to info - the strict
+// validation of the level is the responsibility of common/config.
 func New(level string) *slog.Logger {
 	var lv slog.Level
 	switch level {
@@ -26,8 +26,8 @@ func New(level string) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lv}))
 }
 
-// Module devuelve el logger con el atributo "module"=<name> para que cada
-// línea de log identifique el módulo que la emite (news|notes|photos|...).
+// Module returns the logger with the "module"=<name> attribute so that every
+// log line identifies the module that emits it (news|notes|photos|...).
 func Module(log *slog.Logger, name string) *slog.Logger {
 	return log.With("module", name)
 }

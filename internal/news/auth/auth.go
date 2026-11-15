@@ -1,19 +1,19 @@
-// Package auth: glue de autenticación del módulo news (SPEC §6.2). Fino por
-// diseño: la validación contra Graph (caché 5 min + negativa 30 s +
-// singleflight) vive en internal/common/auth; aquí solo queda lo específico
-// del modelo de dominio de news:
+// Package auth: authentication glue for the news module (SPEC §6.2). Thin by
+// design: validation against Graph (5 min cache + 30 s negative cache +
+// singleflight) lives in internal/common/auth, so only the news domain
+// model specifics are left here:
 //
-//   - ShadowValidator: envuelve el validador Graph común y resuelve/crea la
-//     fila local (shadow user) por oc_id; el primer usuario es admin.
-//   - LocalValidator: bcrypt contra la tabla users (OCAPPS_AUTH_MODE=local,
+//   - ShadowValidator: wraps the common Graph validator and resolves/creates the
+//     local row (shadow user) by oc_id, the first user is admin.
+//   - LocalValidator: bcrypt against the users table (OCAPPS_AUTH_MODE=local,
 //     bootstrap/dev).
-//   - Middleware + helpers de contexto (usuario local e idioma negociado),
-//     con la semántica histórica de ocnews.
+//   - Middleware + request context helpers (local user and negotiated language),
+//     with the historical ocnews semantics.
 //
-// NOTA de layout: el SPEC §6.2/§8 ubica este glue en internal/news/auth.go
-// (paquete raíz news). Vive en este subpaquete de un fichero porque api (y
-// sus tests) importan el middleware/helpers y el paquete raíz news importa
-// api (module.go): en la raíz sería un ciclo de imports.
+// LAYOUT NOTE: SPEC §6.2/§8 places this glue in internal/news/auth.go
+// (news root package). It lives in this one-file subpackage because api (and
+// its tests) import the middleware/helpers and the news root package imports
+// api (module.go), so at the root it would be an import cycle.
 package auth
 
 import (
@@ -37,21 +37,21 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// Credential es un alias del tipo común: las credenciales Basic/Bearer se
-// extraen y validan igual en todos los módulos (SPEC §6.1).
+// Credential is an alias of the common type: Basic/Bearer credentials are
+// extracted and validated the same way in every module (SPEC §6.1).
 type Credential = commonauth.Credential
 
-// Validator decide si una credencial es válida y la resuelve al usuario
-// LOCAL de news (shadow user de la tabla users).
+// Validator decides whether a credential is valid and resolves it to the
+// LOCAL news user (shadow user in the users table).
 type Validator interface {
 	Validate(ctx context.Context, cred Credential) (*store.User, bool)
 }
 
 // ---------------------------------------------------------------------------
-// LocalValidator: bcrypt contra la tabla users (solo Basic; modo local).
+// LocalValidator: bcrypt against the users table (Basic only, local mode).
 // ---------------------------------------------------------------------------
 
-// LocalValidator valida Basic contra el hash bcrypt de la tabla users.
+// LocalValidator validates Basic against the bcrypt hash in the users table.
 type LocalValidator struct {
 	Store *store.Store
 }
@@ -72,22 +72,22 @@ func (l *LocalValidator) Validate(_ context.Context, cred Credential) (*store.Us
 }
 
 // ---------------------------------------------------------------------------
-// ShadowValidator: validador Graph común + shadow users de news.
+// ShadowValidator: common Graph validator + news shadow users.
 // ---------------------------------------------------------------------------
 
-// ShadowValidator valida contra OpenCloud Graph (common/auth, política
-// MultiTenant) y mantiene la tabla users de news: resuelve el shadow por
-// oc_id (vinculando sombras previas sin oc_id por username) o lo crea; el
-// primer usuario de la BD es admin. Caché positiva local (5 min, como la
-// histórica de ocnews) para no tocar la BD en cada petición; la caché
-// negativa (30 s) la aplica el validador común.
+// ShadowValidator validates against OpenCloud Graph (common/auth, MultiTenant
+// policy) and maintains the news users table: it resolves the shadow by
+// oc_id (linking previous shadows without oc_id by username) or creates it,
+// the first user in the DB is admin. Local positive cache (5 min, like the
+// historical ocnews one) to avoid hitting the DB on every request, the
+// negative cache (30 s) is applied by the common validator.
 type ShadowValidator struct {
 	graph *commonauth.GraphValidator
 	store *store.Store
 	log   *slog.Logger
 
 	mu    sync.Mutex
-	cache map[string]shadowEntry // basic:<user>:<sha256(pass)> / bearer:<sha256(token)> → userID local
+	cache map[string]shadowEntry // basic:<user>:<sha256(pass)> / bearer:<sha256(token)> -> local userID
 
 	upsertMu sync.Mutex // serializa upsertShadow (read-then-create)
 }
@@ -99,8 +99,8 @@ type shadowEntry struct {
 
 const shadowCacheTTL = 5 * time.Minute
 
-// NewShadowValidator construye el glue sobre el validador Graph común
-// (ya configurado con la política MultiTenant por el wiring del módulo).
+// NewShadowValidator builds the glue on top of the common Graph validator
+// (already configured with the MultiTenant policy by the module wiring).
 func NewShadowValidator(g *commonauth.GraphValidator, st *store.Store, log *slog.Logger) *ShadowValidator {
 	if log == nil {
 		log = slog.Default()
@@ -108,7 +108,7 @@ func NewShadowValidator(g *commonauth.GraphValidator, st *store.Store, log *slog
 	return &ShadowValidator{graph: g, store: st, log: log, cache: map[string]shadowEntry{}}
 }
 
-// Validate: caché local → validador Graph común → upsert del shadow user.
+// Validate: local cache -> common Graph validator -> shadow user upsert.
 func (v *ShadowValidator) Validate(ctx context.Context, cred Credential) (*store.User, bool) {
 	if cred.Bearer == "" && cred.Username == "" {
 		return nil, false
@@ -142,9 +142,9 @@ func (v *ShadowValidator) Validate(ctx context.Context, cred Credential) (*store
 	return u, true
 }
 
-// upsertShadow resuelve el shadow user a partir de la identidad Graph:
-// primero por oc_id (canónico); si no existe, por username (sombras previas
-// sin oc_id se vinculan); si tampoco, se crea (admin si es el primero).
+// upsertShadow resolves the shadow user from the Graph identity:
+// first by oc_id (canonical), if it does not exist, by username (previous
+// shadows without oc_id get linked), if neither, it is created (admin if first).
 func (v *ShadowValidator) upsertShadow(gu *commonauth.User) (*store.User, error) {
 	v.upsertMu.Lock()
 	defer v.upsertMu.Unlock()
@@ -157,7 +157,7 @@ func (v *ShadowValidator) upsertShadow(gu *commonauth.User) (*store.User, error)
 			return v.store.GetUserByOCID(gu.ID)
 		}
 	}
-	username := gu.Username // común: el del Basic, o SAM→UPN→mail→uuid con Bearer
+	username := gu.Username // common: the Basic one, or SAM→UPN→mail→uuid with Bearer
 	if u, err := v.store.GetUserByUsername(username); err == nil && gu.ID != "" {
 		if u.OCID == "" {
 			_ = v.store.SetUserOCID(u.ID, gu.ID)
@@ -186,19 +186,19 @@ func (v *ShadowValidator) upsertShadow(gu *commonauth.User) (*store.User, error)
 				return u, nil
 			}
 		}
-		return nil, fmt.Errorf("crear shadow: %w", err)
+		return nil, fmt.Errorf("create shadow: %w", err)
 	}
-	v.log.Info("usuario opencloud vinculado", "username", username, "display", gu.DisplayName)
+	v.log.Info("opencloud user linked", "username", username, "display", gu.DisplayName)
 	if gu.ID != "" {
 		return v.store.GetUserByOCID(gu.ID)
 	}
 	return v.store.GetUserByUsername(username)
 }
 
-// cacheKey: mismo esquema que common/auth (basic:<user>:<sha256(pass)> /
-// bearer:<sha256(token)>) — la contraseña forma parte de la clave SOLO como
-// hash, nunca en claro (B1: sin ella, cualquier password del mismo usuario
-// entraba por caché durante el TTL).
+// cacheKey: same scheme as common/auth (basic:<user>:<sha256(pass)> /
+// bearer:<sha256(token)>), the password is part of the key ONLY as a
+// hash, never in clear text (B1: without it, any password of the same user
+// got in through the cache during the TTL).
 func cacheKey(cred Credential) string {
 	if cred.Bearer != "" {
 		h := sha256.Sum256([]byte(cred.Bearer))
@@ -215,10 +215,10 @@ func randomShadowHash() string {
 }
 
 // ---------------------------------------------------------------------------
-// Middleware + contexto de petición (usuario local e idioma negociado).
+// Middleware + request context (local user and negotiated language).
 // ---------------------------------------------------------------------------
 
-// HashPassword calcula el hash bcrypt para persistir.
+// HashPassword computes the bcrypt hash to persist.
 func HashPassword(pw string) (string, error) {
 	b, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 	return string(b), err
@@ -231,9 +231,9 @@ const (
 	langKey
 )
 
-// Middleware exige credenciales válidas (Basic o Bearer) resueltas a un
-// usuario LOCAL de news; 401 si no. El mensaje se negocia por
-// Accept-Language (no hay usuario todavía).
+// Middleware requires valid credentials (Basic or Bearer) resolved to a
+// LOCAL news user, 401 otherwise. The message is negotiated by
+// Accept-Language (there is no user yet).
 func Middleware(v Validator, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cred, ok := credentials(r)
@@ -253,13 +253,13 @@ func Middleware(v Validator, next http.Handler) http.Handler {
 	})
 }
 
-// User recupera el usuario autenticado del contexto (nil si no hay).
+// User retrieves the authenticated user from the context (nil if none).
 func User(r *http.Request) *store.User {
 	u, _ := r.Context().Value(userKey).(*store.User)
 	return u
 }
 
-// Lang recupera el idioma negociado de la petición (EN por defecto).
+// Lang retrieves the negotiated language of the request (EN by default).
 func Lang(r *http.Request) i18n.Lang {
 	l, _ := r.Context().Value(langKey).(i18n.Lang)
 	if l == "" {
@@ -268,7 +268,7 @@ func Lang(r *http.Request) i18n.Lang {
 	return l
 }
 
-// credentials extrae Basic o Bearer de la cabecera Authorization.
+// credentials extracts Basic or Bearer from the Authorization header.
 func credentials(r *http.Request) (Credential, bool) {
 	h := r.Header.Get("Authorization")
 	switch {
@@ -306,6 +306,6 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(b); err != nil {
-		slog.Error("escribir error JSON", "err", err)
+		slog.Error("write JSON error", "err", err)
 	}
 }

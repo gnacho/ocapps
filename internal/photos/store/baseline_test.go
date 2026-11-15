@@ -8,14 +8,15 @@ import (
 	"time"
 )
 
-// lastVersion es la última migración de migrations/: al añadir una nueva hay
-// que subir este número. Los tests de adopción comparan contra él para no
-// tocar tres literales cada vez.
+// lastVersion is the last migration in migrations/: when a new one is added
+// this number has to be bumped. The adoption tests compare against it so that
+// three literals do not have to be edited every time.
 const lastVersion = 3
 
-// liveSchemaSQL reproduce una memories.db VIVA pre-H8 tal y como la deja el
-// servicio histórico: los CREATE TABLE originales (sin is_archived/phash ni
-// owner) más los dos ALTER idempotentes que se aplicaban en caliente al abrir.
+// liveSchemaSQL reproduces a LIVE pre-H8 memories.db as the historical service
+// left it: the original CREATE TABLE statements (without is_archived/phash and
+// without owner) plus the two idempotent ALTERs that were applied on the fly
+// when opening.
 const liveSchemaSQL = `
 CREATE TABLE assets (
     id          INTEGER PRIMARY KEY,
@@ -76,7 +77,8 @@ func userVersion(t *testing.T, path string) int {
 	return v
 }
 
-// execFixture crea una BD con SQL crudo (sin pasar por Open ni el runner).
+// execFixture creates a database with raw SQL (without going through Open or
+// the runner).
 func execFixture(t *testing.T, path, sqlBody string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)
@@ -103,45 +105,45 @@ func indexExists(t *testing.T, path, name string) bool {
 	return n > 0
 }
 
-// TestBaselineAdoptaBDViva: una memories.db viva pre-H8 (esquema single-tenant
-// completo, user_version=0) se adopta con Baseline(1) sin ejecutar SQL de
-// esquema y Migrate aplica 002 (multi-owner): user_version final = 2 (§5.3).
-func TestBaselineAdoptaBDViva(t *testing.T) {
+// TestBaselineAdoptsLiveDB: a live pre-H8 memories.db (full single-tenant
+// schema, user_version=0) is adopted with Baseline(1) without running schema
+// SQL and Migrate applies 002 (multi-owner): final user_version = 2 (§5.3).
+func TestBaselineAdoptsLiveDB(t *testing.T) {
 	path := t.TempDir() + "/memories.db"
 	execFixture(t, path, liveSchemaSQL)
-	// dato preexistente: la adopción no debe tocarlo
+	// pre-existing data: adoption must not touch it
 	execFixture(t, path, `INSERT INTO assets (path, etag, filename, taken_at) VALUES ('/dav/x/a.jpg','e1','a.jpg',1700000000)`)
 	if v := userVersion(t, path); v != 0 {
-		t.Fatalf("fixture debería tener user_version=0, tiene %d", v)
+		t.Fatalf("fixture should have user_version=0, has %d", v)
 	}
 
 	st, err := Open(path)
 	if err != nil {
-		t.Fatalf("adopción de BD viva: %v", err)
+		t.Fatalf("adoption of the live database: %v", err)
 	}
 	defer st.Close()
 	if v := userVersion(t, path); v != lastVersion {
-		t.Fatalf("user_version tras baseline+migraciones = %d, quiero %d", v, lastVersion)
+		t.Fatalf("user_version after baseline+migrations = %d, want %d", v, lastVersion)
 	}
-	// el dato preexistente queda con owner='' a la espera del backfill (H8)
+	// the pre-existing row keeps owner empty waiting for the backfill (H8)
 	stats, err := st.Stats(context.Background(), "")
 	if err != nil || stats["assets"].(int64) != 1 {
-		t.Fatalf("stats tras adopción: %v %v", stats, err)
+		t.Fatalf("stats after adoption: %v %v", stats, err)
 	}
-	// re-apertura: no-op
+	// reopening: no-op
 	st2, err := Open(path)
 	if err != nil {
-		t.Fatalf("re-apertura: %v", err)
+		t.Fatalf("reopening: %v", err)
 	}
 	st2.Close()
 	if v := userVersion(t, path); v != lastVersion {
-		t.Fatalf("user_version tras re-apertura = %d, quiero %d", v, lastVersion)
+		t.Fatalf("user_version after reopening = %d, want %d", v, lastVersion)
 	}
 }
 
-// TestBaselineBDNueva: una BD nueva aplica 001 (ya multi-owner) + 002 vía
-// Migrate y queda en user_version=2.
-func TestBaselineBDNueva(t *testing.T) {
+// TestBaselineNewDB: a new database applies 001 (already multi-owner) plus 002
+// through Migrate and ends up at user_version=2.
+func TestBaselineNewDB(t *testing.T) {
 	path := t.TempDir() + "/memories.db"
 	st, err := Open(path)
 	if err != nil {
@@ -149,27 +151,27 @@ func TestBaselineBDNueva(t *testing.T) {
 	}
 	defer st.Close()
 	if v := userVersion(t, path); v != lastVersion {
-		t.Fatalf("user_version = %d, quiero %d", v, lastVersion)
+		t.Fatalf("user_version = %d, want %d", v, lastVersion)
 	}
-	// el esquema funciona de verdad (con owner, H8)
+	// the schema really works (with owner, H8)
 	ctx := context.Background()
 	if _, ch, err := st.UpsertByETag(ctx, "user-a", "/dav/x/a.jpg", "e1", "a.jpg", "image", time.Now(), 10); err != nil || !ch {
 		t.Fatalf("upsert: ch=%v err=%v", ch, err)
 	}
 	if err := st.SetPHash(ctx, "user-a", 1, "0000000000000000"); err != nil {
-		t.Fatalf("phash (columna del baseline): %v", err)
+		t.Fatalf("phash (baseline column): %v", err)
 	}
 	if err := st.SetArchived(ctx, "user-a", 1, true); err != nil {
-		t.Fatalf("is_archived (columna del baseline): %v", err)
+		t.Fatalf("is_archived (baseline column): %v", err)
 	}
 }
 
-// TestMigracion002ConservaIDsYFKs: una BD viva con datos migra a multi-owner
-// conservando los IDs de assets (las FKs de album_assets/asset_tags siguen
-// válidas) y dejando owner=” para el backfill en Go (H8 §5.3). Es el test
-// que detecta el DROP TABLE con FK CASCADE: si la migración corriera con
-// foreign_keys ON, album_assets y asset_tags perderían sus filas.
-func TestMigracion002ConservaIDsYFKs(t *testing.T) {
+// TestMigration002KeepsIDsAndFKs: a live database with data migrates to
+// multi-owner preserving the assets IDs (the FKs of album_assets/asset_tags
+// remain valid) and leaving owner empty for the Go backfill (H8 §5.3). It is the
+// test that catches the DROP TABLE with FK CASCADE: if the migration ran with
+// foreign_keys ON, album_assets and asset_tags would lose their rows.
+func TestMigration002KeepsIDsAndFKs(t *testing.T) {
 	path := t.TempDir() + "/memories.db"
 	execFixture(t, path, liveSchemaSQL)
 	execFixture(t, path, `
@@ -182,76 +184,77 @@ func TestMigracion002ConservaIDsYFKs(t *testing.T) {
 	`)
 	st, err := Open(path)
 	if err != nil {
-		t.Fatalf("migración 002: %v", err)
+		t.Fatalf("migration 002: %v", err)
 	}
 	defer st.Close()
 	ctx := context.Background()
 
-	// owner='' tras la migración; IDs conservados (7 y 9)
+	// owner empty after the migration, IDs preserved (7 and 9)
 	if _, err := st.AssetByID(ctx, "", 7); err != nil {
-		t.Fatalf("asset id=7 no conservado: %v", err)
+		t.Fatalf("asset id=7 not preserved: %v", err)
 	}
 	if _, err := st.AssetByID(ctx, "", 9); err != nil {
-		t.Fatalf("asset id=9 no conservado: %v", err)
+		t.Fatalf("asset id=9 not preserved: %v", err)
 	}
-	// FKs íntegras: el álbum sigue teniendo sus 2 assets y el tag sobrevive
+	// FKs intact: the album still has its 2 assets and the tag survives
 	if got, err := st.AlbumAssets(ctx, "", 3); err != nil || len(got) != 2 {
-		t.Fatalf("album_assets tras 002: %d %v (¿DROP TABLE con FK ON?)", len(got), err)
+		t.Fatalf("album_assets after 002: %d %v (DROP TABLE with FK ON?)", len(got), err)
 	}
 	if got, err := st.AssetTags(ctx, "", 7); err != nil || len(got) != 1 || got[0] != "playa" {
-		t.Fatalf("asset_tags tras 002: %v %v", got, err)
+		t.Fatalf("asset_tags after 002: %v %v", got, err)
 	}
-	// índices: los globales viejos fuera, los nuevos con prefijo owner creados
+	// indexes: the old global ones are gone, the new owner-prefixed ones created
 	if indexExists(t, path, "assets_taken") || indexExists(t, path, "assets_geo") {
-		t.Fatal("los índices pre-002 (sin owner) deben desaparecer")
+		t.Fatal("the pre-002 indexes (without owner) must disappear")
 	}
 	if !indexExists(t, path, "assets_owner_taken") || !indexExists(t, path, "assets_owner_geo") {
-		t.Fatal("faltan los índices 002 con prefijo owner")
+		t.Fatal("the 002 indexes with owner prefix are missing")
 	}
 
-	// backfill en Go: adopta las filas huérfanas a un owner
+	// Go backfill: adopts the orphan rows into an owner
 	oa, ob, err := st.OrphanCounts(ctx)
 	if err != nil || oa != 2 || ob != 1 {
 		t.Fatalf("orphans: %d assets %d albums %v", oa, ob, err)
 	}
 	nA, nB, rmA, rmB, err := st.BackfillOwner(ctx, "oc-id-legacy")
 	if err != nil || nA != 2 || nB != 1 || rmA != 0 || rmB != 0 {
-		t.Fatalf("backfill: adoptados %d/%d eliminados %d/%d %v", nA, nB, rmA, rmB, err)
+		t.Fatalf("backfill: adopted %d/%d removed %d/%d %v", nA, nB, rmA, rmB, err)
 	}
 	if got, err := st.AssetByID(ctx, "oc-id-legacy", 7); err != nil || got.Path != "/dav/x/a.jpg" {
-		t.Fatalf("asset adoptado: %+v %v", got, err)
+		t.Fatalf("adopted asset: %+v %v", got, err)
 	}
 	if oa, ob, _ = st.OrphanCounts(ctx); oa != 0 || ob != 0 {
-		t.Fatalf("orphans tras backfill: %d %d", oa, ob)
+		t.Fatalf("orphans after backfill: %d %d", oa, ob)
 	}
-	// backfill con owner vacío es error
+	// backfill with an empty owner is an error
 	if _, _, _, _, err := st.BackfillOwner(ctx, ""); err == nil {
-		t.Fatal("backfill con owner vacío debería fallar")
+		t.Fatal("backfill with an empty owner should fail")
 	}
 }
 
-// TestBaselineEsquemaParcialFalla: tablas del esquema pero sin alguna columna
-// histórica → error fail-loud (nada de ALTERs tolerantes).
-func TestBaselineEsquemaParcialFalla(t *testing.T) {
+// TestBaselinePartialSchemaFails: schema tables but missing some historical
+// column -> fail-loud error (no tolerant ALTERs).
+func TestBaselinePartialSchemaFails(t *testing.T) {
 	path := t.TempDir() + "/memories.db"
 	partial := strings.Replace(liveSchemaSQL, "ALTER TABLE assets ADD COLUMN phash TEXT;", "", 1)
 	execFixture(t, path, partial)
 	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "phash") {
-		t.Fatalf("esperaba error por esquema parcial (phash), got %v", err)
+		t.Fatalf("expected an error for the partial schema (phash), got %v", err)
 	}
 	if v := userVersion(t, path); v != 0 {
-		t.Fatalf("user_version no debe tocarse en el fallo: %d", v)
+		t.Fatalf("user_version must not be touched on failure: %d", v)
 	}
 }
 
-// TestBaselineBDAjenaFalla: una BD con tablas ajenas no se adopta ni se migra.
-func TestBaselineBDAjenaFalla(t *testing.T) {
+// TestBaselineForeignDBFails: a database with foreign tables is neither
+// adopted nor migrated.
+func TestBaselineForeignDBFails(t *testing.T) {
 	path := t.TempDir() + "/memories.db"
 	execFixture(t, path, `CREATE TABLE otra_cosa (id INTEGER PRIMARY KEY)`)
 	if _, err := Open(path); err == nil {
-		t.Fatal("esperaba error ante BD con tablas ajenas")
+		t.Fatal("expected an error for a database with foreign tables")
 	}
 	if v := userVersion(t, path); v != 0 {
-		t.Fatalf("user_version no debe tocarse en el fallo: %d", v)
+		t.Fatalf("user_version must not be touched on failure: %d", v)
 	}
 }

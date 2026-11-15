@@ -1,25 +1,25 @@
-# Snippet Caddy para el proxy delante de ocapps (SPEC §9.3).
-# Equivalente al deploy/proxy/nginx.conf: incluir dentro del bloque de sitio
-# que sirve la instancia OpenCloud (mismo origen que la web).
+# Caddy snippet for the proxy in front of ocapps (SPEC §9.3).
+# Equivalent to deploy/proxy/nginx.conf: include it inside the site block
+# that serves the OpenCloud instance (same origin as the web app).
 #
 # ═══════════════════════════════════════════════════════════════════════
-# ⚠  EL CAMBIO DE PROXY DE ESTA MIGRACIÓN: /ocphotos-api/ SIN STRIP
+# ⚠  THE PROXY CHANGE OF THIS MIGRATION: /ocphotos-api/ WITHOUT STRIP
 #
-# Antes el proxy strip-peaba /ocphotos-api/ (ocphotos veía `/api/...`).
-# En el binario unificado `/api/` pertenece a news y photos registra sus
-# rutas como `/ocphotos-api/api/...`: el proxy debe pasar el prefijo
-# INTACTO (en Caddy, `reverse_proxy` no reescribe nada por defecto —
-# basta con NO usar `handle_path` ni `uri strip_prefix`).
-# Cero cambios en frontends: la extensión ya llama `/ocphotos-api/api/...`.
+# Before, the proxy stripped /ocphotos-api/ (ocphotos saw `/api/...`).
+# In the unified binary `/api/` belongs to news and photos registers its
+# routes as `/ocphotos-api/api/...`, so the proxy must pass the prefix
+# INTACT (in Caddy, `reverse_proxy` rewrites nothing by default, it is
+# enough NOT to use `handle_path` or `uri strip_prefix`).
 # ═══════════════════════════════════════════════════════════════════════
 
-# Upstream único del servicio unificado (un solo listener, SPEC §3.2).
-# Caddy preserva por defecto Host y todas las cabeceras de la petición
-# (incluida Authorization, donde viajan las credenciales Basic/Bearer),
-# y añade X-Forwarded-For/Proto automáticamente.
+# Single upstream of the unified service (a single listener, SPEC §3.2).
+# Caddy preserves Host and every request header by default (including
+# Authorization, which carries the Basic/Bearer credentials), and adds
+# X-Forwarded-For/Proto automatically.
 
-# news: contrato News API v1.3 + API propia /api/me|users (la extensión la
-# llama a la raíz del host; patrones exactos, NO un catch-all /api/).
+# news: News API v1.3 contract plus the /api/me|users API of its own (the
+# extension calls it at the host root, so exact patterns, NOT a /api/
+# catch-all).
 handle /index.php/apps/news/* {
 	reverse_proxy 127.0.0.1:8096
 }
@@ -36,8 +36,8 @@ handle /api/users/* {
 	reverse_proxy 127.0.0.1:8096
 }
 
-# notes: contrato Notes API + OCS (capabilities y cloud/user los sirve el
-# módulo notes, SPEC §4.2).
+# notes: Notes API contract plus OCS (capabilities and cloud/user are served
+# by the notes module, SPEC §4.2).
 handle /index.php/apps/notes/* {
 	reverse_proxy 127.0.0.1:8096
 }
@@ -45,10 +45,10 @@ handle /ocs/* {
 	reverse_proxy 127.0.0.1:8096
 }
 
-# photos: /ocphotos-api/ SIN STRIP (ver aviso destacado arriba). NO usar
-# `handle_path` aquí: quitaría el prefijo y rompería el contrato.
-# Streaming de vídeo firmado (/ocphotos-api/api/video/{id}): timeouts
-# largos por Range/streaming; flush_interval -1 desactiva el buffer.
+# photos: /ocphotos-api/ WITHOUT STRIP (see the warning above). Do NOT use
+# `handle_path` here, as it would drop the prefix and break the contract.
+# Signed video streaming (/ocphotos-api/api/video/{id}): long timeouts for
+# Range and streaming, and flush_interval -1 disables buffering.
 handle /ocphotos-api/api/video/* {
 	reverse_proxy 127.0.0.1:8096 {
 		flush_interval -1
@@ -58,8 +58,8 @@ handle /ocphotos-api/api/video/* {
 		}
 	}
 }
-# Canal de avisos de cambio (SSE): sin buffer (flush_interval -1 es el default
-# de Caddy, se deja explícito) y timeouts largos.
+# Change notice channel (SSE): no buffering (flush_interval -1 is the Caddy
+# default, left explicit) and long timeouts.
 handle /ocphotos-api/api/stream {
 	reverse_proxy 127.0.0.1:8096 {
 		flush_interval -1

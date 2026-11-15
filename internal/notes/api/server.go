@@ -1,8 +1,8 @@
-// Package api: servidor de la API Nextcloud Notes (v0.2/v1.4) + OCS, portado
-// a ocapps sobre los paquetes comunes (SPEC §4.1, §6). El contrato externo
-// (rutas, métodos, códigos, formatos y cabeceras propias como
-// X-Notes-API-Versions, X-Notes-Chunk-Cursor, ETag/If-Match y OCS) se conserva
-// intacto; CORS y auth usan los middlewares unificados (SPEC §4.4, §6.3).
+// Package api: Nextcloud Notes API server (v0.2/v1.4) plus OCS, ported to
+// ocapps on top of the common packages (SPEC §4.1, §6). The external contract
+// (routes, methods, codes, formats and its own headers such as
+// X-Notes-API-Versions, X-Notes-Chunk-Cursor, ETag/If-Match and OCS) is kept
+// intact. CORS and auth use the unified middlewares (SPEC §4.4, §6.3).
 package api
 
 import (
@@ -131,14 +131,14 @@ func (s *Server) Router() http.Handler {
 	ocsMux.HandleFunc("/ocs/v2.php/cloud/capabilities", s.handleCapabilities)
 	ocsMux.HandleFunc("/ocs/v2.php/cloud/user", s.handleUserInfo)
 
-	// Cadena unificada de la API (SPEC §4.4, §6.3): cabecera de versiones
-	// propia → CORS unificado (preflight OPTIONS → 204 sin auth) → middleware
-	// de auth común → inyección del shadow user en la clave de contexto de
-	// notes (escopado por graph ID en la columna `user`, como siempre).
+	// Unified API chain (SPEC §4.4, §6.3): own versions header -> unified
+	// CORS (OPTIONS preflight -> 204 with no auth) -> common auth middleware ->
+	// injection of the shadow user into the notes context key (scoped by graph
+	// ID on the `user` column, as always).
 	apiHandler := s.withAPIVersions(httpx.CORS(auth.Middleware(s.validator, s.shadowUser(mux))))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// img: ruta PÚBLICA firmada (el <img> del navegador no lleva auth)
+		// img: PUBLIC signed route (the browser <img> carries no auth)
 		if s.images != nil && r.URL.Path == s.base+"img" {
 			s.images.Serve(w, r)
 			return
@@ -151,8 +151,8 @@ func (s *Server) Router() http.Handler {
 	})
 }
 
-// withAPIVersions fija X-Notes-API-Versions en TODAS las respuestas de la API
-// (incluidos 401 y preflight), como hacía el middleware original de ocnotes.
+// withAPIVersions sets X-Notes-API-Versions on EVERY API response (including
+// 401 and preflight), as the original ocnotes middleware did.
 func (s *Server) withAPIVersions(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(APIVersionsHeader, AllowedAPIVersions)
@@ -160,9 +160,9 @@ func (s *Server) withAPIVersions(next http.Handler) http.Handler {
 	})
 }
 
-// shadowUser copia el *auth.User que el middleware común deja en el contexto
-// a la clave propia de notes (noteKeyType{}), conservando la semántica de
-// shadow user y el escopado por graph ID sin tocar los handlers.
+// shadowUser copies the *auth.User the common middleware leaves in the context
+// into the notes own key (noteKeyType{}), preserving the shadow user semantics
+// and the scoping by graph ID without touching the handlers.
 func (s *Server) shadowUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u := auth.FromContext(r.Context()); u != nil {
@@ -172,8 +172,8 @@ func (s *Server) shadowUser(next http.Handler) http.Handler {
 	})
 }
 
-// handleImgSign firma un lote de URLs de imagen para el preview del cliente
-// web. El contenido de la nota NO se muta: la firma vive solo en render time.
+// handleImgSign signs a batch of image URLs for the web client preview.
+// The note content is NOT mutated: the signature only lives at render time.
 func (s *Server) handleImgSign(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -296,9 +296,10 @@ func (s *Server) handleAttachmentDownload(w http.ResponseWriter, r *http.Request
 	_, _ = io.Copy(w, rc)
 }
 
-// authenticate valida Basic/Bearer contra el validador Graph compartido. Lo
-// usa handleUserInfo (OCS): en modo XML la auth es opcional (200 "User" sin
-// credenciales); en modo JSON es obligatoria (401 si falla, SPEC §4.2).
+// authenticate validates Basic/Bearer against the shared Graph validator. It
+// is used by handleUserInfo (OCS): in XML mode auth is optional (200 "User"
+// with no credentials), in JSON mode it is mandatory (401 on failure,
+// SPEC §4.2).
 func (s *Server) authenticate(r *http.Request) (*auth.User, error) {
 	if s.validator == nil {
 		return nil, fmt.Errorf("no validator")
@@ -314,8 +315,8 @@ func (s *Server) authenticate(r *http.Request) (*auth.User, error) {
 	return u, nil
 }
 
-// credential extrae Basic o Bearer de la cabecera Authorization (misma forma
-// que common/auth, cuyo parser no es exportado).
+// credential extracts Basic or Bearer from the Authorization header (same
+// shape as common/auth, whose parser is not exported).
 func credential(r *http.Request) (auth.Credential, bool) {
 	h := r.Header.Get("Authorization")
 	switch {
@@ -866,9 +867,10 @@ func injectNotesXML(body []byte) (string, bool) {
 	return string(body)[:idx] + notes + string(body)[idx:], true
 }
 
-// ocsUserJSON es el payload OCS v2 en JSON de /ocs/v2.php/cloud/user que
-// espera news-android para el drawer (SPEC §4.2: antes lo servía un stub en
-// news; desde H5 lo sirve ESTE handler, único registrado en la ruta).
+// ocsUserJSON is the OCS v2 JSON payload of /ocs/v2.php/cloud/user that
+// news-android expects for the drawer (SPEC §4.2: a stub in news served it
+// before, since H5 THIS handler serves it, the only one registered on the
+// route).
 type ocsUserJSON struct {
 	Ocs struct {
 		Meta struct {
@@ -895,16 +897,16 @@ func newOCSUserJSON(id, displayName string) *ocsUserJSON {
 	return &v
 }
 
-// handleUserInfo sirve /ocs/v2.php/cloud/user (único handler de la ruta tras
-// resolver la colisión news-stub vs notes-real, SPEC §4.2). Dos modos:
+// handleUserInfo serves /ocs/v2.php/cloud/user (the only handler on the route
+// after resolving the news-stub vs notes-real collision, SPEC §4.2). Two modes:
 //
-//   - XML (default, clientes Notes como Iotas): auth OPCIONAL; sin auth se
-//     responde 200 con "User" (comportamiento histórico conservado).
-//   - JSON (?format=json o Accept: application/json — la misma heurística
-//     que handleCapabilities y que pedía el stub de news, que respondía JSON
-//     siempre): auth OBLIGATORIA (401 sin credenciales válidas) y data con
-//     id=username, displayname y display-name (campos que necesita
-//     news-android y que el XML no emite).
+//   - XML (default, Notes clients such as Iotas): auth is OPTIONAL, with no
+//     auth it answers 200 with "User" (preserved historical behaviour).
+//   - JSON (?format=json or Accept: application/json, the same heuristic as
+//     handleCapabilities and what the news stub asked for, which always
+//     answered JSON): auth is MANDATORY (401 without valid credentials) and
+//     data carries id=username, displayname and display-name (the fields
+//     news-android needs and the XML does not emit).
 func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

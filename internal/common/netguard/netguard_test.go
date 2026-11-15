@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// TestSafeTransportBlocksPrivate: el transporte seguro rechaza loopback/local.
+// TestSafeTransportBlocksPrivate: the safe transport rejects loopback/local.
 func TestSafeTransportBlocksPrivate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -17,18 +17,18 @@ func TestSafeTransportBlocksPrivate(t *testing.T) {
 	defer srv.Close()
 
 	if _, err := SafeClient().Get(srv.URL); err == nil {
-		t.Fatalf("el transporte seguro conectó a loopback %s (SSRF no bloqueado)", srv.URL)
+		t.Fatalf("the safe transport connected to loopback %s (SSRF not blocked)", srv.URL)
 	}
-	// el client allow-local SÍ debe conectar (solo tests)
+	// the allow-local client MUST connect (tests only)
 	lc := ClientAllowLocal(3 * time.Second)
 	resp, err := lc.Get(srv.URL)
 	if err != nil {
-		t.Fatalf("allow-local no conectó a loopback: %v", err)
+		t.Fatalf("allow-local did not connect to loopback: %v", err)
 	}
 	resp.Body.Close()
 }
 
-// TestIsBlockedIP cubre los rangos críticos.
+// TestIsBlockedIP covers the critical ranges.
 func TestIsBlockedIP(t *testing.T) {
 	cases := []struct {
 		ip    string
@@ -41,12 +41,12 @@ func TestIsBlockedIP(t *testing.T) {
 		{"169.254.169.254", true},  // metadata
 		{"::1", true},              // loopback v6
 		{"::ffff:127.0.0.1", true}, // v4-mapped loopback
-		{"8.8.8.8", false},         // público
-		{"1.1.1.1", false},         // público
+		{"8.8.8.8", false},         // public
+		{"1.1.1.1", false},         // public
 	}
 	for _, c := range cases {
 		if got := isBlockedIP(net.ParseIP(c.ip)); got != c.block {
-			t.Errorf("%s: esperaba block=%v, tengo %v", c.ip, c.block, got)
+			t.Errorf("%s: want block=%v, got %v", c.ip, c.block, got)
 		}
 	}
 }
@@ -57,12 +57,12 @@ func TestCheckURL(t *testing.T) {
 		wantErr bool
 	}{
 		{"http://127.0.0.1:8080/x", true}, // loopback
-		{"http://192.168.0.1/x", true},    // privada
+		{"http://192.168.0.1/x", true},    // private
 		{"http://169.254.169.254/", true}, // metadata
-		{"ftp://example.com/x", true},     // esquema no permitido
-		{"http:///x", true},               // sin host
-		{"http://8.8.8.8/x", false},       // IP pública literal (sin DNS)
-		{"https://1.1.1.1:443/y", false},  // IP pública literal
+		{"ftp://example.com/x", true},     // scheme not allowed
+		{"http:///x", true},               // no host
+		{"http://8.8.8.8/x", false},       // literal public IP (no DNS)
+		{"https://1.1.1.1:443/y", false},  // literal public IP
 	}
 	for _, c := range cases {
 		u, err := url.Parse(c.raw)
@@ -74,6 +74,6 @@ func TestCheckURL(t *testing.T) {
 		}
 	}
 	if err := CheckURL(nil); err == nil {
-		t.Error("url nula: esperaba error")
+		t.Error("nil url: expected an error")
 	}
 }

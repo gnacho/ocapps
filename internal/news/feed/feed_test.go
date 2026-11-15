@@ -17,7 +17,7 @@ func loadFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile("testdata/" + name)
 	if err != nil {
-		t.Fatalf("leer fixture: %v", err)
+		t.Fatalf("read fixture: %v", err)
 	}
 	return b
 }
@@ -27,30 +27,30 @@ func TestParseRSS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse rss: %v", err)
 	}
-	if f.Title != "Ejemplo Blog" || f.Link != "https://ejemplo.example" {
-		t.Errorf("feed meta mal: %+v", f)
+	if f.Title != "Example Blog" || f.Link != "https://ejemplo.example" {
+		t.Errorf("bad feed meta: %+v", f)
 	}
 	if len(items) != 2 {
-		t.Fatalf("esperaba 2 items, tengo %d", len(items))
+		t.Fatalf("expected 2 items, I have %d", len(items))
 	}
 
 	first := items[0]
 	if first.GUID != "urn:ejemplo:1" || first.GUIDHash == "" {
-		t.Errorf("guid mal: %+v", first)
+		t.Errorf("bad guid: %+v", first)
 	}
-	if first.Title != "Primera entrada" {
+	if first.Title != "First entry" {
 		t.Errorf("title: %q", first.Title)
 	}
-	if first.Author != "ana@example.com (Ana Prueba)" && first.Author == "" {
-		t.Errorf("author vacío inesperado: %q", first.Author)
+	if first.Author != "ana@example.com (Ana Test)" && first.Author == "" {
+		t.Errorf("unexpected empty author: %q", first.Author)
 	}
 	if first.URL != "https://ejemplo.example/1" {
 		t.Errorf("url: %q", first.URL)
 	}
-	// content:encoded manda sobre description
-	wantBody := "<p>Cuerpo <b>completo</b> de la primera</p>"
+	// content:encoded wins over description
+	wantBody := "<p>Full <b>body</b> of the first</p>"
 	if first.Body != wantBody {
-		t.Errorf("body: %q (esperaba content:encoded)", first.Body)
+		t.Errorf("body: %q (expected content:encoded)", first.Body)
 	}
 	if first.EnclosureLink == nil || *first.EnclosureLink != "https://ejemplo.example/audio/1.mp3" {
 		t.Errorf("enclosure: %+v", first.EnclosureLink)
@@ -68,13 +68,13 @@ func TestParseRSS(t *testing.T) {
 
 	second := items[1]
 	if second.EnclosureLink != nil || second.MediaThumbnail != nil {
-		t.Errorf("item sin enclosure no debe tenerlos: %+v", second)
+		t.Errorf("item without enclosure must not have them: %+v", second)
 	}
-	if second.Body != "Resumen de la segunda" {
+	if second.Body != "Summary of the second" {
 		t.Errorf("body fallback description: %q", second.Body)
 	}
 	if first.Fingerprint == second.Fingerprint || first.Fingerprint == "" {
-		t.Errorf("fingerprint debe diferir y ser no vacío")
+		t.Errorf("fingerprint must differ and be non empty")
 	}
 }
 
@@ -83,20 +83,20 @@ func TestParseAtom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse atom: %v", err)
 	}
-	if f.Title != "Atom Ejemplo" || f.Link != "https://atom.example/" {
-		t.Errorf("feed meta mal: %+v", f)
+	if f.Title != "Atom Example" || f.Link != "https://atom.example/" {
+		t.Errorf("bad feed meta: %+v", f)
 	}
 	if len(items) != 1 {
-		t.Fatalf("esperaba 1 item, tengo %d", len(items))
+		t.Fatalf("expected 1 item, I have %d", len(items))
 	}
 	it := items[0]
 	if it.GUID != "urn:uuid:1225c695-cfb8-4ebb-aaaa-80da344efa6a" {
-		t.Errorf("atom id como guid: %q", it.GUID)
+		t.Errorf("atom id as guid: %q", it.GUID)
 	}
 	if it.Author != "Luis Atom" {
 		t.Errorf("author: %q", it.Author)
 	}
-	if it.Body != "<p>Contenido <em>atom</em></p>" {
+	if it.Body != "<p><em>Atom</em> content</p>" {
 		t.Errorf("body: %q", it.Body)
 	}
 	if it.PubDate != time.Date(2003, 12, 13, 18, 30, 2, 0, time.UTC).Unix() {
@@ -105,20 +105,20 @@ func TestParseAtom(t *testing.T) {
 }
 
 func TestParseInvalid(t *testing.T) {
-	if _, _, err := Parse([]byte("esto no es xml")); err == nil {
-		t.Fatal("esperaba error con basura")
+	if _, _, err := Parse([]byte("this is not xml")); err == nil {
+		t.Fatal("expected an error with garbage")
 	}
 }
 
-// dedupe: mismo guid → mismo hash (unicidad por feed_id+guid_hash en BD).
-func TestGUIDHashEstable(t *testing.T) {
+// dedupe: same guid -> same hash (uniqueness by feed_id+guid_hash in the DB).
+func TestGUIDHashStable(t *testing.T) {
 	_, items, err := Parse(loadFixture(t, "rss.xml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, again, _ := Parse(loadFixture(t, "rss.xml"))
 	if items[0].GUIDHash != again[0].GUIDHash {
-		t.Error("guid_hash debe ser determinista")
+		t.Error("guid_hash must be deterministic")
 	}
 }
 
@@ -126,17 +126,17 @@ func TestHasFullContent(t *testing.T) {
 	summary := "<p>" + strings.Repeat("a", 300) + "</p>"
 	full := "<p>" + strings.Repeat("a", 1200) + "</p>"
 	if HasFullContent([]store.NewItem{{Body: summary}}) {
-		t.Error("resumen corto no debe marcar full")
+		t.Error("a short summary must not flag full")
 	}
 	if !HasFullContent([]store.NewItem{{Body: summary}, {Body: full}}) {
-		t.Error("un item largo basta para marcar full")
+		t.Error("one long item is enough to flag full")
 	}
 	if HasFullContent(nil) {
-		t.Error("sin items no marca full")
+		t.Error("without items it does not flag full")
 	}
 }
 
-// TestDiscover: autodetección de feeds RSS/Atom en una página HTML.
+// TestDiscover: autodiscovery of RSS/Atom feeds on an HTML page.
 func TestDiscover(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/rss.xml" {
@@ -148,7 +148,7 @@ func TestDiscover(t *testing.T) {
 			<link rel="alternate" type="application/rss+xml" title="Blog RSS" href="/rss.xml">
 			<link rel="alternate" type="application/atom+xml" href="/atom.xml">
 			<link rel="icon" href="/favicon.ico">
-			</head><body>hola</body></html>`
+			</head><body>hello</body></html>`
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(html))
 	}))
@@ -160,16 +160,16 @@ func TestDiscover(t *testing.T) {
 		t.Fatalf("discover: %v", err)
 	}
 	if len(feeds) != 2 {
-		t.Fatalf("esperaba 2 feeds, tengo %d: %+v", len(feeds), feeds)
+		t.Fatalf("expected 2 feeds, I have %d: %+v", len(feeds), feeds)
 	}
 	var kinds []string
 	for _, f := range feeds {
 		kinds = append(kinds, f.Type)
 	}
 	if !containsStr(kinds, "rss") || !containsStr(kinds, "atom") {
-		t.Fatalf("tipos: %v", kinds)
+		t.Fatalf("types: %v", kinds)
 	}
-	// url absoluta resuelta contra el base
+	// absolute url resolved against the base
 	found := false
 	for _, f := range feeds {
 		if strings.HasSuffix(f.URL, "/rss.xml") {
@@ -177,7 +177,7 @@ func TestDiscover(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("no resolvió rss.xml relativo: %+v", feeds)
+		t.Fatalf("it did not resolve the relative rss.xml: %+v", feeds)
 	}
 }
 
@@ -190,12 +190,12 @@ func containsStr(s []string, want string) bool {
 	return false
 }
 
-// TestFetchBasicAuth: el fetcher manda Authorization Basic cuando el feed
-// la exige, y sin credenciales (o erróneas) devuelve ErrAuthRequired.
+// TestFetchBasicAuth: the fetcher sends Basic Authorization when the feed
+// requires it, and without credentials (or wrong ones) it returns ErrAuthRequired.
 func TestFetchBasicAuth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, p, ok := r.BasicAuth()
-		if !ok || u != "lector" || p != "s3cret" {
+		if !ok || u != "reader" || p != "s3cret" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -206,34 +206,34 @@ func TestFetchBasicAuth(t *testing.T) {
 
 	h := NewHTTPFetcherAllowLocal(5 * time.Second)
 
-	// sin credenciales → 401 → ErrAuthRequired
+	// no credentials -> 401 -> ErrAuthRequired
 	if _, _, err := h.Fetch(context.Background(), srv.URL, "", ""); !errors.Is(err, ErrAuthRequired) {
-		t.Fatalf("sin creds esperaba ErrAuthRequired: %v", err)
+		t.Fatalf("without creds expected ErrAuthRequired: %v", err)
 	}
-	// credenciales mal → ErrAuthRequired
-	if _, _, err := h.Fetch(context.Background(), srv.URL, "lector", "mal"); !errors.Is(err, ErrAuthRequired) {
-		t.Fatalf("creds mal esperaba ErrAuthRequired: %v", err)
+	// wrong credentials -> ErrAuthRequired
+	if _, _, err := h.Fetch(context.Background(), srv.URL, "reader", "bad"); !errors.Is(err, ErrAuthRequired) {
+		t.Fatalf("wrong creds expected ErrAuthRequired: %v", err)
 	}
-	// credenciales bien → feed parseado
-	f, items, err := h.Fetch(context.Background(), srv.URL, "lector", "s3cret")
+	// right credentials -> feed parsed
+	f, items, err := h.Fetch(context.Background(), srv.URL, "reader", "s3cret")
 	if err != nil {
-		t.Fatalf("con creds: %v", err)
+		t.Fatalf("with creds: %v", err)
 	}
-	if f.Title != "Ejemplo Blog" || len(items) != 2 {
-		t.Fatalf("feed con auth mal parseado: %+v (%d items)", f, len(items))
+	if f.Title != "Example Blog" || len(items) != 2 {
+		t.Fatalf("feed with auth badly parsed: %+v (%d items)", f, len(items))
 	}
 }
 
-// TestClusterKey: la normalización agrupa títulos equivalentes y separa los
-// distintos (#42).
+// TestClusterKey: normalization groups equivalent titles and separates the
+// different ones (#42).
 func TestClusterKey(t *testing.T) {
-	a := clusterKey(store.NewItem{Title: "  OpenAI lanza  GPT-5  ", Body: "<p>noticia de IA</p>"})
-	b := clusterKey(store.NewItem{Title: "openai lanza gpt-5", Body: "<p>noticia de IA</p>"})
+	a := clusterKey(store.NewItem{Title: "  OpenAI releases  GPT-5  ", Body: "<p>AI story</p>"})
+	b := clusterKey(store.NewItem{Title: "openai releases gpt-5", Body: "<p>AI story</p>"})
 	if a != b {
-		t.Errorf("títulos normalizados equivalentes deberían compartir cluster: %s != %s", a, b)
+		t.Errorf("equivalent normalized titles should share a cluster: %s != %s", a, b)
 	}
-	c := clusterKey(store.NewItem{Title: "OpenAI despide a su CEO", Body: "<p>otra cosa</p>"})
+	c := clusterKey(store.NewItem{Title: "OpenAI fires its CEO", Body: "<p>something else</p>"})
 	if a == c {
-		t.Error("noticias distintas no deberían compartir cluster")
+		t.Error("different stories should not share a cluster")
 	}
 }

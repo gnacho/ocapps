@@ -1,14 +1,14 @@
-// Package rules: filtros avanzados por regex block/keep en el estilo de
-// Miniflux. Cada línea tiene el formato Campo=regex (RE2). Campos soportados:
-// EntryTitle, EntryURL, EntryAuthor, EntryContent y EntryDate (con patrones
-// de fecha: future, before:, after:, between:, max-age:).
+// Package rules: advanced block/keep regex filters in the Miniflux
+// style. Each line has the Field=regex format (RE2). Supported fields:
+// EntryTitle, EntryURL, EntryAuthor, EntryContent and EntryDate (with date
+// patterns: future, before:, after:, between:, max-age:).
 //
-// Evaluación (orden de Miniflux, primer match gana):
-//  1. Block rules: si alguna casa → el artículo se ignora.
-//  2. Keep rules: si hay alguna y ninguna casa → el artículo se ignora.
+// Evaluation (Miniflux order, first match wins):
+//  1. Block rules: if any matches -> the article is ignored.
+//  2. Keep rules: if there is any and none matches -> the article is ignored.
 //
-// Global y por feed se componen por separado: primero global block, luego
-// feed block, luego global keep, luego feed keep.
+// Global and per feed are composed separately: global block first, then
+// feed block, then global keep, then feed keep.
 package rules
 
 import (
@@ -32,7 +32,7 @@ var knownFields = map[Field]bool{
 	FieldTitle: true, FieldURL: true, FieldAuthor: true, FieldContent: true, FieldDate: true,
 }
 
-// Rule es una regla compilada.
+// Rule is a compiled rule.
 type Rule struct {
 	field Field
 	re    *regexp.Regexp
@@ -46,23 +46,23 @@ type datePat struct {
 	maxAge time.Duration
 }
 
-// RuleSet agrupa las reglas block y keep compiladas.
+// RuleSet groups the compiled block and keep rules.
 type RuleSet struct {
 	block []Rule
 	keep  []Rule
 }
 
-// Fields son los campos evaluables de un artículo.
+// Fields are the evaluable fields of an article.
 type Fields struct {
 	Title   string
 	URL     string
 	Author  string
-	Content string // texto plano del cuerpo
+	Content string // plain text of the body
 	PubDate int64
 }
 
-// Parse compila las reglas de un texto multilínea. Devuelve error con la
-// línea problemática si alguna regla es inválida.
+// Parse compiles the rules of a multiline text. It returns an error with the
+// problematic line if any rule is invalid.
 func Parse(block, keep string) (*RuleSet, error) {
 	b, err := parseLines(block)
 	if err != nil {
@@ -84,15 +84,15 @@ func parseLines(text string) ([]Rule, error) {
 		}
 		eq := strings.Index(line, "=")
 		if eq <= 0 {
-			return nil, fmt.Errorf("regla sin 'Campo=regex': %q", line)
+			return nil, fmt.Errorf("rule without 'Field=regex': %q", line)
 		}
 		field := Field(strings.TrimSpace(line[:eq]))
 		if !knownFields[field] {
-			return nil, fmt.Errorf("campo desconocido %q en %q", field, line)
+			return nil, fmt.Errorf("unknown field %q in %q", field, line)
 		}
 		pat := strings.TrimSpace(line[eq+1:])
 		if pat == "" {
-			return nil, fmt.Errorf("regex vacía en %q", line)
+			return nil, fmt.Errorf("empty regex in %q", line)
 		}
 		if field == FieldDate {
 			d, err := parseDatePat(pat)
@@ -104,15 +104,15 @@ func parseLines(text string) ([]Rule, error) {
 		}
 		re, err := regexp.Compile(pat)
 		if err != nil {
-			return nil, fmt.Errorf("regex inválida en %q: %w", line, err)
+			return nil, fmt.Errorf("invalid regex in %q: %w", line, err)
 		}
 		out = append(out, Rule{field: field, re: re})
 	}
 	return out, nil
 }
 
-// Ignore decide si el artículo debe descartarse según ESTE conjunto de reglas
-// (block/keep de un mismo nivel).
+// Ignore decides whether the article must be discarded according to THIS set of
+// rules (block/keep of the same level).
 func (rs *RuleSet) Ignore(f Fields) bool {
 	if rs == nil {
 		return false
@@ -179,7 +179,7 @@ func parseDatePat(pat string) (datePat, error) {
 	case strings.HasPrefix(p, "between:"):
 		parts := strings.Split(strings.TrimSpace(p[len("between:"):]), ",")
 		if len(parts) != 2 {
-			return datePat{}, fmt.Errorf("between requiere dos fechas: %q", pat)
+			return datePat{}, fmt.Errorf("between requires two dates: %q", pat)
 		}
 		t0, err := parseDate(strings.TrimSpace(parts[0]))
 		if err != nil {
@@ -193,20 +193,20 @@ func parseDatePat(pat string) (datePat, error) {
 	case strings.HasPrefix(p, "max-age:"):
 		d, err := parseDuration(strings.TrimSpace(p[len("max-age:"):]))
 		if err != nil || d <= 0 {
-			return datePat{}, fmt.Errorf("max-age inválido %q (ns/µs/ms/s/m/h/d)", pat)
+			return datePat{}, fmt.Errorf("invalid max-age %q (ns/µs/ms/s/m/h/d)", pat)
 		}
 		return datePat{kind: "maxage", maxAge: d}, nil
 	}
-	return datePat{}, fmt.Errorf("patrón de fecha inválido: %q (future|before:AAAAMMDD|after:|between:,|max-age:)", pat)
+	return datePat{}, fmt.Errorf("invalid date pattern: %q (future|before:YYYYMMDD|after:|between:,|max-age:)", pat)
 }
 
 var durationRe = regexp.MustCompile(`^(\d+)(ns|µs|ms|s|m|h|d)?$`)
 
-// parseDuration: time.ParseDuration no soporta días; los añadimos aquí.
+// parseDuration: time.ParseDuration does not support days, we add them here.
 func parseDuration(s string) (time.Duration, error) {
 	m := durationRe.FindStringSubmatch(strings.ToLower(strings.TrimSpace(s)))
 	if m == nil {
-		return 0, fmt.Errorf("duración inválida %q", s)
+		return 0, fmt.Errorf("invalid duration %q", s)
 	}
 	n, err := fmtParseInt(m[1])
 	if err != nil {
@@ -228,7 +228,7 @@ func fmtParseInt(s string) (int64, error) {
 	var n int64
 	for _, c := range s {
 		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("número inválido %q", s)
+			return 0, fmt.Errorf("invalid number %q", s)
 		}
 		n = n*10 + int64(c-'0')
 	}
@@ -239,7 +239,7 @@ func fmtParseInt(s string) (int64, error) {
 func parseDate(s string) (int64, error) {
 	t, err := time.ParseInLocation("2006-01-02", s, time.UTC)
 	if err != nil {
-		return 0, fmt.Errorf("fecha inválida %q (formato YYYY-MM-DD)", s)
+		return 0, fmt.Errorf("invalid date %q (format YYYY-MM-DD)", s)
 	}
 	return t.Unix(), nil
 }

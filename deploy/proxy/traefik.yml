@@ -1,32 +1,33 @@
-# Snippet Traefik para el proxy delante de ocapps (SPEC §9.3).
-# File provider: guardarlo como fichero dinámico (p. ej.
-# /etc/traefik/dynamic/ocapps.yml) con el directorio declarado en la
-# configuración estática (providers.file). Equivalente a
-# deploy/proxy/nginx.conf y deploy/proxy/Caddyfile.
+# Traefik snippet for the proxy in front of ocapps (SPEC §9.3).
+# File provider: store it as a dynamic file (for instance
+# /etc/traefik/dynamic/ocapps.yml) with the directory declared in the
+# static configuration (providers.file). Equivalent to
+# deploy/proxy/nginx.conf and deploy/proxy/Caddyfile.
 #
 # ═══════════════════════════════════════════════════════════════════════
-# Dos detalles que NO son opcionales:
+# Two details that are NOT optional:
 #
-# 1. Host() en la regla: sin él, las rutas /api/me y /api/users se comerían
-#    esos paths de TODOS los sitios servidos por el mismo Traefik. Cambia
-#    cloud.example.com por el dominio público de tu instancia.
+# 1. Host() in the rule: without it, the /api/me and /api/users routes would
+#    swallow those paths for EVERY site served by the same Traefik. Change
+#    cloud.example.com to the public domain of your instance.
 #
-# 2. Sin strip de prefijos: /ocphotos-api/ debe llegar INTACTO al backend
-#    (en el binario unificado /api/ pertenece a news y photos registra sus
-#    rutas como /ocphotos-api/api/...). Traefik no reescribe rutas por
-#    defecto: basta con NO añadir un middleware stripprefix.
+# 2. No prefix stripping: /ocphotos-api/ must reach the backend INTACT (in
+#    the unified binary /api/ belongs to news and photos registers its
+#    routes as /ocphotos-api/api/...). Traefik rewrites no routes by
+#    default, so it is enough NOT to add a stripprefix middleware.
 #
-# La prioridad de Traefik se deriva de la longitud de la regla, así que este
-# router gana a un catch-all Host() equivalente sin prioridad explícita.
+# Traefik derives priority from rule length, so this router wins over an
+# equivalent Host() catch-all with no explicit priority.
 # ═══════════════════════════════════════════════════════════════════════
 
 http:
   routers:
     ocapps:
-      # news: contrato News API v1.3 + OCS y notes (capabilities, cloud/user).
-      # /api/me y /api/users: API propia en la RAÍZ del host (settings y
-      # gestión de usuarios de la extensión). Patrones exactos: NO enrutar
-      # un catch-all /api/ — chocaría con cualquier otro /api/ del host.
+      # news: News API v1.3 contract, plus OCS and notes (capabilities,
+      # cloud/user).
+      # /api/me and /api/users: the extension's own API at the host ROOT
+      # (settings and user management). Exact patterns: do NOT route a /api/
+      # catch-all, as it would clash with any other /api/ on the host.
       rule: "Host(`cloud.example.com`) && (PathPrefix(`/index.php/apps/news/`) || PathPrefix(`/index.php/apps/notes/`) || PathPrefix(`/ocs/`) || PathPrefix(`/ocphotos-api/`) || Path(`/api/me`) || PathPrefix(`/api/me/`) || Path(`/api/users`) || PathPrefix(`/api/users/`))"
       service: ocapps
 
@@ -35,13 +36,13 @@ http:
       loadBalancer:
         servers:
           - url: "http://127.0.0.1:8096"
-        # Traefik preserva Host y TODAS las cabeceras (incluida Authorization,
-        # donde viajan las credenciales Basic/Bearer del contrato News), y
-        # añade X-Forwarded-For/Proto automáticamente.
+        # Traefik preserves Host and EVERY header (including Authorization,
+        # which carries the Basic/Bearer credentials of the News contract),
+        # and adds X-Forwarded-For/Proto automatically.
         #
-        # flushInterval 1ms: casi flush inmediato para el streaming de vídeo
-        # firmado (/ocphotos-api/api/video/{id}, Range/206), el equivalente
-        # del proxy_buffering off / flush_interval -1 de los snippets
-        # nginx/Caddy.
+        # flushInterval 1ms: almost immediate flush for the signed video
+        # streaming (/ocphotos-api/api/video/{id}, Range/206), the
+        # equivalent of proxy_buffering off / flush_interval -1 in the
+        # nginx/Caddy snippets.
         responseForwarding:
           flushInterval: 1ms

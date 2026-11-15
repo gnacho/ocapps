@@ -1,14 +1,15 @@
-// Package auth: validador Graph unificado (SPEC §6). Base:
-// OpenCloudValidator de ocnews (el más completo), con la caché de ocnotes y
-// el chequeo single-tenant de ocphotos absorbidos como política inyectada.
+// Package auth: unified Graph validator (SPEC §6). Based on the
+// OpenCloudValidator from ocnews (the most complete one), with the ocnotes
+// cache and the ocphotos single-tenant check absorbed as an injected policy.
 //
-//   - Basic user:app-token (clientes News/Notes) y Bearer <access-token>
-//     (sesión web de OpenCloud) validan contra Graph /me.
-//   - Caché positiva 5 min + caché NEGATIVA 30 s (un 401/403 de Graph no
-//     martillea el IdP; los fallos de red/5xx NO se cachean, M7).
-//   - singleflight por clave (una sola petición a Graph en vuelo).
-//   - La revocación de credenciales tarda ≤5 min en propagarse (ya era así
-//     en news/notes; en photos pasa de 0 a 5 min — ventana aceptable, §6.1).
+//   - Basic user:app-token (News/Notes clients) and Bearer <access-token>
+//     (OpenCloud web session) validate against Graph /me.
+//   - Positive cache 5 min + NEGATIVE cache 30 s (a 401/403 from Graph does
+//     not hammer the IdP, network/5xx failures are NOT cached, M7).
+//   - singleflight per key (a single in-flight request to Graph).
+//   - Credential revocation takes up to 5 min to propagate (it was already
+//     like that in news/notes, in photos it goes from 0 to 5 min - acceptable
+//     window, §6.1).
 package auth
 
 import (
@@ -26,20 +27,20 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// TTLs de caché (SPEC §6.1).
+// Cache TTLs (SPEC §6.1).
 const (
 	positiveTTL = 5 * time.Minute
 	negativeTTL = 30 * time.Second
 )
 
-// Credential: exactamente una de las dos formas.
+// Credential: exactly one of the two forms.
 type Credential struct {
 	Username, Password string // Basic
 	Bearer             string // Bearer access token
 }
 
-// User es la identidad Graph resuelta (equivalente al shadow user; la
-// persistencia propia de cada módulo queda en internal/<mod>).
+// User is the resolved Graph identity (equivalent to the shadow user, each
+// module's own persistence lives in internal/<mod>).
 type User struct {
 	ID          string `json:"id"` // oc_id (uuid del IDM)
 	Username    string `json:"username"`
@@ -47,44 +48,44 @@ type User struct {
 	Email       string `json:"email"`
 }
 
-// Policy decide si un usuario Graph válido entra en el módulo (§6.2).
+// Policy decides whether a valid Graph user enters the module (§6.2).
 type Policy interface {
 	Admit(u *User) bool
 }
 
-type multiTenant struct{}               // news, notes: todo usuario Graph válido entra
-type singleTenant struct{ ocID string } // photos: solo u.ID == ocID
+type multiTenant struct{}               // news, notes: every valid Graph user gets in
+type singleTenant struct{ ocID string } // photos: only u.ID == ocID
 
-// MultiTenant admite a cualquier usuario válido (news, notes).
+// MultiTenant admits any valid user (news, notes).
 func MultiTenant() Policy { return multiTenant{} }
 
 func (multiTenant) Admit(*User) bool { return true }
 
-// SingleTenant admite solo al usuario con ID == ocID (photos; ocID se
-// resuelve al arranque con el app-token vía webdav.MeID).
+// SingleTenant admits only the user with ID == ocID (photos, ocID is
+// resolved at startup with the app-token through webdav.MeID).
 func SingleTenant(ocID string) Policy { return singleTenant{ocID: ocID} }
 
 func (p singleTenant) Admit(u *User) bool { return u != nil && p.ocID != "" && u.ID == p.ocID }
 
 type cacheEntry struct {
-	user     *User // nil en entradas negativas
+	user     *User // nil on negative entries
 	expiry   time.Time
 	negative bool
 }
 
-// validatorState es el estado compartible de un GraphValidator: caché,
-// singleflight y cliente HTTP. Los validadores derivados con WithPolicy
-// comparten este estado (una sola caché Graph por proceso, SPEC §6.2) y solo
-// difieren en la Policy aplicada tras la validación.
+// validatorState is the shareable state of a GraphValidator: cache,
+// singleflight and HTTP client. Validators derived with WithPolicy share this
+// state (a single Graph cache per process, SPEC §6.2) and only differ in the
+// Policy applied after validation.
 type validatorState struct {
 	client *http.Client
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry // basic:<user>:<sha256(pass)> / bearer:<sha256(token)>
-	sf    singleflight.Group    // una sola llamada a Graph por clave en vuelo
+	sf    singleflight.Group    // a single in-flight Graph call per key
 }
 
-// GraphValidator valida credenciales contra <OCAPPS_OPENCLOUD_URL>/graph/v1.0/me.
+// GraphValidator validates credentials against <OCAPPS_OPENCLOUD_URL>/graph/v1.0/me.
 type GraphValidator struct {
 	meURL  string
 	policy Policy
@@ -92,9 +93,9 @@ type GraphValidator struct {
 	st     *validatorState
 }
 
-// NewGraphValidator construye el validador. graphURL es la raíz del servidor
-// OpenCloud (se le añade /graph/v1.0/me); si ya viene con ese sufijo (caso
-// legacy OCNOTES_GRAPH_URL sin normalizar) se respeta.
+// NewGraphValidator builds the validator. graphURL is the root of the OpenCloud
+// server (/graph/v1.0/me is appended), if it already carries that suffix (the
+// legacy OCNOTES_GRAPH_URL case, not normalized) it is kept as is.
 func NewGraphValidator(graphURL string, pol Policy, log *slog.Logger) *GraphValidator {
 	if pol == nil {
 		pol = MultiTenant()
@@ -117,12 +118,12 @@ func NewGraphValidator(graphURL string, pol Policy, log *slog.Logger) *GraphVali
 	}
 }
 
-// WithPolicy devuelve un validador que comparte caché, singleflight y
-// cliente HTTP con v (una sola caché Graph para todo el proceso, SPEC §6.2:
-// un usuario de la web que abre news y photos valida una vez contra Graph)
-// pero aplica otra Policy — p. ej. SingleTenant(meID) en photos frente a
-// MultiTenant en news/notes. La política se evalúa DESPUÉS de la resolución
-// cacheada, así que compartir caché no mezcla tenancy entre módulos.
+// WithPolicy returns a validator that shares cache, singleflight and HTTP
+// client with v (a single Graph cache for the whole process, SPEC §6.2: a web
+// user opening news and photos validates once against Graph) but applies
+// another Policy - e.g. SingleTenant(meID) in photos versus MultiTenant in
+// news/notes. The policy is evaluated AFTER the cached resolution, so sharing
+// the cache does not mix tenancy between modules.
 func (v *GraphValidator) WithPolicy(pol Policy) *GraphValidator {
 	if pol == nil {
 		pol = MultiTenant()
@@ -130,13 +131,13 @@ func (v *GraphValidator) WithPolicy(pol Policy) *GraphValidator {
 	return &GraphValidator{meURL: v.meURL, policy: pol, log: v.log, st: v.st}
 }
 
-// cacheKey: `basic:<username>:<hex(sha256(password))>` y
-// `bearer:<sha256(token)>` (SPEC §6.1). La contraseña forma parte de la
-// clave SOLO como hash (nunca en claro), restaurando la semántica del
-// ocnews original (sha256("basic\x00user\x00pass")): con la clave
-// `basic:<username>` (B1), tras un login legítimo CUALQUIER contraseña de
-// ese usuario entraba por caché durante 5 min, y una caché negativa bajo la
-// misma clave permitía un DoS del usuario legítimo con un intento fallido.
+// cacheKey: `basic:<username>:<hex(sha256(password))>` and
+// `bearer:<sha256(token)>` (SPEC §6.1). The password is part of the key ONLY
+// as a hash (never in clear), restoring the semantics of the original ocnews
+// (sha256("basic\x00user\x00pass")): with the key `basic:<username>` (B1),
+// after a legitimate login ANY password of that user got in through the cache
+// for 5 min, and a negative cache under the same key allowed a DoS of the
+// legitimate user with a single failed attempt.
 func cacheKey(c Credential) string {
 	if c.Bearer != "" {
 		h := sha256.Sum256([]byte(c.Bearer))
@@ -146,7 +147,7 @@ func cacheKey(c Credential) string {
 	return "basic:" + c.Username + ":" + hex.EncodeToString(h[:])
 }
 
-// lookup devuelve (user, negative, hit).
+// lookup returns (user, negative, hit).
 func (v *GraphValidator) lookup(key string) (*User, bool, bool) {
 	v.st.mu.Lock()
 	defer v.st.mu.Unlock()
@@ -167,7 +168,7 @@ func (v *GraphValidator) store(key string, u *User, negative bool) {
 	v.st.mu.Unlock()
 }
 
-// graphMe: campos de GET /graph/v1.0/me que usamos.
+// graphMe: fields of GET /graph/v1.0/me that we use.
 type graphMe struct {
 	ID                       string `json:"id"`
 	DisplayName              string `json:"displayName"`
@@ -176,15 +177,15 @@ type graphMe struct {
 	Mail                     string `json:"mail"`
 }
 
-// fetchResult viaja por singleflight.
+// fetchResult travels through singleflight.
 type fetchResult struct {
 	user  *User
 	valid bool
 }
 
-// Validate resuelve la credencial contra Graph (con caché + singleflight) y
-// aplica la política del módulo. Devuelve (user, true) solo si la credencial
-// es válida Y la política la admite.
+// Validate resolves the credential against Graph (with cache + singleflight)
+// and applies the module policy. It returns (user, true) only if the
+// credential is valid AND the policy admits it.
 func (v *GraphValidator) Validate(ctx context.Context, c Credential) (*User, bool) {
 	if c.Bearer == "" && c.Username == "" {
 		return nil, false
@@ -199,7 +200,7 @@ func (v *GraphValidator) Validate(ctx context.Context, c Credential) (*User, boo
 	}
 
 	res, err, _ := v.st.sf.Do(key, func() (any, error) {
-		// doble chequeo: otro vuelo pudo rellenar la caché
+		// double check: another flight may have filled the cache
 		if u, negative, hit := v.lookup(key); hit {
 			if negative || u == nil {
 				return fetchResult{}, nil
@@ -207,9 +208,9 @@ func (v *GraphValidator) Validate(ctx context.Context, c Credential) (*User, boo
 			return fetchResult{user: u, valid: true}, nil
 		}
 		u, ok, rejected := v.fetch(ctx, c)
-		// M7: la caché negativa solo aplica a un RECHAZO explícito de Graph
-		// (401/403). Un fallo de red o un 5xx NO se cachea: el IdP caído no
-		// debe envenenar la caché 30 s y convertir un glitch en un outage.
+		// M7: the negative cache only applies to an explicit REJECTION from
+		// Graph (401/403). A network failure or a 5xx is NOT cached: the down
+		// IdP must not poison the cache for 30 s and turn a glitch into an outage.
 		switch {
 		case ok:
 			v.store(key, u, false)
@@ -235,10 +236,10 @@ func (v *GraphValidator) admit(u *User) (*User, bool) {
 	return u, true
 }
 
-// fetch hace la petición a Graph /me y mapea la respuesta a User. El
-// tercer retorno (rejected) es true solo ante un rechazo explícito de
-// credenciales (401/403): es el único resultado que merece caché negativa
-// (M7); los fallos de red, 5xx o respuestas malformadas no se cachean.
+// fetch makes the request to Graph /me and maps the response to User. The
+// third return value (rejected) is true only on an explicit rejection of the
+// credentials (401/403): it is the only result that deserves a negative cache
+// (M7), network failures, 5xx or malformed responses are not cached.
 func (v *GraphValidator) fetch(ctx context.Context, c Credential) (*User, bool, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.meURL, nil)
 	if err != nil {
@@ -251,14 +252,14 @@ func (v *GraphValidator) fetch(ctx context.Context, c Credential) (*User, bool, 
 	}
 	resp, err := v.st.client.Do(req)
 	if err != nil {
-		v.log.Warn("opencloud graph /me inalcanzable", "err", err)
+		v.log.Warn("opencloud graph /me unreachable", "err", err)
 		return nil, false, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		rejected := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
 		if !rejected {
-			v.log.Warn("graph /me inesperado", "status", resp.StatusCode)
+			v.log.Warn("unexpected graph /me", "status", resp.StatusCode)
 		}
 		return nil, false, rejected
 	}
@@ -274,8 +275,8 @@ func (v *GraphValidator) fetch(ctx context.Context, c Credential) (*User, bool, 
 	}, true, false
 }
 
-// username: con Basic es el del cliente; con Bearer, el account name del IDM
-// (SAM), luego UPN, mail y por último el uuid (orden de ocnews/ocnotes).
+// username: with Basic it is the client one, with Bearer, the IDM account
+// name (SAM), then UPN, mail and finally the uuid (ocnews/ocnotes order).
 func username(me graphMe, c Credential) string {
 	if c.Username != "" {
 		return c.Username
@@ -288,7 +289,7 @@ func username(me graphMe, c Credential) string {
 	return ""
 }
 
-// String describe el validador para logs de arranque.
+// String describes the validator for startup logs.
 func (v *GraphValidator) String() string {
 	return fmt.Sprintf("graph validator %s", v.meURL)
 }

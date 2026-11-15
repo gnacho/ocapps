@@ -1,24 +1,24 @@
--- 002 — multi-owner (H8, SPEC §5.3/§6.2).
+-- 002 - multi-owner (H8, SPEC §5.3/§6.2).
 --
--- Convierte el índice de photos de single-tenant a multi-tenant:
---   - assets: rebuild de tabla (SQLite no puede quitar el UNIQUE inline de
---     path): nueva UNIQUE(owner, path) e índices con prefijo owner. Se
---     conservan los IDs, así que las FKs de album_assets/asset_tags siguen
---     válidas. El runner ejecuta esta migración con foreign_keys OFF
---     (common/store.Migrate): con FK ON el DROP TABLE haría un DELETE
---     implícito que dispararía los ON DELETE CASCADE de las tablas hija.
---     El INSERT copia la lista de columnas COMUN al esquema vivo pre-002 y
---     al baseline 001 ya multi-owner (owner queda con su DEFAULT ''), así
---     que el mismo script sirve para la BD viva adoptada en 1 y para la BD
---     nueva creada por 001 (vacía: no-op efectivo). Las filas con owner=''
---     son las de la era single-tenant: las adopta el backfill en Go
---     (Store.BackfillOwner), que no puede ser SQL porque necesita resolver
---     el oc_id contra Graph.
---   - albums: ALTER ADD COLUMN owner (sirve tanto para la BD viva como
---     para la nueva, cuyo baseline 001 crea albums sin owner).
---   - geocode: SIN cambios a propósito — es una caché GLOBAL de nombres de
---     lugares (dato público de Nominatim), no información personal.
---   - scan_state: sin cambios (tabla legacy sin uso en código).
+-- Turns the photos index from single-tenant to multi-tenant:
+--   - assets: table rebuild (SQLite cannot drop the inline UNIQUE on
+--     path): new UNIQUE(owner, path) and indexes with the owner prefix. IDs
+--     are preserved, so the FKs of album_assets/asset_tags remain valid. The
+--     runner executes this migration with foreign_keys OFF
+--     (common/store.Migrate): with FK ON the DROP TABLE would make an implicit
+--     DELETE that would fire the ON DELETE CASCADE of the child tables.
+--     The INSERT copies the column list COMMON to the live pre-002 schema and
+--     to baseline 001 already multi-owner (owner keeps its DEFAULT ''), so the
+--     same script works for the live database adopted in 1 and for the new
+--     database created by 001 (empty: effective no-op). Rows with owner=''
+--     are those of the single-tenant era: they are adopted by the Go backfill
+--     (Store.BackfillOwner), which cannot be SQL because it needs to resolve
+--     the oc_id against Graph.
+--   - albums: ALTER ADD COLUMN owner (valid both for the live database and for
+--     the new one, whose baseline 001 creates albums without owner).
+--   - geocode: NO changes on purpose - it is a GLOBAL cache of place names
+--     (public Nominatim data), not personal information.
+--   - scan_state: no changes (legacy table unused in the code).
 
 CREATE TABLE assets_new (
     id          INTEGER PRIMARY KEY,
@@ -59,8 +59,9 @@ FROM assets;
 DROP TABLE assets;
 ALTER TABLE assets_new RENAME TO assets;
 
--- índices viejos (sin owner) fuera si existen (BD viva adoptada); los nuevos
--- llevan prefijo owner. En una BD nueva 001 ya los creó: IF NOT EXISTS.
+-- old indexes (without owner) dropped if they exist (adopted live database).
+-- The new ones carry the owner prefix. On a new database 001 already created
+-- them: IF NOT EXISTS.
 DROP INDEX IF EXISTS assets_taken;
 DROP INDEX IF EXISTS assets_geo;
 CREATE INDEX IF NOT EXISTS assets_owner_taken ON assets (owner, taken_at DESC) WHERE deleted_at IS NULL;

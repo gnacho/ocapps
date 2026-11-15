@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// TestUnavailable: el handler sustituto D3 responde 503 con el envelope
-// {"error":"module <name> unavailable"} y Content-Type JSON en cualquier
-// método.
+// TestUnavailable: the D3 substitute handler responds 503 with the
+// {"error":"module <name> unavailable"} envelope and JSON Content-Type on any
+// method.
 func TestUnavailable(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
 		req := httptest.NewRequest(method, "/index.php/apps/news/api/v1-3/version", nil)
@@ -20,7 +20,7 @@ func TestUnavailable(t *testing.T) {
 		}
 		var body map[string]string
 		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-			t.Fatalf("%s: body no es JSON: %v", method, err)
+			t.Fatalf("%s: body is not JSON: %v", method, err)
 		}
 		if body["error"] != "module news unavailable" {
 			t.Fatalf("%s: error = %q", method, body["error"])

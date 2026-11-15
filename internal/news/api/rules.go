@@ -8,14 +8,14 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// rulesBody: reglas block/keep en texto multilínea "Campo=regex".
+// rulesBody: block/keep rules in "Field=regex" multiline text.
 type rulesBody struct {
 	Block string `json:"block"`
 	Keep  string `json:"keep"`
 }
 
-// validateRules compila las reglas para validar; error 422 con la clave i18n
-// invalid_rule si alguna línea es inválida.
+// validateRules compiles the rules to validate, 422 error with the i18n key
+// invalid_rule if any line is invalid.
 func validateRules(body rulesBody) bool {
 	_, err := rules.Parse(body.Block, body.Keep)
 	return err == nil
@@ -33,13 +33,13 @@ func (s *Server) getFeedRules(w http.ResponseWriter, r *http.Request) {
 	}
 	rs, err := s.store.GetFeedRules(id)
 	if err != nil {
-		s.logError(w, r, "leer reglas del feed", err)
+		s.logError(w, r, "read feed rules", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rules": rs})
 }
 
-// setFeedRules guarda las reglas del feed y las re-aplica a sus items.
+// setFeedRules stores the feed rules and re-applies them to its items.
 func (s *Server) setFeedRules(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -60,22 +60,22 @@ func (s *Server) setFeedRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SaveFeedRules(id, store.Rules{Block: body.Block, Keep: body.Keep}); err != nil {
-		s.logError(w, r, "guardar reglas del feed", err)
+		s.logError(w, r, "store feed rules", err)
 		return
 	}
 	if _, err := s.store.ReapplyFeedFilter(id, store.FeedFilter{}); err != nil {
-		s.logError(w, r, "re-aplicar reglas del feed", err)
+		s.logError(w, r, "re-apply feed rules", err)
 		return
 	}
 	saved, err := s.store.GetFeedRules(id)
 	if err != nil {
-		s.logError(w, r, "leer reglas guardadas", err)
+		s.logError(w, r, "read stored rules", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rules": saved})
 }
 
-// deleteFeedRules borra las reglas del feed y descongela sus items.
+// deleteFeedRules deletes the feed rules and unfreezes its items.
 func (s *Server) deleteFeedRules(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -87,28 +87,28 @@ func (s *Server) deleteFeedRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeleteFeedRules(id); err != nil {
-		s.logError(w, r, "borrar reglas del feed", err)
+		s.logError(w, r, "delete feed rules", err)
 		return
 	}
 	if _, err := s.store.ReapplyFeedFilter(id, store.FeedFilter{}); err != nil {
-		s.logError(w, r, "descongelar items del feed", err)
+		s.logError(w, r, "unfreeze feed items", err)
 		return
 	}
 	writeEmpty(w)
 }
 
-// myRules: reglas globales del usuario (GET /api/me/rules).
+// myRules: user global rules (GET /api/me/rules).
 func (s *Server) myRules(w http.ResponseWriter, r *http.Request) {
 	rs, err := s.store.GetGlobalRules(user(r).ID)
 	if err != nil {
-		s.logError(w, r, "leer reglas globales", err)
+		s.logError(w, r, "read global rules", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rules": rs})
 }
 
-// updateMyRules guarda las reglas globales y las re-aplica a todos los items
-// del usuario (PUT /api/me/rules).
+// updateMyRules stores the global rules and re-applies them to all the user
+// items (PUT /api/me/rules).
 func (s *Server) updateMyRules(w http.ResponseWriter, r *http.Request) {
 	var body rulesBody
 	if err := decodeBody(r, &body); err != nil {
@@ -121,16 +121,16 @@ func (s *Server) updateMyRules(w http.ResponseWriter, r *http.Request) {
 	}
 	u := user(r)
 	if err := s.store.SaveGlobalRules(u.ID, store.Rules{Block: body.Block, Keep: body.Keep}); err != nil {
-		s.logError(w, r, "guardar reglas globales", err)
+		s.logError(w, r, "store global rules", err)
 		return
 	}
 	if _, err := s.store.ReapplyGlobalRules(u.ID); err != nil {
-		s.logError(w, r, "re-aplicar reglas globales", err)
+		s.logError(w, r, "re-apply global rules", err)
 		return
 	}
 	saved, err := s.store.GetGlobalRules(u.ID)
 	if err != nil {
-		s.logError(w, r, "leer reglas globales guardadas", err)
+		s.logError(w, r, "read stored global rules", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rules": saved})

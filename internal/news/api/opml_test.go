@@ -38,19 +38,19 @@ func TestOPMLImportExportRoundtrip(t *testing.T) {
 		t.Fatalf("import: %d %s", resp.StatusCode, body)
 	}
 
-	// carpetas y feeds creados
+	// folders and feeds created
 	_, fb := e.do(t, "GET", "/folders", e.user, e.pass, nil)
 	if !strings.Contains(string(fb), "Tech") {
-		t.Fatalf("carpeta no creada: %s", fb)
+		t.Fatalf("folder not created: %s", fb)
 	}
 	_, fbf := e.do(t, "GET", "/feeds", e.user, e.pass, nil)
 	for _, u := range []string{"https://a.example/rss", "https://b.example/feed.xml", "https://c.example/rss"} {
 		if !strings.Contains(string(fbf), u) {
-			t.Fatalf("feed %s no importado: %s", u, fbf)
+			t.Fatalf("feed %s not imported: %s", u, fbf)
 		}
 	}
 
-	// import idempotente (re-import no duplica)
+	// idempotent import (re-import does not duplicate)
 	req2, _ := http.NewRequest("POST", e.ts.URL+Base+"/import/opml", strings.NewReader(opmlFixture))
 	req2.SetBasicAuth(e.user, e.pass)
 	resp2, err := e.client.Do(req2)
@@ -73,36 +73,36 @@ func TestOPMLImportExportRoundtrip(t *testing.T) {
 	s := string(expB)
 	for _, want := range []string{"<opml", `xmlUrl="https://a.example/rss"`, `xmlUrl="https://c.example/rss"`, "Tech"} {
 		if !strings.Contains(s, want) {
-			t.Errorf("export sin %q: %s", want, s)
+			t.Errorf("export without %q: %s", want, s)
 		}
 	}
 
-	// opml inválido → 422
-	req4, _ := http.NewRequest("POST", e.ts.URL+Base+"/import/opml", strings.NewReader("basura"))
+	// invalid opml -> 422
+	req4, _ := http.NewRequest("POST", e.ts.URL+Base+"/import/opml", strings.NewReader("garbage"))
 	req4.SetBasicAuth(e.user, e.pass)
 	resp4, _ := e.client.Do(req4)
 	if resp4.StatusCode != 422 {
-		t.Fatalf("opml inválido: %d", resp4.StatusCode)
+		t.Fatalf("invalid opml: %d", resp4.StatusCode)
 	}
 }
 
 func TestFaviconEndpoint(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 
-	// suscribir feed del sitio del fake
+	// subscribe a feed of the fake site
 	_, fb := e.do(t, "POST", "/feeds", e.user, e.pass, map[string]string{"url": "https://feed.example/rss"})
 	if !strings.Contains(string(fb), `"id":1`) {
-		t.Fatalf("feed no creado: %s", fb)
+		t.Fatalf("feed not created: %s", fb)
 	}
 	hash := fmt.Sprintf("%x", md5.Sum([]byte("https://feed.example/rss")))
 
-	// sin caché → 404
+	// no cache -> 404
 	code, _ := e.do(t, "GET", "/favicon/"+hash, e.user, e.pass, nil)
 	if code != 404 {
-		t.Fatalf("favicon sin caché: %d", code)
+		t.Fatalf("favicon without cache: %d", code)
 	}
 
-	// poblar caché manualmente (el fetch real es best-effort del scheduler)
+	// populate the cache manually (the real fetch is best-effort of the scheduler)
 	png := "\x89PNG\r\n\x1a\nfakeicon"
 	err := os.MkdirAll(filepath.Join(e.faviconDir), 0o700)
 	if err != nil {
@@ -127,14 +127,14 @@ func TestFaviconEndpoint(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != png {
-		t.Errorf("contenido favicon mal")
+		t.Errorf("bad favicon content")
 	}
 
-	// hash desconocido → 404 (aunque exista el fichero)
+	// unknown hash -> 404 (even if the file exists)
 	os.WriteFile(filepath.Join(e.faviconDir, "ffff"+".png"), []byte(png), 0o600)
 	code, _ = e.do(t, "GET", "/favicon/ffff", e.user, e.pass, nil)
 	if code != 404 {
-		t.Fatalf("hash sin feed: %d", code)
+		t.Fatalf("hash without feed: %d", code)
 	}
 }
 
@@ -146,11 +146,11 @@ func TestUpdaterFeedsAll(t *testing.T) {
 	if code != 200 || !strings.Contains(string(body), `"userId":"nacho"`) {
 		t.Fatalf("feeds/all: %d %s", code, body)
 	}
-	// no-admin → 401
-	if code, _ = e.do(t, "GET", "/feeds/all", "otro", "otra1234", nil); code != 401 {
-		t.Fatalf("feeds/all no-admin: %d", code)
+	// non-admin -> 401
+	if code, _ = e.do(t, "GET", "/feeds/all", "other", "other1234", nil); code != 401 {
+		t.Fatalf("feeds/all non-admin: %d", code)
 	}
-	// cleanup no-op de contrato
+	// contract no-op cleanup
 	if code, _ = e.do(t, "GET", "/cleanup/before-update", e.user, e.pass, nil); code != 204 {
 		t.Fatalf("cleanup/before: %d", code)
 	}

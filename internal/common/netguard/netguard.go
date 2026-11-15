@@ -1,9 +1,9 @@
-// Package netguard: mitiga SSRF en las conexiones salientes (merge de
-// ocnews/internal/netguard y ocnotes/internal/netguard — idénticos). El
-// http.Transport resuelve el host y rechaza destinos a IPs privadas,
-// loopback, link-local o metadata cloud antes de conectar. Se usa en TODOS
-// los clientes que fetchean URLs controladas por el usuario (imgproxy, feed
-// fetcher, extractor, favicons).
+// Package netguard: mitigates SSRF in outgoing connections (merge of
+// ocnews/internal/netguard and ocnotes/internal/netguard - identical). The
+// http.Transport resolves the host and rejects destinations to private IPs,
+// loopback, link-local or cloud metadata before connecting. It is used in ALL
+// the clients that fetch user-controlled URLs (imgproxy, feed fetcher,
+// extractor, favicons).
 package netguard
 
 import (
@@ -15,10 +15,10 @@ import (
 	"time"
 )
 
-// DefaultTimeout es el timeout del SafeClient sin argumentos.
+// DefaultTimeout is the timeout of the SafeClient with no arguments.
 const DefaultTimeout = 30 * time.Second
 
-// isBlockedIP decide si una IP no debe alcanzarse (SSRF).
+// isBlockedIP decides whether an IP must not be reached (SSRF).
 func isBlockedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -27,44 +27,44 @@ func isBlockedIP(ip net.IP) bool {
 		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
 		return true
 	}
-	// IPv4-mapped IPv6 (::ffff:a.b.c.d) → analizar la IPv4 subyacente
+	// IPv4-mapped IPv6 (::ffff:a.b.c.d) -> analyze the underlying IPv4
 	if v4 := ip.To4(); v4 != nil {
 		return v4.IsLoopback() || v4.IsPrivate() || v4.IsLinkLocalUnicast() ||
 			v4.IsLinkLocalMulticast() || v4.IsUnspecified() || v4.IsMulticast()
 	}
-	// Metadata de cloud (169.254.169.254) y rangos reservados habituales
-	// (ya cubiertos por IsLinkLocalUnicast para 169.254/16).
+	// Cloud metadata (169.254.169.254) and the usual reserved ranges
+	// (already covered by IsLinkLocalUnicast for 169.254/16).
 	return false
 }
 
-// CheckURL valida una URL antes de fetchearla: solo http/https y cuyo host
-// no resuelva a IPs bloqueadas. Útil para rechazar temprano en handlers que
-// reciben URLs del usuario (además de la protección en Dial).
+// CheckURL validates a URL before fetching it: only http/https and whose host
+// does not resolve to blocked IPs. Useful to reject early in handlers that
+// receive user URLs (in addition to the protection in Dial).
 func CheckURL(u *url.URL) error {
 	if u == nil {
-		return fmt.Errorf("url nula")
+		return fmt.Errorf("nil url")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("esquema no permitido: %q", u.Scheme)
+		return fmt.Errorf("scheme not allowed: %q", u.Scheme)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return fmt.Errorf("url sin host")
+		return fmt.Errorf("url without host")
 	}
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		return fmt.Errorf("resolver %q: %w", host, err)
+		return fmt.Errorf("resolve %q: %w", host, err)
 	}
 	for _, ip := range ips {
 		if isBlockedIP(ip) {
-			return fmt.Errorf("destino bloqueado (SSRF): %s -> %s", host, ip)
+			return fmt.Errorf("blocked destination (SSRF): %s -> %s", host, ip)
 		}
 	}
 	return nil
 }
 
-// SafeTransport devuelve un http.Transport con protección SSRF y un timeout
-// de dial razonable.
+// SafeTransport returns an http.Transport with SSRF protection and a
+// reasonable dial timeout.
 func SafeTransport() *http.Transport {
 	return &http.Transport{
 		Proxy: nil,
@@ -72,14 +72,14 @@ func SafeTransport() *http.Transport {
 			d := net.Dialer{Timeout: 10 * time.Second}
 			host, _, err := net.SplitHostPort(addr)
 			if err != nil {
-				return nil, fmt.Errorf("dirección inválida %q: %w", addr, err)
+				return nil, fmt.Errorf("invalid address %q: %w", addr, err)
 			}
 			if ips, err := net.LookupIP(host); err != nil {
-				return nil, fmt.Errorf("resolver %q: %w", host, err)
+				return nil, fmt.Errorf("resolve %q: %w", host, err)
 			} else {
 				for _, ip := range ips {
 					if isBlockedIP(ip) {
-						return nil, fmt.Errorf("destino bloqueado (SSRF): %s -> %s", host, ip)
+						return nil, fmt.Errorf("blocked destination (SSRF): %s -> %s", host, ip)
 					}
 				}
 			}
@@ -91,19 +91,19 @@ func SafeTransport() *http.Transport {
 	}
 }
 
-// SafeClient devuelve un http.Client con el transporte seguro y el timeout
-// por defecto (30 s).
+// SafeClient returns an http.Client with the safe transport and the default
+// timeout (30 s).
 func SafeClient() *http.Client {
 	return Client(DefaultTimeout)
 }
 
-// Client devuelve un http.Client con el transporte seguro y timeout propio.
+// Client returns an http.Client with the safe transport and its own timeout.
 func Client(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, Transport: SafeTransport()}
 }
 
-// ClientAllowLocal devuelve un client cuyo transporte permite loopback/local.
-// SOLO para tests (httptest escucha en 127.0.0.1); nunca en producción.
+// ClientAllowLocal returns a client whose transport allows loopback/local.
+// Tests ONLY (httptest listens on 127.0.0.1), never in production.
 func ClientAllowLocal(timeout time.Duration) *http.Client {
 	t := SafeTransport()
 	t.DialContext = (&net.Dialer{Timeout: 10 * time.Second}).DialContext

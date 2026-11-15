@@ -18,12 +18,12 @@ func readBody(t *testing.T, resp *http.Response) []byte {
 	return b
 }
 
-// extractJSONInt saca el primer número que sigue a key en un JSON plano.
+// extractJSONInt pulls the first number following key in a flat JSON.
 func extractJSONInt(t *testing.T, body []byte, key string) int64 {
 	t.Helper()
 	idx := strings.Index(string(body), key)
 	if idx < 0 {
-		t.Fatalf("clave %s no encontrada en %s", key, body)
+		t.Fatalf("key %s not found in %s", key, body)
 	}
 	rest := strings.TrimLeft(string(body)[idx+len(key):], " ")
 	end := strings.IndexAny(rest, ",}]")
@@ -32,19 +32,19 @@ func extractJSONInt(t *testing.T, body []byte, key string) int64 {
 	}
 	n, err := strconv.ParseInt(rest[:end], 10, 64)
 	if err != nil {
-		t.Fatalf("número inválido tras %s: %v", key, err)
+		t.Fatalf("invalid number after %s: %v", key, err)
 	}
 	return n
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
-// TestAndroidCompat: peculiaridades del cliente news-android verificadas
-// contra su código fuente (retrofit NewsAPI.java).
+// TestAndroidCompat: peculiarities of the news-android client verified
+// against its source code (retrofit NewsAPI.java).
 func TestAndroidCompat(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 
-	// crear feed con form-urlencoded (el cliente usa @Field, no JSON)
+	// create a feed with form-urlencoded (the client uses @Field, not JSON)
 	req, _ := http.NewRequest("POST", e.ts.URL+Base+"/feeds",
 		strings.NewReader("url=https://form.example/rss&folderId=0"))
 	req.SetBasicAuth(e.user, e.pass)
@@ -58,44 +58,44 @@ func TestAndroidCompat(t *testing.T) {
 		t.Fatalf("create feed form: %d %s", resp.StatusCode, body)
 	}
 
-	// crear carpeta (JSON, lo hace el cliente con Map) y feed con query params
+	// create a folder (JSON, the client does it with Map) and a feed with query params
 	code, fb := e.do(t, "POST", "/folders", e.user, e.pass, map[string]string{"name": "C"})
 	if code != 200 {
-		t.Fatalf("carpeta: %d", code)
+		t.Fatalf("folder: %d", code)
 	}
 	code, fb = e.do(t, "GET", "/items?type=3&getRead=true", e.user, e.pass, nil)
 	if !strings.Contains(string(fb), "form.example") {
 		_ = code
 	}
 
-	// PUT rename feed (spec dice POST; cliente manda PUT)
+	// PUT rename feed (the spec says POST, the client sends PUT)
 	code, fb = e.do(t, "GET", "/feeds", e.user, e.pass, nil)
 	feedID := extractJSONInt(t, fb, `"id":`)
 	if code, _ = e.do(t, "PUT", "/feeds/"+itoa(feedID)+"/rename", e.user, e.pass,
 		map[string]string{"feedTitle": "Renombrado"}); code != 204 {
 		t.Fatalf("PUT rename: %d", code)
 	}
-	// PUT move (spec dice POST; cliente manda PUT)
+	// PUT move (the spec says POST, the client sends PUT)
 	if code, _ = e.do(t, "PUT", "/feeds/"+itoa(feedID)+"/move", e.user, e.pass,
 		map[string]any{"folderId": nil}); code != 204 {
 		t.Fatalf("PUT move: %d", code)
 	}
 	// POST sigue valiendo (spec)
 	if code, _ = e.do(t, "POST", "/feeds/"+itoa(feedID)+"/rename", e.user, e.pass,
-		map[string]string{"feedTitle": "Otro"}); code != 204 {
+		map[string]string{"feedTitle": "Other"}); code != 204 {
 		t.Fatalf("POST rename: %d", code)
 	}
 
-	// ver el cambio aplicado
+	// check the change applied
 	_, fb = e.do(t, "GET", "/feeds", e.user, e.pass, nil)
-	if !strings.Contains(string(fb), "Otro") {
-		t.Fatalf("rename no aplicado: %s", fb)
+	if !strings.Contains(string(fb), "Other") {
+		t.Fatalf("rename not applied: %s", fb)
 	}
 
-	// crear carpeta con JSON pero content-type form (curl -d por defecto):
-	// decodeBody decide por contenido, no por cabecera
+	// create a folder with JSON but form content-type (curl -d by default):
+	// decodeBody decides by content, not by header
 	reqC, _ := http.NewRequest("POST", e.ts.URL+Base+"/folders",
-		strings.NewReader(`{"name":"Tecnología"}`))
+		strings.NewReader(`{"name":"Technology"}`))
 	reqC.SetBasicAuth(e.user, e.pass)
 	reqC.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	respC, err := e.client.Do(reqC)
@@ -103,18 +103,18 @@ func TestAndroidCompat(t *testing.T) {
 		t.Fatal(err)
 	}
 	bodyC := readBody(t, respC)
-	if respC.StatusCode != 200 || !strings.Contains(string(bodyC), "Tecnología") {
-		t.Fatalf("carpeta JSON con content-type form: %d %s", respC.StatusCode, bodyC)
+	if respC.StatusCode != 200 || !strings.Contains(string(bodyC), "Technology") {
+		t.Fatalf("JSON folder with form content-type: %d %s", respC.StatusCode, bodyC)
 	}
 }
 
-// TestOCSUserNoRegistradoEnNews (SPEC §4.2): el stub OCS se eliminó en H5 —
-// /ocs/v2.php/cloud/user lo registra SOLO el módulo notes. Las aserciones
-// del contrato JSON para news-android (envelope ocs, id=username,
-// displayname, display-name, 401 sin auth) viven ahora en los tests del
-// handler extendido de notes (internal/notes/api/server_test.go,
-// TestUserInfoJSON*) y en la integración de cmd/ocapps.
-func TestOCSUserNoRegistradoEnNews(t *testing.T) {
+// TestOCSUserNotRegisteredInNews (SPEC §4.2): the OCS stub was removed in H5,
+// /ocs/v2.php/cloud/user is registered ONLY by the notes module. The assertions
+// of the JSON contract for news-android (ocs envelope, id=username,
+// displayname, display-name, 401 without auth) now live in the tests of the
+// extended handler of notes (internal/notes/api/server_test.go,
+// TestUserInfoJSON*) and in the cmd/ocapps integration.
+func TestOCSUserNotRegisteredInNews(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 	req, _ := http.NewRequest("GET", e.ts.URL+"/ocs/v2.php/cloud/user?format=json", nil)
 	req.SetBasicAuth(e.user, e.pass)
@@ -124,6 +124,6 @@ func TestOCSUserNoRegistradoEnNews(t *testing.T) {
 	}
 	_ = readBody(t, resp)
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("news no debe registrar /ocs/v2.php/cloud/user: %d (want 404)", resp.StatusCode)
+		t.Fatalf("news must not register /ocs/v2.php/cloud/user: %d (want 404)", resp.StatusCode)
 	}
 }

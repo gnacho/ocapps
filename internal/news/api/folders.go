@@ -18,7 +18,7 @@ func pathID(r *http.Request, name string) (int64, bool) {
 func (s *Server) listFolders(w http.ResponseWriter, r *http.Request) {
 	folders, err := s.store.ListFolders(user(r).ID)
 	if err != nil {
-		s.logError(w, r, "listar carpetas", err)
+		s.logError(w, r, "list folders", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"folders": folders})
@@ -47,7 +47,7 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.logError(w, r, "crear carpeta", err)
+		s.logError(w, r, "create folder", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"folders": []store.Folder{*f}})
@@ -72,7 +72,7 @@ func (s *Server) renameFolder(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrConflict):
 		errorStatus(w, r, http.StatusConflict, "folder_exists")
 	case err != nil:
-		s.logError(w, r, "renombrar carpeta", err)
+		s.logError(w, r, "rename folder", err)
 	default:
 		writeEmpty(w)
 	}
@@ -87,13 +87,13 @@ func (s *Server) deleteFolder(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteFolder(user(r).ID, id); errors.Is(err, store.ErrNotFound) {
 		errorStatus(w, r, http.StatusNotFound, "folder_not_found")
 	} else if err != nil {
-		s.logError(w, r, "borrar carpeta", err)
+		s.logError(w, r, "delete folder", err)
 	} else {
 		writeEmpty(w)
 	}
 }
 
-// markFolderRead marca leídos los items de una carpeta hasta newestItemId.
+// markFolderRead marks as read the items of a folder up to newestItemId.
 func (s *Server) markFolderRead(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "folderId")
 	if !ok {
@@ -110,7 +110,7 @@ func (s *Server) markFolderRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.store.MarkAllRead(user(r).ID, maxID, "folder", id); err != nil {
-		s.logError(w, r, "marcar carpeta leída", err)
+		s.logError(w, r, "mark folder read", err)
 		return
 	}
 	writeEmpty(w)

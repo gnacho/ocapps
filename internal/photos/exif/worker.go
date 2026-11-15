@@ -1,8 +1,8 @@
-// Package exif — worker que extrae EXIF con Range requests (primeros 256 KB,
-// suficiente para la cabecera EXIF de la mayoría de JPEG/TIFF). Los
-// HEIC/HEIF llevan el item Exif en cualquier punto del contenedor: si no está
-// en el prefijo se reintenta con rangos escalonados (1 MB, 4 MB) y, si sigue
-// sin aparecer, el asset se registra como sin EXIF (comportamiento de siempre).
+// Package exif - worker that extracts EXIF with Range requests (first 256 KB,
+// enough for the EXIF header of most JPEG/TIFF files). HEIC/HEIF carry the Exif
+// item anywhere in the container: if it is not in the prefix it retries with
+// escalating ranges (1 MB, 4 MB) and, if it still does not show up, the asset
+// is recorded as having no EXIF (the usual behaviour).
 package exif
 
 import (
@@ -25,9 +25,9 @@ import (
 
 const rangeBytes = 256 * 1024
 
-// heicRanges son los prefijos que probamos para extraer el item Exif de un
-// HEIC: el primero es el estándar y los dos siguientes el reescalado si el
-// item cae más allá de 256 KB.
+// heicRanges are the prefixes tried to extract the Exif item of a HEIC: the
+// first one is the standard one and the next two the escalation used when the
+// item falls beyond 256 KB.
 var heicRanges = []int64{rangeBytes, 1 << 20, 4 << 20}
 
 type Worker struct {
@@ -35,18 +35,18 @@ type Worker struct {
 	log   *slog.Logger
 }
 
-// NewWorker: el worker es stateless respecto al usuario (H8); el cliente DAV
-// del owner llega por parámetro a Run.
+// NewWorker: the worker is stateless with respect to the user (H8), the DAV
+// client of the owner arrives as a parameter to Run.
 func NewWorker(st *store.Store, log *slog.Logger) *Worker {
 	return &Worker{store: st, log: log}
 }
 
-// Run procesa la cola de EXIF pendiente DEL OWNER hasta que el contexto se
-// cancele o no queden pendientes. Pensado para lanzarse tras cada scan con el
-// cliente DAV de la sesión del owner. Devuelve nil al terminar (o por ctx);
-// si la credencial está caducada (webdav.ErrUnauthorized) ABORTA el lote y lo
-// propaga: el scheduler pospone el trabajo a la próxima actividad del
-// usuario en vez de quemar toda la cola de EXIF contra un 401.
+// Run processes the pending EXIF queue OF THE OWNER until the context is
+// cancelled or nothing is pending. Meant to be launched after each scan with
+// the DAV client of the owner's session. It returns nil when done (or on ctx),
+// if the credential has expired (webdav.ErrUnauthorized) it ABORTS the batch
+// and propagates it: the scheduler postpones the work until the next user
+// activity instead of burning the whole EXIF queue against a 401.
 func (w *Worker) Run(ctx context.Context, owner string, dav *webdav.Client) error {
 	for {
 		select {
@@ -70,8 +70,8 @@ func (w *Worker) Run(ctx context.Context, owner string, dav *webdav.Client) erro
 				if errors.Is(err, webdav.ErrUnauthorized) {
 					return err
 				}
-				w.log.Warn("exif falló", "owner", owner, "path", a.Path, "err", err)
-				// marca como procesado para no reintentar en bucle
+				w.log.Warn("exif failed", "owner", owner, "path", a.Path, "err", err)
+				// mark it as processed so it is not retried in a loop
 				_ = w.store.SaveExif(ctx, a.ID, store.ExifResult{})
 			}
 		}
@@ -90,8 +90,8 @@ func (w *Worker) processOne(ctx context.Context, dav *webdav.Client, id int64, h
 		if errors.Is(err, webdav.ErrUnauthorized) {
 			return err
 		}
-		// sin EXIF (PNG, WebP, HEIC sin item Exif o truncado tras el
-		// reescalado...): no es error; al menos sacamos las dimensiones
+		// no EXIF (PNG, WebP, HEIC without an Exif item or truncated after
+		// the escalation...): not an error, at least we take the dimensions
 		fillDims(&res, data)
 		return w.store.SaveExif(ctx, id, res)
 	}
@@ -101,13 +101,13 @@ func (w *Worker) processOne(ctx context.Context, dav *webdav.Client, id int64, h
 	return w.store.SaveExif(ctx, id, res)
 }
 
-// decodeExif devuelve el EXIF parseado y el prefijo con el que se hizo (para
-// fillDims; en HEIC puede ser mayor que el descargado al principio). Devuelve
-// error cuando no hay EXIF legible.
+// decodeExif returns the parsed EXIF and the prefix it was parsed from (for
+// fillDims, on HEIC it may be larger than the one downloaded at the start). It
+// returns an error when there is no readable EXIF.
 func (w *Worker) decodeExif(ctx context.Context, dav *webdav.Client, href string, data []byte) (*exif.Exif, []byte, error) {
 	if !isHEIC(data) {
-		// JPEG: el APP1 con el EXIF no pasa de 64 KB, el prefijo de 256 KB
-		// sobra; goexif también parsea TIFF crudo
+		// JPEG: the APP1 with the EXIF does not go beyond 64 KB, the 256 KB
+		// prefix is more than enough, goexif also parses raw TIFF
 		x, err := exif.Decode(bytes.NewReader(data))
 		return x, data, err
 	}
@@ -116,8 +116,8 @@ func (w *Worker) decodeExif(ctx context.Context, dav *webdav.Client, href string
 		return nil, data, err
 	}
 	data = prefix
-	// goexif parsea el stream TIFF crudo sin problema, así que la extracción
-	// de campos es idéntica a la del JPEG
+	// goexif parses the raw TIFF stream with no problem, so the field
+	// extraction is identical to the JPEG one
 	x, err := exif.Decode(bytes.NewReader(tiff))
 	if err != nil {
 		return nil, data, err
@@ -125,12 +125,12 @@ func (w *Worker) decodeExif(ctx context.Context, dav *webdav.Client, href string
 	return x, data, nil
 }
 
-// heicExifPayload extrae el payload TIFF del item Exif del contenedor HEIC.
-// heic.RawExif aliasa el buffer de entrada sin copiarlo: el payload es
-// solo-lectura (nada debe mutar el prefijo ni el resultado). Con ErrNoExif el
-// fichero no lleva EXIF y se devuelve tal cual; con cualquier otro error
-// (normalmente prefijo truncado) se reintenta con los rangos escalonados de
-// heicRanges y, si el último también falla, se propaga el error.
+// heicExifPayload extracts the TIFF payload of the Exif item of the HEIC
+// container. heic.RawExif aliases the input buffer without copying it: the
+// payload is read-only (nothing must mutate the prefix or the result). With
+// ErrNoExif the file carries no EXIF and it is returned as is, with any other
+// error (usually a truncated prefix) it retries with the escalating ranges of
+// heicRanges and, if the last one also fails, the error is propagated.
 func (w *Worker) heicExifPayload(ctx context.Context, dav *webdav.Client, href string) ([]byte, []byte, error) {
 	var last error
 	for _, n := range heicRanges {
@@ -148,12 +148,12 @@ func (w *Worker) heicExifPayload(ctx context.Context, dav *webdav.Client, href s
 			last = err
 		}
 	}
-	w.log.Warn("no se pudo extraer el EXIF del HEIC", "path", href, "err", last)
+	w.log.Warn("could not extract EXIF from HEIC", "path", href, "err", last)
 	return nil, nil, last
 }
 
-// parseExif rellena res con los campos cámara/exposición/geo del EXIF (vale
-// igual para JPEG y para el stream TIFF crudo de un HEIC).
+// parseExif fills res with the camera/exposure/geo fields of the EXIF (valid
+// both for JPEG and for the raw TIFF stream of a HEIC).
 func parseExif(x *exif.Exif, res *store.ExifResult) {
 	if tm, err := x.DateTime(); err == nil {
 		res.TakenAt = &tm
@@ -166,7 +166,7 @@ func parseExif(x *exif.Exif, res *store.ExifResult) {
 		}
 		res.Camera = trimJoin(make_, model)
 	}
-	// LensModel (0xA434) no está mapeado en esta versión de goexif; se omite.
+	// LensModel (0xA434) is not mapped in this version of goexif, it is skipped.
 	if v, err := x.Get(exif.ISOSpeedRatings); err == nil {
 		if n, err := v.Int(0); err == nil {
 			res.ISO = n
@@ -202,14 +202,14 @@ func parseExif(x *exif.Exif, res *store.ExifResult) {
 	}
 }
 
-// isHEIC huele el box ftyp del offset 4 (todo ISOBMFF válido lo lleva ahí;
-// las brands heic/mif1 las maneja el decodificador de gen2brain/h265).
+// isHEIC sniffs the ftyp box at offset 4 (every valid ISOBMFF carries it there,
+// the heic/mif1 brands are handled by the gen2brain/h265 decoder).
 func isHEIC(data []byte) bool {
 	return len(data) >= 8 && string(data[4:8]) == "ftyp"
 }
 
-// fillDims: si el EXIF no trae dimensiones, las saca de la cabecera de la imagen
-// (necesario para el layout justificado del timeline).
+// fillDims: if the EXIF brings no dimensions, they are taken from the image
+// header (needed for the justified layout of the timeline).
 func fillDims(res *store.ExifResult, data []byte) {
 	if res.Width != 0 && res.Height != 0 {
 		return

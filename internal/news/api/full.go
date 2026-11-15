@@ -4,9 +4,9 @@ import (
 	"net/http"
 )
 
-// itemFull: GET /items/{itemId}/full — cuerpo completo extraído del artículo
-// original (readability), cacheado en BD. Los feeds traen resúmenes; este
-// endpoint devuelve el texto íntegro sanitizado, con imágenes vía proxy.
+// itemFull: GET /items/{itemId}/full - full body extracted from the original
+// article (readability), cached in the DB. Feeds bring summaries, this
+// endpoint returns the whole sanitized text, with images through the proxy.
 func (s *Server) itemFull(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("itemId"))
 	if err != nil || id <= 0 {
@@ -15,7 +15,7 @@ func (s *Server) itemFull(w http.ResponseWriter, r *http.Request) {
 	}
 	u := user(r)
 
-	// cache: el contenido de un artículo publicado no cambia
+	// cache: the content of a published article does not change
 	if body, err := s.store.GetItemFull(id); err == nil && body != "" {
 		writeJSON(w, http.StatusOK, map[string]string{"body": s.rewriteImages(body)})
 		return
@@ -26,8 +26,8 @@ func (s *Server) itemFull(w http.ResponseWriter, r *http.Request) {
 		errorStatus(w, r, http.StatusNotFound, "item_not_found")
 		return
 	}
-	// selector CSS de extracción por feed (#39): si el feed lo define, se usa
-	// antes que readability (fallback si el selector falla).
+	// per-feed CSS extraction selector (#39): if the feed defines it, it is used
+	// before readability (fallback if the selector fails).
 	selector := ""
 	if feedID, err := s.store.GetItemFeedID(u.ID, id); err == nil {
 		if sel, err := s.store.GetFeedScraperSelector(feedID); err == nil {
@@ -36,8 +36,8 @@ func (s *Server) itemFull(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := s.extract.Article(r.Context(), itemURL, selector)
 	if err != nil {
-		// no es error del servidor: el sitio no permite extracción
-		s.log.Warn("extracción completa falló", "url", itemURL, "err", err)
+		// it is not a server error: the site does not allow extraction
+		s.log.Warn("full extraction failed", "url", itemURL, "err", err)
 		errorStatus(w, r, http.StatusUnprocessableEntity, "full_unavailable")
 		return
 	}
