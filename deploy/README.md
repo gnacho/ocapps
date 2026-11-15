@@ -1,125 +1,125 @@
-# Despliegue y migración de `ocapps`
+# Deploying and migrating `ocapps`
 
-Guía para instalar el backend unificado (news + notes + photos) y migrar
-desde los tres servicios antiguos (`ocnews`, `ocnotes`, `ocphotos`).
-Referencia: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) y §9.
+Guide to install the unified backend (news + notes + photos) and migrate from
+the three old services (`ocnews`, `ocnotes`, `ocphotos`).
+Reference: [`docs/SPEC.md`](../docs/SPEC.md) §5.4, §8 (H6) and §9.
 
-## Contenido de este directorio
+## What is in this directory
 
-| Fichero | Qué es |
+| File | What it is |
 |---|---|
-| [`opencloud-apps.service`](opencloud-apps.service) | Unit systemd único (SPEC §9.1) |
-| [`env.example`](env.example) | Plantilla de `/etc/ocapps/env` con cada variable y su legacy (SPEC §9.2/§3.2) |
-| [`proxy/nginx.conf`](proxy/nginx.conf) · [`proxy/Caddyfile`](proxy/Caddyfile) · [`proxy/traefik.yml`](proxy/traefik.yml) | Snippets de proxy (SPEC §9.3) |
-| [`migrate.sh`](migrate.sh) | Migración de datos 3→1, idempotente, con `--dry-run` y `--force-redeploy` (SPEC §5.4) |
-| [`extensions-updater.sh`](extensions-updater.sh) | Instala, actualiza y revierte las extensiones web desde sus releases de GitHub (`list`, `check`, `install`, `update`, `rollback`) |
-| [`extensions.conf.example`](extensions.conf.example) | Plantilla de `/etc/ocapps/extensions.conf` (app, repo y patrón del asset) |
-| [`docker-compose.example.yml`](docker-compose.example.yml) | Servicio `ocapps` para el proyecto compose de OpenCloud (§[Despliegue con Docker Compose](#despliegue-con-docker-compose)) |
-| [`ocapps-ext-update.service`](ocapps-ext-update.service) · [`ocapps-ext-update.timer`](ocapps-ext-update.timer) | Actualización semanal opcional |
-| [`repo-notices/`](repo-notices/) | Borradores de aviso para los README de los repos de app |
+| [`opencloud-apps.service`](opencloud-apps.service) | Single systemd unit (SPEC §9.1) |
+| [`env.example`](env.example) | Template for `/etc/ocapps/env` with every variable and its legacy name (SPEC §9.2/§3.2) |
+| [`proxy/nginx.conf`](proxy/nginx.conf) · [`proxy/Caddyfile`](proxy/Caddyfile) · [`proxy/traefik.yml`](proxy/traefik.yml) | Proxy snippets (SPEC §9.3) |
+| [`migrate.sh`](migrate.sh) | 3-to-1 data migration, idempotent, with `--dry-run` and `--force-redeploy` (SPEC §5.4) |
+| [`extensions-updater.sh`](extensions-updater.sh) | Installs, updates and rolls back the web extensions from their GitHub releases (`list`, `check`, `install`, `update`, `rollback`) |
+| [`extensions.conf.example`](extensions.conf.example) | Template for `/etc/ocapps/extensions.conf` (app, repo and asset pattern) |
+| [`docker-compose.example.yml`](docker-compose.example.yml) | `ocapps` service for the OpenCloud compose project (§[Docker Compose deployment](#docker-compose-deployment)) |
+| [`ocapps-ext-update.service`](ocapps-ext-update.service) · [`ocapps-ext-update.timer`](ocapps-ext-update.timer) | Optional weekly update |
+| [`repo-notices/`](repo-notices/) | Draft notices for the app repos' READMEs |
 
-## Extensiones web: instalar y actualizar sin hacerlo a mano
+## Web extensions: install and update without doing it by hand
 
 ```sh
 install -m 755 deploy/extensions-updater.sh /usr/local/sbin/ocapps-ext
 install -d /etc/ocapps
 install -m 644 deploy/extensions.conf.example /etc/ocapps/extensions.conf
 
-ocapps-ext check                 # qué hay instalado y qué hay publicado
-ocapps-ext install news          # alta de una app que no está
-ocapps-ext update --dry-run      # simulación
-ocapps-ext update                # descarga, reemplaza, reinicia y verifica
-ocapps-ext rollback notes        # vuelve a la copia anterior
+ocapps-ext check                 # what is installed and what is published
+ocapps-ext install news          # add an app that is not there yet
+ocapps-ext update --dry-run      # dry run
+ocapps-ext update                # download, replace, restart and verify
+ocapps-ext rollback notes        # go back to the previous copy
 ```
 
-Reglas que aplica:
+Rules it enforces:
 
-- Cada app instalada lleva un sello `.ocapps-release` con `release:<tag>` o
-  `local:<fecha>`. El actualizador **no toca** un build local salvo `--force`,
-  así que un `dist` compilado a mano no se pisa con la última release.
-- Antes de reemplazar, copia la carpeta a `/var/backups/ocapps-ext/<fecha>/`
-  (se conservan las 5 últimas).
-- Reinicia el servicio **una sola vez** para todas las apps cambiadas y
-  verifica que `/config.json` las lista y que su `remoteEntry` responde. Si
-  algo falla, restaura las copias, reinicia y sale con código 3.
-- Comprueba que el servicio tiene `WEB_ASSET_APPS_PATH` apuntando al
-  directorio de apps; sin esa variable el host no lista las extensiones.
-- `install` añade la entrada en `/etc/opencloud/apps.yaml` si falta.
+- Every installed app carries an `.ocapps-release` stamp with `release:<tag>` or
+  `local:<date>`. The updater does **not** touch a local build unless `--force`
+  is given, so a `dist` built by hand is not overwritten by the latest release.
+- Before replacing, it copies the folder to `/var/backups/ocapps-ext/<date>/`
+  (the last 5 are kept).
+- It restarts the service **once** for all the changed apps and verifies that
+  `/config.json` lists them and that their `remoteEntry` responds. If anything
+  fails, it restores the copies, restarts and exits with code 3.
+- It checks that the service has `WEB_ASSET_APPS_PATH` pointing at the apps
+  directory, since without that variable the host does not list the extensions.
+- `install` adds the entry to `/etc/opencloud/apps.yaml` if it is missing.
 
-El timer semanal (`ocapps-ext-update.timer`) es opcional y viene desactivado:
+The weekly timer (`ocapps-ext-update.timer`) is optional and ships disabled:
 
 ```sh
 install -m 644 deploy/ocapps-ext-update.service deploy/ocapps-ext-update.timer /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now ocapps-ext-update.timer
 ```
 
-## Panel de extensiones dentro de la app
+## Extension panel inside the app
 
-`ocapps` puede servir un panel en `/ocapps-admin/` para instalar y actualizar
-las extensiones sin entrar por SSH. Está desactivado salvo que se configure un
-token:
+`ocapps` can serve a panel at `/ocapps-admin/` to install and update the
+extensions without going in over SSH. It is disabled unless a token is
+configured:
 
 ```sh
-# 1. token (guardado en el fichero, nunca en la línea de comandos del shell)
+# 1. token (kept in the file, never on the shell command line)
 head -c 32 /dev/urandom | base64 | tr -d '\n=+/' | cut -c1-40 > /etc/ocapps/admin-token
 chmod 600 /etc/ocapps/admin-token
 printf 'OCAPPS_ADMIN_TOKEN=%s\n' "$(cat /etc/ocapps/admin-token)" >> /etc/ocapps/env
 
-# 2. el servicio corre como usuario ocapps: necesita poder llamar al helper
+# 2. the service runs as user ocapps: it needs to be able to call the helper
 cat > /etc/sudoers.d/ocapps-ext <<'EOF'
 ocapps ALL=(root) NOPASSWD: /usr/local/sbin/ocapps-ext
 EOF
 chmod 440 /etc/sudoers.d/ocapps-ext
 ```
 
-Con `NoNewPrivileges=true` sudo no funciona, así que el unit lo pone en `false`
-(`install.sh` ya lo deja así). El resto del hardening no cambia: el proceso
-sigue con `ProtectSystem=strict` y sólo escribe en `/var/lib/ocapps`.
+With `NoNewPrivileges=true` sudo does not work, so the unit sets it to `false`
+(`install.sh` already leaves it that way). The rest of the hardening does not
+change: the process still runs with `ProtectSystem=strict` and only writes to
+`/var/lib/ocapps`.
 
-Qué expone:
+What it exposes:
 
-| Ruta | Qué hace |
+| Route | What it does |
 |---|---|
-| `GET /ocapps-admin/` | Panel HTML, sin estado en servidor |
-| `GET /ocapps-admin/api/extensions` | Inventario: app, sello instalado, última release, estado |
-| `POST /ocapps-admin/api/extensions/{id}/update` | Ejecuta `ocapps-ext update <id>` (con `?force=1` reemplaza también un build local) |
+| `GET /ocapps-admin/` | HTML panel, no server-side state |
+| `GET /ocapps-admin/api/extensions` | Inventory: app, installed stamp, latest release, status |
+| `POST /ocapps-admin/api/extensions/{id}/update` | Runs `ocapps-ext update <id>` (`?force=1` also replaces a local build) |
 
-Reglas de seguridad que aplica el código, no la documentación:
+Security rules enforced by the code, not by documentation:
 
-- **Sin `OCAPPS_ADMIN_TOKEN` las rutas no se registran**: un fallo de
-  configuración deja el panel inexistente, no abierto.
-- La comparación del token es en tiempo constante y va en la cabecera
-  `X-Ocapps-Admin-Token`.
-- El `{id}` debe existir en `extensions.conf`; no se pueden pasar argumentos
-  al helper, así que la superficie HTTP no sirve para ejecutar otra cosa.
-- Sólo se instala lo que publican los repos configurados, y el helper valida
-  el asset por patrón y el `manifest.json` + `entrypoint` antes de reemplazar.
+- **Without `OCAPPS_ADMIN_TOKEN` the routes are not registered**: a config
+  mistake leaves the panel nonexistent, not open.
+- The token comparison is constant time and goes in the `X-Ocapps-Admin-Token`
+  header.
+- The `{id}` must exist in `extensions.conf`, so no arguments can be passed to
+  the helper, and the HTTP surface cannot be used to run anything else.
+- Only what the configured repos publish can be installed, and the helper
+  validates the asset pattern plus `manifest.json` and `entrypoint` before
+  replacing anything.
 
-Tras reiniciar `opencloud`, el panel queda accesible en
-`https://<dominio>/ocapps-admin/` (necesita su ruta en el proxy hacia
+After restarting `opencloud`, the panel is reachable at
+`https://<domain>/ocapps-admin/` (it needs its route in the proxy towards
 `127.0.0.1:8096`).
 
 
-## Requisitos
+## Requirements
 
-- **Runtime**: Linux con systemd, `sqlite3` (CLI, para las verificaciones de
-  la migración), `curl` (smoke checks) y un proxy reverso (nginx, Caddy o
+- **Runtime**: Linux with systemd, `sqlite3` (CLI, for the migration
+  verifications), `curl` (smoke checks) and a reverse proxy (nginx, Caddy or
   Traefik).
-  El binario es estático (`CGO_ENABLED=0`, modernc.org/sqlite): no necesita
-  libc ni ninguna otra librería de sistema.
-- **ffmpeg es la ÚNICA dependencia de sistema en runtime** (SPEC Q4):
-  pósters de vídeo del módulo photos (HLS se eliminó en Q7). Sin ffmpeg el
-  servicio arranca igualmente y photos lo loguea como degradado (`ffmpeg no
-  encontrado: pósters de vídeo degradados`), pero instálalo:
-  `apt install ffmpeg` / `apk add ffmpeg`.
-- **Go solo para compilar** (≥ 1.26, ver `go.mod`). No hace falta en el
-  host de producción si usas el artefacto de release o la imagen Docker.
-- Para la migración: acceso root en el host donde corren los tres
-  servicios antiguos.
+  The binary is static (`CGO_ENABLED=0`, modernc.org/sqlite), so it needs no
+  libc and no other system library.
+- **ffmpeg is the ONLY system dependency at runtime** (SPEC Q4): video posters
+  in the photos module (HLS was removed in Q7). Without ffmpeg the service still
+  starts and photos logs it as degraded (`ffmpeg not found: video posters
+  degraded`), but install it: `apt install ffmpeg` / `apk add ffmpeg`.
+- **Go only to compile** (>= 1.26, see `go.mod`). It is not needed on the
+  production host if you use the release artifact or the Docker image.
+- For the migration: root access on the host where the three old services run.
 
 ## Build
 
-### Binario local
+### Local binary
 
 ```bash
 CGO_ENABLED=0 go build -trimpath \
@@ -131,74 +131,76 @@ CGO_ENABLED=0 go build -trimpath \
 
 ### Release (goreleaser)
 
-El repo incluye `.goreleaser.yaml` (linux/amd64+arm64, `CGO_ENABLED=0`,
-ldflags de versión). `goreleaser release` genera los tarballs + checksums.
+The repo ships `.goreleaser.yaml` (linux/amd64+arm64, `CGO_ENABLED=0`, version
+ldflags). `goreleaser release` produces the tarballs plus checksums.
 
 ### Docker
 
 ```bash
-docker build -t ocapps .          # etapa runtime: alpine + ffmpeg (SPEC Q4/Q10)
+docker build -t ocapps .          # runtime stage: alpine + ffmpeg (SPEC Q4/Q10)
 ```
 
-Despliegue con Docker Compose, extensión web y rutas del proxy:
-[§Despliegue con Docker Compose](#despliegue-con-docker-compose).
+Docker Compose deployment, web extension and proxy routes:
+[§Docker Compose deployment](#docker-compose-deployment).
 
-## Despliegue con Docker Compose
+## Docker Compose deployment
 
-Para una instancia de OpenCloud montada con el compose oficial
+For an OpenCloud instance set up with the official compose project
 ([`opencloud-eu/opencloud-compose`](https://github.com/opencloud-eu/opencloud-compose)).
-`install.sh`, `opencloud-apps.service` y `ocapps-ext` son de la vía systemd y
-no se usan aquí: en Docker el servicio, la carpeta de extensiones y la ruta del
-proxy se resuelven con el compose y con el proxy que ya tengas delante.
+`install.sh`, `opencloud-apps.service` and `ocapps-ext` belong to the systemd
+path and are not used here: with Docker the service, the extensions folder and
+the proxy route come from the compose project and from the proxy you already
+have in front.
 
-### 1. Imagen
+### 1. Image
 
 ```bash
 docker build -t ocapps https://github.com/gnacho/ocapps.git
 ```
 
-La imagen trae `ffmpeg` (pósters de vídeo de photos) y corre como uid 10001.
-`/var/lib/ocapps` viene creado y cedido a ese usuario en la propia imagen, así
-que un volumen nombrado funciona sin tocar permisos. Si usas un bind mount,
-cédelo tú: `sudo chown 10001 ./ocapps-data`.
+The image ships `ffmpeg` (photos video posters) and runs as uid 10001.
+`/var/lib/ocapps` is created and owned by that user inside the image, so a named
+volume works with no permission fiddling. If you use a bind mount, chown it
+yourself: `sudo chown 10001 ./ocapps-data`.
 
-### 2. Servicio
+### 2. Service
 
-Copia [`docker-compose.example.yml`](docker-compose.example.yml) al directorio
-del compose de OpenCloud y levántalo superpuesto, para que los dos
-contenedores compartan `opencloud-net`. No lo uses como proyecto aparte:
-`ocapps` resuelve `opencloud` por DNS de esa red.
+Copy [`docker-compose.example.yml`](docker-compose.example.yml) into the
+OpenCloud compose directory and bring it up as an overlay, so both containers
+share `opencloud-net`. Do not use it as a separate project: `ocapps` resolves
+`opencloud` through the DNS of that network.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.ocapps.yml up -d
 ```
 
-El puerto `8096` se publica solo en `127.0.0.1` porque únicamente lo necesita el
-proxy del host. `OCAPPS_OPENCLOUD_URL=http://opencloud:9200` apunta al API
-interno del contenedor de OpenCloud: no hay que publicar el 9200. Deja
-activados solo los módulos que vayas a usar; `photos` necesita además un app
-token (`OCAPPS_PHOTOS_USERS`).
+Port `8096` is published on `127.0.0.1` only, because only the host proxy needs
+it. `OCAPPS_OPENCLOUD_URL=http://opencloud:9200` points at the internal API of
+the OpenCloud container, so there is no need to publish 9200. Enable only the
+modules you are going to use. `photos` additionally needs an app token
+(`OCAPPS_PHOTOS_USERS`).
 
-### 3. Extensión web
+### 3. Web extension
 
-El compose oficial monta `./config/opencloud/apps` en
-`/var/lib/opencloud/web/assets/apps`, que es el `WEB_ASSET_APPS_PATH` por
-defecto. Si cambiaste `OC_APPS_DIR`, usa esa carpeta. No hay instalador: se
-descomprime el zip de la release en el host.
+The official compose project mounts `./config/opencloud/apps` at
+`/var/lib/opencloud/web/assets/apps`, which is the default
+`WEB_ASSET_APPS_PATH`. If you changed `OC_APPS_DIR`, use that folder instead.
+There is no installer: you unzip the release into the host.
 
 ```bash
 curl -fsSLO https://github.com/gnacho/ocnotes/releases/latest/download/notes-0.1.7.zip
 unzip -o notes-0.1.7.zip -d config/opencloud/apps
 ```
 
-Alta en `config/opencloud/apps.yaml`, que es el fichero que monta el compose:
+Add it to `config/opencloud/apps.yaml`, which is the file the compose project
+mounts:
 
 ```yaml
 notes:
   config: {}
 ```
 
-Y reinicia el contenedor: OpenCloud lee la lista de apps al arrancar.
+And restart the container: OpenCloud reads the app list on start.
 
 ```bash
 docker compose restart opencloud
@@ -206,8 +208,8 @@ docker compose restart opencloud
 
 ### 4. Proxy
 
-Las rutas van al puerto publicado, sin trailing slash en `proxy_pass` (con
-barra se reescribe el path y el backend no lo reconoce):
+The routes go to the published port, with no trailing slash in `proxy_pass`
+(with a slash the path gets rewritten and the backend does not recognise it):
 
 ```nginx
 location /index.php/apps/notes/ {
@@ -223,45 +225,45 @@ location = /ocs/v2.php/cloud/capabilities {
 }
 ```
 
-Las demás apps usan `/index.php/apps/news/` y `/ocphotos-api/`. El bloque
-completo está en [`proxy/nginx.conf`](proxy/nginx.conf), con equivalentes para
-Caddy y Traefik. El panel `/ocapps-admin/` es de la vía systemd: ejecuta
-`ocapps-ext` con sudo dentro del host, así que en Docker déjalo sin configurar
-(no definas `OCAPPS_ADMIN_TOKEN`).
+The other apps use `/index.php/apps/news/` and `/ocphotos-api/`. The full block
+is in [`proxy/nginx.conf`](proxy/nginx.conf), with equivalents for Caddy and
+Traefik. The `/ocapps-admin/` panel belongs to the systemd path, since it runs
+`ocapps-ext` with sudo inside the host, so leave it unconfigured under Docker
+(do not define `OCAPPS_ADMIN_TOKEN`).
 
-### 5. Verificación
+### 5. Verification
 
 ```bash
 docker compose exec ocapps wget -qO- http://127.0.0.1:8096/healthz
 docker compose logs --tail=50 ocapps
 ```
 
-`/healthz` responde 200 siempre con el detalle por módulo; `/readyz` da 503 si
-un módulo habilitado falla. Si el backend responde y la web no, el log de
-acceso del proxy muestra la URL exacta que pidió el navegador.
+`/healthz` always answers 200 with the per-module detail, while `/readyz`
+returns 503 if an enabled module is failing. If the backend answers but the web
+app does not, the proxy access log shows the exact URL the browser requested.
 
-## Instalación (binario + systemd)
+## Installation (binary + systemd)
 
 ```bash
-# 1. Usuario de servicio
+# 1. Service user
 useradd --system --home /var/lib/ocapps --shell /usr/sbin/nologin ocapps
 
-# 2. Binario
+# 2. Binary
 install -m 755 ocapps /usr/local/bin/ocapps
 
-# 3. Configuración
+# 3. Configuration
 install -d -m 750 -o root -g ocapps /etc/ocapps
 install -m 640 -o root -g ocapps deploy/env.example /etc/ocapps/env
-$EDITOR /etc/ocapps/env        # rellena OCAPPS_OPENCLOUD_URL, PHOTOS_USER, APP_TOKEN...
+$EDITOR /etc/ocapps/env        # fill in OCAPPS_OPENCLOUD_URL, PHOTOS_USER, APP_TOKEN...
 
 # 4. Unit
 install -m 644 deploy/opencloud-apps.service /etc/systemd/system/
 systemctl daemon-reload
-# NO lo arranques todavía si vas a migrar datos: migrate.sh lo hace (paso 6).
+# Do NOT start it yet if you are going to migrate data: migrate.sh does it (step 6).
 ```
 
-`/var/lib/ocapps` lo crea el propio systemd (`StateDirectory=ocapps`,
-0700). El layout de datos es (SPEC §5.1):
+`/var/lib/ocapps` is created by systemd itself (`StateDirectory=ocapps`,
+0700). The data layout is (SPEC §5.1):
 
 ```
 /var/lib/ocapps/
@@ -270,299 +272,296 @@ systemctl daemon-reload
 └── photos/   memories.db(+ thumbs/, mediasecret)
 ```
 
-## Cambio de proxy
+## Proxy change
 
-> **⚠ Aviso: el strip de `/ocphotos-api/` desaparece.**
+> **Warning: the `/ocphotos-api/` strip goes away.**
 >
-> Hoy el proxy strip-pea `/ocphotos-api/` (ocphotos ve `/api/...`). En el
-> binario unificado `/api/` pertenece a news (`/api/me`, `/api/users`) y
-> photos registra sus rutas como `/ocphotos-api/api/...`. El proxy debe
-> pasar el prefijo **intacto** al upstream único `127.0.0.1:8096`
-> (SPEC §4.3/§9.3). Es **EL cambio de proxy de esta migración** y el único
-> paso no revertible por el propio binario: coordínalo con el corte de
-> systemd (aplicar el snippet nuevo al mismo tiempo que `migrate.sh`
-> habilita `opencloud-apps`, o inmediatamente después).
+> Today the proxy strips `/ocphotos-api/` (ocphotos sees `/api/...`). In the
+> unified binary `/api/` belongs to news (`/api/me`, `/api/users`) and photos
+> registers its routes as `/ocphotos-api/api/...`. The proxy must pass the
+> prefix **intact** to the single upstream `127.0.0.1:8096` (SPEC §4.3/§9.3).
+> This is **THE proxy change of this migration** and the only step the binary
+> itself cannot revert: coordinate it with the systemd cutover (apply the new
+> snippet at the same time `migrate.sh` enables `opencloud-apps`, or right
+> after).
 
-Aplica [`proxy/nginx.conf`](proxy/nginx.conf),
-[`proxy/Caddyfile`](proxy/Caddyfile) o
-[`proxy/traefik.yml`](proxy/traefik.yml) en el vhost que sirve la instancia
-OpenCloud. Resumen:
+Apply [`proxy/nginx.conf`](proxy/nginx.conf), [`proxy/Caddyfile`](proxy/Caddyfile)
+or [`proxy/traefik.yml`](proxy/traefik.yml) in the vhost that serves the
+OpenCloud instance. Summary:
 
-| Ruta | Antes | Ahora |
+| Route | Before | Now |
 |---|---|---|
-| `/index.php/apps/news/` | → ocnews :8094 (sin strip) | → `127.0.0.1:8096` (sin strip) |
-| `/index.php/apps/notes/` | → ocnotes :8100 (sin strip) | → `127.0.0.1:8096` (sin strip) |
-| `/ocs/` | → ocnotes :8100 | → `127.0.0.1:8096` |
-| `/api/me`, `/api/users` | → ocnews :8094 | → `127.0.0.1:8096` (patrones exactos, **no** catch-all `/api/`) |
-| `/ocphotos-api/` | → ocphotos :8097 **con strip** | → `127.0.0.1:8096` **SIN strip** |
+| `/index.php/apps/news/` | -> ocnews :8094 (no strip) | -> `127.0.0.1:8096` (no strip) |
+| `/index.php/apps/notes/` | -> ocnotes :8100 (no strip) | -> `127.0.0.1:8096` (no strip) |
+| `/ocs/` | -> ocnotes :8100 | -> `127.0.0.1:8096` |
+| `/api/me`, `/api/users` | -> ocnews :8094 | -> `127.0.0.1:8096` (exact patterns, **not** a `/api/` catch-all) |
+| `/ocphotos-api/` | -> ocphotos :8097 **with strip** | -> `127.0.0.1:8096` **WITHOUT strip** |
 
-En ambos snippets se preservan `Authorization` y `Host`, y
-`/ocphotos-api/api/video/` tiene timeouts largos y streaming sin buffer
-(Range requests). Tras recargar el proxy, valida con
-`nginx -t` / `caddy validate` antes de `reload`.
+Both snippets preserve `Authorization` and `Host`, and
+`/ocphotos-api/api/video/` gets long timeouts and unbuffered streaming (Range
+requests). After reloading the proxy, validate with `nginx -t` /
+`caddy validate` before the `reload`.
 
-El canal de avisos en vivo (`/ocphotos-api/api/stream`, SSE) necesita además
-**buffering desactivado**: en nginx, un `location` propio con
-`proxy_buffering off` (los snippets lo traen). En Traefik basta el
-`responseForwarding.flushInterval: 1ms` del servicio; en Caddy,
-`flush_interval -1`. Si el stream queda bufferizado no se rompe nada, pero los
-avisos llegan tarde o no llegan y los clientes siguen sin actualizarse solos.
+The live update channel (`/ocphotos-api/api/stream`, SSE) also needs
+**buffering disabled**: in nginx, its own `location` with `proxy_buffering off`
+(the snippets bring it). In Traefik the service's
+`responseForwarding.flushInterval: 1ms` is enough, and in Caddy,
+`flush_interval -1`. A buffered stream breaks nothing, but the notices arrive
+late or not at all and the clients stop updating themselves.
 
-Las mismas rutas sirven a los **clientes Android** de las tres apps
+The same routes serve the **Android clients** of the three apps
 ([ocnews-android](https://github.com/gnacho/ocnews-android),
 [ocnotes-android](https://github.com/gnacho/ocnotes-android),
-[ocphotos-android](https://github.com/gnacho/ocphotos-android)): entran por el
-mismo origen que el navegador con Basic usuario:app-token. Si una app funciona en
-la web y no en el móvil, el sospechoso es el `Authorization` (no llevan cookies),
-un redirect a la página de login delante de la ruta, o un WAF que corte tras
-varios 401.
+[ocphotos-android](https://github.com/gnacho/ocphotos-android)): they come in
+through the same origin as the browser with Basic user:app-token. If an app
+works on the web but not on mobile, the suspects are `Authorization` (they carry
+no cookies), a redirect to the login page in front of the route, or a WAF
+cutting in after several 401s.
 
-## Multiusuario en photos (H8)
+## Multi-user in photos (H8)
 
-Photos pasa de single-tenant (un solo usuario, el del app-token) a
-**multi-tenant**: cualquier usuario de OpenCloud que abra la app de fotos
-tiene su propio índice, álbumes, etiquetas, lugares y miniaturas, scopeados
-a su `oc_id` en la misma `memories.db`. Puntos clave para el operador:
+Photos goes from single-tenant (a single user, the one of the app token) to
+**multi-tenant**: any OpenCloud user who opens the photos app gets their own
+index, albums, tags, places and thumbnails, scoped to their `oc_id` in the same
+`memories.db`. Key points for the operator:
 
-- **Indexado por actividad, progresivo.** No hay scan global al arranque:
-  el primer request autenticado de un usuario dispara SU scan (su espacio
-  personal se resuelve lazy vía Graph con su propia credencial) y su
-  índice crece de forma incremental. Hasta entonces sus respuestas son
-  vacías coherentes (0 fotos, no errores).
-- **`OCAPPS_PHOTOS_USERS` para background scan.** Si quieres que las fotos
-  de ciertos usuarios se indexen aunque no abran la app (scan periódico
-  cada `OCAPPS_PHOTOS_SCAN_EVERY`), dales un app-token:
-  `OCAPPS_PHOTOS_USERS="alice:apptoken1,bob:apptoken2"`. El par legacy
-  `OCAPPS_PHOTOS_USER`+`OCAPPS_PHOTOS_APP_TOKEN` sigue funcionando y se
-  pliega en esa lista con un WARN de deprecación.
-- **`OCAPPS_PHOTOS_TOKEN` (Bearer estático) está DEPRECATED.** Solo sigue
-  funcionando si `OCAPPS_PHOTOS_USER` está configurado (mapea al oc_id de
-  ese usuario); configurarlo sin `USER` deja el módulo failed (error de
-  config). Migra los clientes machine-to-machine al Bearer OIDC.
-- **Migración desde el despliegue single-tenant (backfill).** Al primer
-  arranque multi-tenant, la migración 002 añade `owner` a `assets`/
-  `albums` dejando las filas antiguas con `owner=''`. Si
-  `OCAPPS_PHOTOS_USER`+`OCAPPS_PHOTOS_APP_TOKEN` están configurados, el
-  módulo resuelve el oc_id de ese usuario y adopta las filas
-  automáticamente (log INFO "backfill multi-owner"). **Si no los
-  configuras**, el módulo arranca igual pero esas fotos antiguas quedan
-  invisibles para todos (log WARN con el recuento: "hay N assets de la era
-  single-tenant sin owner..."); configura el par una vez y reinicia para
-  adoptarlas — después puedes quitarlo si no quieres background scan.
-  `user_version` final de `memories.db`: **2**.
-- **Privacidad.** Las credenciales de sesión (tokens OIDC) y los espacios
-  resueltos viven SOLO en memoria (nunca en disco); las sesiones web sin
-  actividad >24h se purgan. Las miniaturas en disco y la caché de
-  geocodificación no contienen datos personales ligados a otro usuario
-  (la clave de caché incluye el space-UUID del dueño).
-- **El módulo ya no depende de OpenCloud para arrancar**: `Healthy()` es
-  un ping a su SQLite; sin `PHOTOS_USERS` configurados no hay ninguna
-  credencial obligatoria.
+- **Indexing driven by activity, progressive.** There is no global scan at
+  startup: the first authenticated request from a user triggers THEIR scan
+  (their personal space is resolved lazily through Graph with their own
+  credential) and their index grows incrementally. Until then their responses
+  are coherently empty (0 photos, no errors).
+- **`OCAPPS_PHOTOS_USERS` for background scan.** If you want the photos of
+  certain users to be indexed even when they do not open the app (periodic scan
+  every `OCAPPS_PHOTOS_SCAN_EVERY`), give them an app token:
+  `OCAPPS_PHOTOS_USERS="alice:apptoken1,bob:apptoken2"`. The legacy pair
+  `OCAPPS_PHOTOS_USER`+`OCAPPS_PHOTOS_APP_TOKEN` still works and folds into that
+  list with a deprecation WARN.
+- **`OCAPPS_PHOTOS_TOKEN` (static Bearer) is DEPRECATED.** It only keeps working
+  if `OCAPPS_PHOTOS_USER` is configured (it maps to that user's oc_id).
+  Configuring it without `USER` leaves the module failed (config error). Migrate
+  machine-to-machine clients to the OIDC Bearer.
+- **Migration from the single-tenant deployment (backfill).** On the first
+  multi-tenant start, migration 002 adds `owner` to `assets`/`albums`, leaving
+  the old rows with `owner=''`. If `OCAPPS_PHOTOS_USER`+`OCAPPS_PHOTOS_APP_TOKEN`
+  are configured, the module resolves that user's oc_id and adopts the rows
+  automatically (INFO log "backfill multi-owner"). **If you do not configure
+  them**, the module still starts, but those old photos stay invisible to
+  everyone (WARN log with the count: "there are N assets from the single-tenant
+  era without an owner..."). Configure the pair once and restart to adopt them,
+  then you can remove it if you do not want a background scan.
+  Final `user_version` of `memories.db`: **2**.
+- **Privacy.** Session credentials (OIDC tokens) and the resolved spaces live
+  ONLY in memory (never on disk), and web sessions idle for more than 24h are
+  purged. The on-disk thumbnails and the geocoding cache hold no personal data
+  tied to another user (the cache key includes the owner's space UUID).
+- **The module no longer depends on OpenCloud to start**: `Healthy()` is a ping
+  to its SQLite, and with no `PHOTOS_USERS` configured there is no mandatory
+  credential at all.
 
-## Cambios de comportamiento respecto a los backends separados
+## Behaviour changes compared with the separate backends
 
-Además del enrutado (§Cambio de proxy), el servicio unificado cambia tres
-detalles observables por clientes/proxy. Revísalos en staging antes del
-corte:
+Beyond the routing (see §Proxy change), the unified service changes three
+details observable by clients and proxies. Review them in staging before the
+cutover:
 
-1. **El 401 de photos es ahora JSON con `WWW-Authenticate`.** ocphotos
-   respondía `401 Unauthorized` en texto plano; ocapps responde
+1. **The photos 401 is now JSON with `WWW-Authenticate`.** ocphotos answered
+   `401 Unauthorized` as plain text, while ocapps answers
    `401 {"error":{"code":"unauthorized","message":"..."}}`
-   (`Content-Type: application/json`) con la cabecera
-   `WWW-Authenticate: Bearer realm="ocphotos"`. Los clientes que parseaban
-   el cuerpo de texto plano deben pasar al JSON; los que solo miran el
-   status no se ven afectados.
-2. **Photos ya no tiene modo LAN abierto sin auth.** Todo el namespace
-   `/ocphotos-api/` exige credenciales (Bearer de sesión OpenCloud
-   validado contra Graph, o el token estático `OCAPPS_PHOTOS_TOKEN`
-   deprecated); las únicas exenciones son el preflight CORS y el stream de
-   vídeo firmado (`/ocphotos-api/api/video/`). Un despliegue que confiara
-   en el acceso abierto desde la LAN deja de funcionar: hay que dar
-   credenciales a esos clientes.
-3. **`/ocs/v2.php/cloud/user` solo sirve JSON si se pide explícitamente**:
-   `?format=json` o cabecera `Accept: application/json` (la heurística OCS
-   estándar de ocnotes, que es quien sirve ahora el endpoint). El stub que
-   llevaba news servía JSON siempre, sin negociación. Si tu proxy o algun
-   cliente llamaba al stub de news sin esas cabeceras y esperaba JSON,
-   añade `?format=json` o el `Accept` — **verifícalo en la configuración
-   de proxy de staging** antes del corte.
-4. **`/ocs/v2.php/cloud/capabilities` fusiona el core de OpenCloud.** El
-   backend de notes respondía solo con el bloque `notes`; ocapps reenvía la
-   petición al core (`OCAPPS_OPENCLOUD_URL`, con la credencial del cliente) y
-   le inyecta el bloque `notes`, para que los clientes lean `core.status`
-   (versión del servidor). Si el core no está configurado, no responde o
-   devuelve un código distinto de 200, responde solo con `notes` (mismo
-   comportamiento que el backend separado). Si un cliente reporta que el
-   servidor es antiguo o no soportado, comprueba este endpoint.
+   (`Content-Type: application/json`) with the header
+   `WWW-Authenticate: Bearer realm="ocphotos"`. Clients that parsed the plain
+   text body must move to JSON, and those that only look at the status are not
+   affected.
+2. **Photos no longer has an open LAN mode without auth.** The whole
+   `/ocphotos-api/` namespace requires credentials (OpenCloud session Bearer
+   validated against Graph, or the deprecated static `OCAPPS_PHOTOS_TOKEN`). The
+   only exemptions are the CORS preflight and the signed video stream
+   (`/ocphotos-api/api/video/`). A deployment that relied on open access from
+   the LAN stops working: those clients need credentials.
+3. **`/ocs/v2.php/cloud/user` only serves JSON when asked explicitly**:
+   `?format=json` or an `Accept: application/json` header (the standard OCS
+   heuristic of ocnotes, which is the one serving the endpoint now). The stub
+   news carried always served JSON, with no negotiation. If your proxy or some
+   client called the news stub without those headers and expected JSON, add
+   `?format=json` or the `Accept` header, and **verify it in the staging proxy
+   config** before the cutover.
+4. **`/ocs/v2.php/cloud/capabilities` merges the OpenCloud core.** The notes
+   backend answered only with the `notes` block, while ocapps forwards the
+   request to the core (`OCAPPS_OPENCLOUD_URL`, with the client's credential)
+   and injects the `notes` block, so clients can read `core.status` (server
+   version). If the core is not configured, does not answer or returns a code
+   other than 200, it answers with `notes` alone (same behaviour as the separate
+   backend). If a client reports that the server is old or unsupported, check
+   this endpoint.
 
-## Migración desde los 3 servicios antiguos
+## Migration from the 3 old services
 
-`deploy/migrate.sh` implementa el procedimiento del SPEC §5.4 paso a paso
-(mensajes `==>` en cada paso, `set -euo pipefail`, aborta ante cualquier
-verificación fallida). Principios: **copia, nunca mover**; las BDs y datos
-origen quedan intactos para rollback; idempotente.
+`deploy/migrate.sh` implements the SPEC §5.4 procedure step by step (`==>`
+messages on every step, `set -euo pipefail`, aborts on any failed check).
+Principles: **copy, never move**, the source databases and data stay untouched
+for rollback, and it is idempotent.
 
-**Ensaya siempre primero con `--dry-run`** (imprime cada acción sin
-ejecutar nada):
+**Always rehearse first with `--dry-run`** (it prints every action without doing
+anything):
 
 ```bash
 sudo deploy/migrate.sh --dry-run
 sudo deploy/migrate.sh
 ```
 
-Pasos que ejecuta:
+Steps it runs:
 
-0. **Pre-vuelo**: comprueba `sqlite3`/`systemctl`/`curl`, root, y **aborta
-   si `opencloud-apps` está activo**: sus BDs están vivas y copiar las
-   viejas encima las corrompería. Para re-desplegar encima a propósito
-   (p. ej. repetir la migración tras un rollback) usa `--force-redeploy`:
-   el script para el unit, copia y lo rearranca en el paso 6.
-0b. **Para los servicios viejos** (`ocnews ocnotes ocphotos`) y espera a
-   que queden inactivos.
-1. **Verifica el origen**: `PRAGMA integrity_check` en las tres BDs vivas
-   (aborta si alguna no devuelve `ok`) y `PRAGMA wal_checkpoint(TRUNCATE)`
-   para una copia auto-contenida aunque quedaran `-wal`/`-shm`.
-2. **Copia las BDs** al nuevo layout con `cp -a` (incluye `-wal`/`-shm` si
-   existieran). Nunca `mv`.
-3. **Copia los datos auxiliares** por módulo (favicons, imgcache,
-   imgsecret, feedsecret, attachments, thumbs, mediasecret) y fija la
-   propiedad `ocapps:ocapps`.
-4. **Verifica el destino**: `integrity_check` en las tres BDs copiadas.
-5. **Auditoría de versiones**: registra `PRAGMA user_version` — esperado
-   **18** (news), **2** (notes); photos llega sin versionar (0) y ocapps
-   aplica el **baseline (1) + 002 multi-owner → 2** en el primer arranque
-   (SPEC §5.3), con backfill del índice single-tenant si hay credenciales
-   legacy (ver §Multiusuario en photos).
-6. **systemd**: `disable` de los units viejos (**sin borrarlos**) y
+0. **Pre-flight**: checks `sqlite3`/`systemctl`/`curl` and root, and **aborts if
+   `opencloud-apps` is active**, because its databases are live and copying the
+   old ones on top would corrupt them. To redeploy on purpose (for instance to
+   repeat the migration after a rollback) use `--force-redeploy`: the script
+   stops the unit, copies and restarts it in step 6.
+0b. **Stops the old services** (`ocnews ocnotes ocphotos`) and waits for them to
+   become inactive.
+1. **Verifies the source**: `PRAGMA integrity_check` on the three live databases
+   (aborts if any does not return `ok`) and `PRAGMA wal_checkpoint(TRUNCATE)` so
+   the copy is self-contained even if `-wal`/`-shm` files were left behind.
+2. **Copies the databases** to the new layout with `cp -a` (including
+   `-wal`/`-shm` if they existed). Never `mv`.
+3. **Copies the auxiliary data** per module (favicons, imgcache, imgsecret,
+   feedsecret, attachments, thumbs, mediasecret) and sets ownership to
+   `ocapps:ocapps`.
+4. **Verifies the destination**: `integrity_check` on the three copied
+   databases.
+5. **Version audit**: records `PRAGMA user_version`, expected **18** (news) and
+   **2** (notes). Photos arrives unversioned (0) and ocapps applies the
+   **baseline (1) + 002 multi-owner -> 2** on the first start (SPEC §5.3), with
+   the single-tenant index backfill if legacy credentials exist (see
+   §Multi-user in photos).
+6. **systemd**: `disable` the old units (**without deleting them**) and
    `enable --now opencloud-apps`.
-7. **Smoke checks** por localhost: `/healthz` (los 3 módulos `ok`) y
+7. **Smoke checks** over localhost: `/healthz` (the 3 modules `ok`) and
    `/readyz` (200).
 
-Las rutas de origen son parametrizables con variables al inicio del script
-o por entorno (defaults `/var/lib/ocnews`, `/var/lib/ocnotes`,
-`/var/lib/ocphotos` — confírmalas contra tu despliegue real, SPEC Anexo
+The source paths are configurable with variables at the top of the script or
+through the environment (defaults `/var/lib/ocnews`, `/var/lib/ocnotes`,
+`/var/lib/ocphotos`, confirm them against your real deployment, SPEC Annex
 B.2):
 
 ```bash
 sudo OCNEWS_DIR=/srv/ocnews OCAPPS_DATA_DIR=/var/lib/ocapps deploy/migrate.sh --dry-run
 ```
 
-Notas:
+Notes:
 
-- La migración 002 de notes (backfill de owner) ya está aplicada en la BD
-  viva; `OCAPPS_NOTES_OWNER` solo hace falta si quedaran filas sin owner.
-- El primer arranque de ocapps aplica: news/notes no-op, photos baseline.
-  Revísalo con `journalctl -u opencloud-apps -n 100`.
+- The notes migration 002 (owner backfill) is already applied in the live
+  database, so `OCAPPS_NOTES_OWNER` is only needed if rows without an owner were
+  left.
+- The first ocapps start applies: news/notes no-op, photos baseline. Review it
+  with `journalctl -u opencloud-apps -n 100`.
 
-## Verificación (checklist SPEC §9.4)
+## Verification (checklist SPEC §9.4)
 
 ```bash
 systemctl is-active opencloud-apps                       # active
 systemctl is-enabled ocnews ocnotes ocphotos             # disabled (x3)
-journalctl -u opencloud-apps -n 50 --no-pager            # sin "env legacy" inesperados ni módulos failed
-curl -s localhost:8096/healthz | jq .                    # los 3 módulos "ok"
+journalctl -u opencloud-apps -n 50 --no-pager            # no unexpected "legacy env" and no failed modules
+curl -s localhost:8096/healthz | jq .                    # all 3 modules "ok"
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8096/readyz   # 200
 
-# Contratos (interno, por localhost, con credenciales válidas):
+# Contracts (internal, over localhost, with valid credentials):
 curl -su user:app-token localhost:8096/index.php/apps/news/api/v1-3/version
 curl -su user:app-token localhost:8096/index.php/apps/notes/api/v1/notes
 curl -s  -H "Authorization: Bearer $TOK" localhost:8096/ocs/v2.php/cloud/capabilities
 curl -s  -H "Authorization: Bearer $TOK" localhost:8096/ocphotos-api/api/stats
 
-# Integridad de BDs:
+# Database integrity:
 for f in /var/lib/ocapps/*/*.db; do sqlite3 "$f" 'PRAGMA integrity_check;'; done   # ok x3
 sqlite3 /var/lib/ocapps/news/ocnews.db 'PRAGMA user_version;'      # 18
 sqlite3 /var/lib/ocapps/notes/notes.db 'PRAGMA user_version;'      # 2
 sqlite3 /var/lib/ocapps/photos/memories.db 'PRAGMA user_version;'  # 2 (baseline + 002 multi-owner)
 
-# Desde el exterior (vía proxy, mismo origen que la web — valida el cambio de proxy):
+# From the outside (through the proxy, same origin as the web app, validates the proxy change):
 curl -s  -H "Authorization: Bearer $TOK" https://<host>/ocphotos-api/api/stats
 curl -su user:app-token https://<host>/index.php/apps/news/api/v1-3/feeds
 ```
 
-Verificación funcional final: abrir las tres apps en la web de OpenCloud y
-sincronizar un cliente externo (news-android o Iotas).
+Final functional verification: open the three apps in the OpenCloud web UI and
+sync an external client (news-android or Iotas).
 
 ## Rollback
 
-**Ventana de validez**: el rollback es trivial (sin copia de datos)
-**mientras no se hayan escrito datos nuevos que importen en las BDs de
-`/var/lib/ocapps`** — los directorios origen `/var/lib/ocnews`,
-`/var/lib/ocnotes` y `/var/lib/ocphotos` están intactos (la migración solo
-los leyó/copió). Recomendación: decidir rollback vs. keep dentro de las
-primeras horas/días tras el corte, antes de que la divergencia de datos
-crezca.
+**Validity window**: the rollback is trivial (no data copy) **as long as no new
+data that matters has been written to the `/var/lib/ocapps` databases**. The
+source directories `/var/lib/ocnews`, `/var/lib/ocnotes` and `/var/lib/ocphotos`
+stay intact (the migration only read and copied them). Recommendation: decide
+rollback vs. keep within the first hours or days after the cutover, before the
+data divergence grows.
 
-### Rollback simple (dentro de la ventana)
+### Simple rollback (inside the window)
 
 ```bash
 systemctl stop opencloud-apps
-systemctl enable --now ocnews ocnotes ocphotos   # sus datos siguen intactos
-systemctl disable opencloud-apps                 # opcional; NO borres nada aún
+systemctl enable --now ocnews ocnotes ocphotos   # their data is still intact
+systemctl disable opencloud-apps                 # optional, do NOT delete anything yet
 ```
 
-Si ya aplicaste el cambio de proxy (§Cambio de proxy), **reviértelo**:
-vuelve a enrutar `/ocphotos-api/` → ocphotos :8097 **con strip** (trailing
-slash) y los prefijos de news/notes/OCS a sus puertos antiguos; recarga el
-proxy. Los datos copiados en `/var/lib/ocapps` pueden conservarse como
-respaldo o borrarse cuando el rollback sea definitivo.
+If you already applied the proxy change (see §Proxy change), **revert it**: route
+`/ocphotos-api/` back to ocphotos :8097 **with strip** (trailing slash) and the
+news/notes/OCS prefixes back to their old ports, then reload the proxy. The data
+copied into `/var/lib/ocapps` can be kept as a backup or deleted once the
+rollback is final.
 
-### Rollback con datos nuevos escritos tras el corte
+### Rollback with new data written after the cutover
 
-Si los usuarios ya generaron datos en las BDs nuevas que no quieres perder,
-hay que volcarlos de vuelta (es el procedimiento de migración en sentido
-inverso):
+If users already generated data in the new databases that you do not want to
+lose, it has to be dumped back (it is the migration procedure in reverse):
 
 ```bash
-# 1. Parar TODO (nuevo y viejos)
+# 1. Stop EVERYTHING (new and old)
 systemctl stop opencloud-apps ocnews ocnotes ocphotos
 
-# 2. Verificar las BDs NUEVAS antes de copiar de vuelta
+# 2. Verify the NEW databases before copying back
 for f in /var/lib/ocapps/*/*.db; do
-  sqlite3 "$f" 'PRAGMA integrity_check;' | grep -qx ok || echo "ABORTA: $f corrupta"
+  sqlite3 "$f" 'PRAGMA integrity_check;' | grep -qx ok || echo "ABORT: $f corrupt"
 done
 sqlite3 /var/lib/ocapps/news/ocnews.db   'PRAGMA wal_checkpoint(TRUNCATE);'
 sqlite3 /var/lib/ocapps/notes/notes.db   'PRAGMA wal_checkpoint(TRUNCATE);'
 sqlite3 /var/lib/ocapps/photos/memories.db 'PRAGMA wal_checkpoint(TRUNCATE);'
 
-# 3. Copiar de vuelta (cp -a; haz backup de los .db origen antes, por seguridad)
-cp -a /var/lib/ocnews/ocnews.db /var/lib/ocnews/ocnews.db.pre-rollback.bak     # ídem notes/photos
+# 3. Copy back (cp -a, back up the source .db files first, just in case)
+cp -a /var/lib/ocnews/ocnews.db /var/lib/ocnews/ocnews.db.pre-rollback.bak     # same for notes/photos
 cp -a /var/lib/ocapps/news/ocnews.db     /var/lib/ocnews/ocnews.db
 cp -a /var/lib/ocapps/notes/notes.db     /var/lib/ocnotes/notes.db
 cp -a /var/lib/ocapps/photos/memories.db /var/lib/ocphotos/memories.db
-# y los auxiliares que hubieran cambiado (favicons/, attachments/, thumbs/...)
+# and the auxiliary folders that changed (favicons/, attachments/, thumbs/...)
 
-# 4. Verificar de nuevo en los directorios viejos (integrity_check), arrancar
+# 4. Verify again in the old directories (integrity_check) and start
 systemctl enable --now ocnews ocnotes ocphotos
 systemctl disable opencloud-apps
 ```
 
-⚠ Limitación conocida: si ocapps aplicó el **baseline + 002 de photos**
-(`user_version` 0→2, esquema multi-owner), el ocphotos antiguo ignora ese
-pragma y arranca con las columnas `owner` extra. OJO: la unicidad pasó de
-`UNIQUE(path)` a `UNIQUE(owner, path)`, así que un reindexado completo con
-el binario viejo podría insertar duplicados (owner=''); si vuelves
-definitivamente, deduplica antes con
-`DELETE FROM assets WHERE id NOT IN (SELECT min(id) FROM assets GROUP BY owner, path)`. News/notes
-llevan el mismo `user_version` que tenían (18/2): sin transformación.
+Warning, known limitation: if ocapps applied the **photos baseline + 002**
+(`user_version` 0->2, multi-owner schema), the old ocphotos ignores that pragma
+and starts with the extra `owner` columns. Note that uniqueness went from
+`UNIQUE(path)` to `UNIQUE(owner, path)`, so a full reindex with the old binary
+could insert duplicates (owner=''). If you are going back for good, deduplicate
+first with
+`DELETE FROM assets WHERE id NOT IN (SELECT min(id) FROM assets GROUP BY owner, path)`.
+News and notes keep the `user_version` they had (18/2), with no transformation.
 
-### Después de N días de estabilidad (≥ 7 recomendados, SPEC §5.4)
+### After N days of stability (>= 7 recommended, SPEC §5.4)
 
 ```bash
-# Archivar datos viejos y eliminar los units antiguos (hasta aquí solo
-# estaban deshabilitados):
+# Archive the old data and remove the old units (until now they were only
+# disabled):
 tar -C /var/lib -czf /root/ocapps-migration-archive.tgz ocnews ocnotes ocphotos
 rm -f /etc/systemd/system/{ocnews,ocnotes,ocphotos}.service
 systemctl daemon-reload
 ```
 
-## Monitorización
+## Monitoring
 
-- **`GET /readyz` es la alerta clave**: 200 solo si todos los módulos
-  enabled están `ok`; 503 si alguno está `failed`. Un módulo caído NO
-  reinicia el proceso (decisión D3, SPEC §4.5): systemd no verá nada
-  (`Restart=on-failure` solo actúa si muere el proceso entero).
-- `GET /healthz` devuelve 200 siempre que el proceso viva, con el detalle
-  por módulo: `{"version":"...","modules":{"news":"ok","notes":"ok","photos":"failed: ..."}}`.
-- Logs JSON en journald: `journalctl -u opencloud-apps -f` (busca
-  `"módulo failed"` y los warnings `env legacy en uso`).
+- **`GET /readyz` is the key alert**: 200 only if every enabled module is `ok`,
+  503 if any is `failed`. A failed module does NOT restart the process (decision
+  D3, SPEC §4.5), so systemd sees nothing (`Restart=on-failure` only acts if the
+  whole process dies).
+- `GET /healthz` returns 200 as long as the process is alive, with the
+  per-module detail:
+  `{"version":"...","modules":{"news":"ok","notes":"ok","photos":"failed: ..."}}`.
+- JSON logs in journald: `journalctl -u opencloud-apps -f` (look for `"module
+  failed"` and the `legacy env in use` warnings).
