@@ -13,9 +13,9 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
-// davFakeXMP sirve el PROPFIND de una carpeta con las entradas dadas y los GET
-// de los sidecars del mapa href→cuerpo. Cuenta los GET para comprobar que el
-// scanner no vuelve a descargar un sidecar cuyo etag no cambió.
+// davFakeXMP serves the PROPFIND of a folder with the given entries and the
+// GETs of the sidecars from the href->body map. It counts the GETs to check that
+// the scanner does not download again a sidecar whose etag did not change.
 func davFakeXMP(t *testing.T, folder, version string, entries []string, sidecars map[string]string, gets *int32) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,9 +44,9 @@ func davFakeXMP(t *testing.T, folder, version string, entries []string, sidecars
 	return srv
 }
 
-// multistatusV es multistatus con un sufijo de versión en el etag, para poder
-// cambiar el contenido de un sidecar sin tocar su href (como haría el
-// servidor real al reescribirlo).
+// multistatusV is multistatus with a version suffix in the etag, so that the
+// content of a sidecar can change without touching its href (as the real server
+// would do when rewriting it).
 func multistatusV(self, version string, entries ...string) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">`)
@@ -77,9 +77,9 @@ const sidecarFavorite = `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
  </rdf:RDF>
 </x:xmpmeta>`
 
-// TestScanAplicaSidecarAjeno: un .xmp escrito por otra herramienta se proyecta
-// sobre el índice en el siguiente scan, sin pasar por la API.
-func TestScanAplicaSidecarAjeno(t *testing.T) {
+// TestScanAppliesForeignSidecar: an .xmp written by another tool is projected
+// onto the index on the next scan, without going through the API.
+func TestScanAppliesForeignSidecar(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
@@ -103,38 +103,38 @@ func TestScanAplicaSidecarAjeno(t *testing.T) {
 		t.Fatalf("asset a: %v", err)
 	}
 	if !a.IsFavorite {
-		t.Error("el favorito del sidecar no llegó al índice")
+		t.Error("the favourite flag of the sidecar did not reach the index")
 	}
 	tags, err := st.AssetTags(ctx, "alice", a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(tags, ",") != "mar,viaje" {
-		t.Errorf("tags=%v, quiero [mar viaje]", tags)
+		t.Errorf("tags=%v, want [mar viaje]", tags)
 	}
 
-	// la foto sin sidecar no se toca
+	// the photo without a sidecar is not touched
 	b, err := st.AssetByPath(ctx, "alice", folder+"b.jpg")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if b.IsFavorite {
-		t.Error("b.jpg no tiene sidecar y quedó favorita")
+		t.Error("b.jpg has no sidecar and ended up as a favourite")
 	}
 
-	// segundo scan: mismo etag, ni una descarga más
+	// second scan: same etag, not one extra download
 	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
-		t.Fatalf("segundo scan: %v", err)
+		t.Fatalf("second scan: %v", err)
 	}
 	if n := atomic.LoadInt32(&gets); n != 1 {
-		t.Errorf("GETs de sidecar = %d, quiero 1 (el segundo scan no debe descargar)", n)
+		t.Errorf("sidecar GETs = %d, want 1 (the second scan must not download)", n)
 	}
 }
 
-// TestScanSidecarSinRatingNoBorraFavorito: un sidecar ajeno que solo trae
-// etiquetas no puede vaciar un favorito local. Solo un xmp:Rating explícito
-// decide, y un 0 explícito sí borra.
-func TestScanSidecarSinRatingNoBorraFavorito(t *testing.T) {
+// TestScanSidecarWithoutRatingKeepsFavorite: a foreign sidecar that only brings
+// tags cannot clear a local favourite. Only an explicit xmp:Rating decides, and
+// an explicit 0 does clear it.
+func TestScanSidecarWithoutRatingKeepsFavorite(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
@@ -170,14 +170,14 @@ func TestScanSidecarSinRatingNoBorraFavorito(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !a.IsFavorite {
-		t.Error("un sidecar sin xmp:Rating borró el favorito local")
+		t.Error("a sidecar without xmp:Rating cleared the local favourite")
 	}
 	tags, _ := st.AssetTags(ctx, "alice", id)
 	if strings.Join(tags, ",") != "playa" {
-		t.Errorf("tags=%v, quiero [playa]", tags)
+		t.Errorf("tags=%v, want [playa]", tags)
 	}
 
-	// ahora un rating 0 explícito: eso sí desmarca
+	// now an explicit rating 0: that one does unmark it
 	zeroRating := strings.Replace(noRating, `xmlns:dc="http://purl.org/dc/elements/1.1/"`,
 		`xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/"`, 1)
 	zeroRating = strings.Replace(zeroRating, `</rdf:Description>`, `<xmp:Rating>0</xmp:Rating></rdf:Description>`, 1)
@@ -192,6 +192,6 @@ func TestScanSidecarSinRatingNoBorraFavorito(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.IsFavorite {
-		t.Error("xmp:Rating 0 explícito no desmarcó el favorito")
+		t.Error("an explicit xmp:Rating 0 did not unmark the favourite")
 	}
 }

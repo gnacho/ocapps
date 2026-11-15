@@ -139,7 +139,7 @@ Risk of moving photos to sqlite 1.56: low (same driver, stable API, and the phot
 ### 3.1 Compatibility policy (legacy)
 
 1. **Precedence**: new `OCAPPS_*` > legacy variable > default.
-2. When a legacy variable is used: `log.Warn("legacy env in use, migrate to OCAPPS_*", "legacy", "OCNEWS_FEED_INTERVAL", "new", "OCAPPS_NEWS_FEED_INTERVAL")`, one warning per variable and per start.
+2. When a legacy variable is used: `log.Warn("legacy env var in use, migrate to OCAPPS_*", "legacy", "OCNEWS_FEED_INTERVAL", "new", "OCAPPS_NEWS_FEED_INTERVAL")`, one warning per variable and per start.
 3. Legacy support lasts **2 minor versions** (introduced in 0.1.0, removed in 0.3.0). In 0.2.0 the warning is raised to `Error`, visible but not fatal, and in 0.3.0 the legacy variables are ignored.
 4. Implementation: a single helper in `common/config`:
 
@@ -430,8 +430,8 @@ type singleTenant struct{ ocID string }      // no longer used by photos, kept i
 | Q1 | `OCNEWS_OPENCOLOUD_URL` typo | ocnews `config.go:29,50` | Disappears in favour of `OCAPPS_OPENCLOUD_URL`, and the legacy (typo) name is still read with a warning (§3.2). |
 | Q2 | `geo.Geocoder.last` data race | ocphotos `geo.go:22,46-53` | Add a `mu sync.Mutex` around the throttle (read and update `last` under the lock). Detectable with `go test -race` plus a new test with two concurrent `Name()` calls. |
 | Q3 | Hardcoded media secret fallback | ocphotos `api.go:318-329` | `mediaSecret()` moves to `common/cred.LoadOrCreateSecret(<photos>/mediasecret)`, which **returns an error if `rand.Read` fails**, so the photos module starts `failed` (503) instead of signing predictable URLs with `"ocphotos-fallback-secret"`. |
-| Q4 | ffmpeg | `app/Dockerfile`, deploy | (a) the new ocapps Dockerfile includes `ffmpeg` in the runtime stage, (b) at photos startup: `exec.LookPath("ffmpeg")`, and if it is missing, `log.Warn` "ffmpeg not found: video posters and HLS degraded" (not fatal, since the rest works, whereas today it fails silently with a redirect or 502), (c) document it in `deploy/README.md` as the **only system dependency**. |
-| Q5 | `rescanCh` with buffer 1 | ocphotos `api.go:750-756`, `main.go` | Raise the buffer to 4 and log drops (`"rescan ignored: queue full"`), keeping the 20 s throttle in the consumer. |
+| Q4 | ffmpeg | `app/Dockerfile`, deploy | (a) the new ocapps Dockerfile includes `ffmpeg` in the runtime stage, (b) at photos startup: `exec.LookPath("ffmpeg")`, and if it is missing, `log.Warn` "ffmpeg not found: video posters degraded (the original will be served)" (not fatal, since the rest works, whereas today it fails silently with a redirect or 502), (c) document it in `deploy/README.md` as the **only system dependency**. |
+| Q5 | `rescanCh` with buffer 1 | ocphotos `api.go:750-756`, `main.go` | Raise the buffer to 4 and log drops (`"scan queue full: dropped"`), keeping the 20 s throttle in the consumer. |
 | Q6 | Retire the legacy PWA | ocphotos `app/src`, `app/info.md`, `app/Dockerfile`, `docker-compose.yml`, `main.go:177-182,200-210` (`spaHandler`, `WEB_DIR`) | Remove from the ocphotos repo, and port none of it into ocapps. A defined `WEB_DIR` logs a warn "ignored". |
 | Q7 | Dead ocphotos endpoints | `api.go:62-93` | Candidates: `GET /api/thumb` (by path), `GET /api/assets/{id}/hls/{file}`, `GET /api/assets/{id}`. **Before deleting**: re-grep over `ocphotos/ocphotos/src` (extension) and `app/src` (which disappears in Q6) at the current commit. The audit marks them as having no consumer, but that has to be revalidated at port time. If confirmed: delete the handler and the routes. Note that `/api/video/{id}` (signed stream) **is used** and stays. If HLS goes, `internal/video` is left for... nothing, so evaluate deleting `video.go` and the `hls/` cache (document the decision, and ffmpeg would still be used for posters in `thumb.VideoPoster`). |
 | Q8 | CORS | the 3 | Unified in `httpx.CORS` (§4.4). |

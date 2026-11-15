@@ -1,5 +1,5 @@
--- Compartir artículos individuales con URL pública (Miniflux-style): un token
--- aleatorio habilita una vista pública de solo lectura del item.
+-- Share individual articles with a public URL (Miniflux style): a random
+-- token enables a public read-only view of the item.
 
 CREATE TABLE IF NOT EXISTS shared_items (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

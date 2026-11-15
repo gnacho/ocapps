@@ -1,12 +1,12 @@
--- 003 — etag del sidecar XMP aplicado al índice (ver issue #19).
+-- 003 - etag of the XMP sidecar applied to the index (see issue #19).
 --
--- El scanner lee los .xmp que encuentra junto a cada foto y proyecta sus
--- etiquetas y su favorito sobre la fila del asset. Guardar el etag del
--- sidecar aplicado evita descargarlo en cada scan: si el etag del listado
--- coincide, no se pide el fichero ni se toca la BD.
+-- The scanner reads the .xmp files it finds next to each photo and projects
+-- their tags and favourite flag onto the asset row. Storing the etag of the
+-- applied sidecar avoids downloading it on every scan: if the etag of the
+-- listing matches, the file is not requested and the database is not touched.
 --
--- Vacío = nunca se ha aplicado un sidecar a este asset (o se borró la
--- columna al reconstruir). No se borra al desaparecer el sidecar: los
--- metadatos locales siguen ahí hasta que otro cambio los sustituya.
+-- Empty = no sidecar has ever been applied to this asset (or the column was
+-- dropped during a rebuild). It is not cleared when the sidecar disappears:
+-- the local metadata stays there until another change replaces it.
 
 ALTER TABLE assets ADD COLUMN sidecar_etag TEXT NOT NULL DEFAULT '';

@@ -25,7 +25,7 @@ func TestAlbumsAndPlaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// --- álbumes ---
+	// --- albums ---
 	al, err := st.CreateAlbum(ctx, owner, "Vacaciones")
 	if err != nil {
 		t.Fatal(err)
@@ -40,10 +40,10 @@ func TestAlbumsAndPlaces(t *testing.T) {
 	if a, _ := st.AlbumAssets(ctx, owner, al); len(a) != 2 {
 		t.Fatalf("album assets: %d", len(a))
 	}
-	// añadir duplicado es idempotente
+	// adding a duplicate is idempotent
 	_ = st.AddToAlbum(ctx, owner, al, []int64{id1})
 	if a, _ := st.AlbumAssets(ctx, owner, al); len(a) != 2 {
-		t.Fatalf("add duplicado: %d", len(a))
+		t.Fatalf("duplicate add: %d", len(a))
 	}
 	if err := st.RemoveFromAlbum(ctx, owner, al, id1); err != nil {
 		t.Fatal(err)
@@ -55,16 +55,16 @@ func TestAlbumsAndPlaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	if albums, _ := st.ListAlbums(ctx, owner); albums[0].Name != "Playa" {
-		t.Fatal("rename no aplicado")
+		t.Fatal("rename not applied")
 	}
 	if err := st.DeleteAlbum(ctx, owner, al); err != nil {
 		t.Fatal(err)
 	}
 	if albums, _ := st.ListAlbums(ctx, owner); len(albums) != 0 {
-		t.Fatal("delete no aplicado")
+		t.Fatal("delete not applied")
 	}
 
-	// --- lugares: dos fotos en el mismo sitio (~1 km) ---
+	// --- places: two photos at the same spot (~1 km) ---
 	lat, lon := 40.4168, -3.7038
 	if err := st.SaveExif(ctx, id1, ExifResult{Lat: &lat, Lon: &lon}); err != nil {
 		t.Fatal(err)
@@ -78,9 +78,9 @@ func TestAlbumsAndPlaces(t *testing.T) {
 		t.Fatalf("places: %+v %v", places, err)
 	}
 
-	// --- caché de geocodificación ---
+	// --- geocoding cache ---
 	if _, ok, _ := st.GetGeocode(ctx, 40.42, -3.70); ok {
-		t.Fatal("geocode no debería existir aún")
+		t.Fatal("geocode should not exist yet")
 	}
 	if err := st.SaveGeocode(ctx, 40.42, -3.70, "Madrid"); err != nil {
 		t.Fatal(err)

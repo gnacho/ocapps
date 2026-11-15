@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Extensiones de OpenCloud</title>
+<title>OpenCloud extensions</title>
 <style>
   :root { color-scheme: light dark; --bg:#f6f8fa; --fg:#191c1d; --muted:#40484c; --line:#bfc8cc; --accent:#e2baff; --on-accent:#20434f; }
   @media (prefers-color-scheme: dark) {
@@ -33,25 +33,25 @@
 </style>
 </head>
 <body>
-  <h1>Extensiones de OpenCloud</h1>
-  <p class="lead">Instala y actualiza las extensiones desde sus releases de GitHub. El panel llama a <code>ocapps-ext</code> en el servidor; OpenCloud se reinicia al terminar.</p>
+  <h1>OpenCloud extensions</h1>
+  <p class="lead">Install and update the extensions from their GitHub releases. The panel runs <code>ocapps-ext</code> on the server, and OpenCloud is restarted when it finishes.</p>
 
   <div class="row">
-    <input id="token" type="password" placeholder="Token de administración" autocomplete="off">
-    <button id="save" class="primary">Guardar token</button>
-    <button id="reload">Recargar</button>
+    <input id="token" type="password" placeholder="Admin token" autocomplete="off">
+    <button id="save" class="primary">Save token</button>
+    <button id="reload">Reload</button>
     <span id="msg" class="muted"></span>
   </div>
 
   <table>
     <thead>
-      <tr><th>App</th><th>Instalado</th><th>Publicado</th><th>Estado</th><th></th></tr>
+      <tr><th>App</th><th>Installed</th><th>Published</th><th>Status</th><th></th></tr>
     </thead>
     <tbody id="rows"></tbody>
   </table>
 
   <div id="lastWrap" class="hidden">
-    <h2 style="font-size:14px;margin:24px 0 8px">Última ejecución</h2>
+    <h2 style="font-size:14px;margin:24px 0 8px">Last run</h2>
     <pre id="last"></pre>
   </div>
 
@@ -66,7 +66,7 @@ const lastPre = document.getElementById('last');
 tokenInput.value = localStorage.getItem(TOKEN_KEY) || '';
 document.getElementById('save').onclick = () => {
   localStorage.setItem(TOKEN_KEY, tokenInput.value.trim());
-  msg.textContent = 'Token guardado';
+  msg.textContent = 'Token saved';
   load();
 };
 document.getElementById('reload').onclick = load;
@@ -76,22 +76,22 @@ function headers() {
 }
 
 const LABEL = {
-  up_to_date: ['Al día', 'ok'],
-  update_available: ['Actualizable', 'new'],
-  local_build: ['Build local', 'local'],
+  up_to_date: ['Up to date', 'ok'],
+  update_available: ['Update available', 'new'],
+  local_build: ['Local build', 'local'],
   error: ['Error', 'err']
 };
 
 async function load() {
-  msg.textContent = 'Cargando…';
+  msg.textContent = 'Loading...';
   try {
     const res = await fetch('api/extensions', { headers: headers() });
-    if (res.status === 401) { msg.textContent = 'Token incorrecto o vacío'; rows.innerHTML = ''; return; }
+    if (res.status === 401) { msg.textContent = 'Wrong or empty token'; rows.innerHTML = ''; return; }
     const data = await res.json();
     render(data);
     msg.textContent = '';
   } catch (e) {
-    msg.textContent = 'No se pudo consultar: ' + e.message;
+    msg.textContent = 'Could not query: ' + e.message;
   }
 }
 
@@ -102,8 +102,8 @@ function render(data) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="mono">${app.id}<div class="muted" style="font-size:11px">${app.repo}</div></td>
-      <td class="mono">${app.installed || '—'}</td>
-      <td class="mono">${app.latest || '—'}</td>
+      <td class="mono">${app.installed || '-'}</td>
+      <td class="mono">${app.latest || '-'}</td>
       <td><span class="tag ${cls}">${label}</span>${app.error ? `<div class="muted" style="font-size:11px">${app.error}</div>` : ''}</td>
       <td></td>`;
     const cell = tr.lastElementChild;
@@ -111,19 +111,19 @@ function render(data) {
     if (app.status === 'update_available') {
       const b = document.createElement('button');
       b.className = 'primary';
-      b.textContent = 'Actualizar';
+      b.textContent = 'Update';
       b.onclick = () => run(app.id, false, b);
       cell.appendChild(b);
     } else if (app.status === 'local_build') {
       const b = document.createElement('button');
-      b.textContent = 'Reemplazar por la release';
+      b.textContent = 'Replace with the release';
       b.onclick = () => {
-        if (confirm(`Esto sustituye el build local de ${app.id} por la release ${app.latest}. ¿Seguir?`)) run(app.id, true, b);
+        if (confirm(`This replaces the local build of ${app.id} with release ${app.latest}. Continue?`)) run(app.id, true, b);
       };
       cell.appendChild(b);
     } else if (app.status === 'error' && app.installed === '') {
       const b = document.createElement('button');
-      b.textContent = 'Instalar';
+      b.textContent = 'Install';
       b.onclick = () => run(app.id, false, b);
       cell.appendChild(b);
     }
@@ -137,16 +137,16 @@ function render(data) {
 
 async function run(id, force, btn) {
   btn.disabled = true;
-  msg.textContent = `Actualizando ${id}… puede tardar y OpenCloud se reiniciará`;
+  msg.textContent = `Updating ${id}... this can take a while and OpenCloud will be restarted`;
   try {
     const url = `api/extensions/${encodeURIComponent(id)}/update${force ? '?force=1' : ''}`;
     const res = await fetch(url, { method: 'POST', headers: headers() });
     const data = await res.json();
     lastWrap.classList.remove('hidden');
     lastPre.textContent = `$ ocapps-ext update ${force ? '--force ' : ''}${id}\n\n${(data.result && data.result.output) || data.error || ''}`;
-    msg.textContent = res.ok ? 'Hecho' : 'Terminó con error (ver salida)';
+    msg.textContent = res.ok ? 'Done' : 'Finished with an error (see the output)';
   } catch (e) {
-    msg.textContent = 'Fallo de red: ' + e.message;
+    msg.textContent = 'Network failure: ' + e.message;
   } finally {
     btn.disabled = false;
     setTimeout(load, 1500);

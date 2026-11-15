@@ -15,8 +15,8 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
-// multistatus genera un cuerpo PROPFIND con las entradas dadas ("dir/" para
-// carpetas, "fichero" para fotos).
+// multistatus builds a PROPFIND body with the given entries ("dir/" for
+// folders, "file" for photos).
 func multistatus(self string, entries ...string) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">`)
@@ -29,7 +29,7 @@ func multistatus(self string, entries ...string) string {
 			`<d:getlastmodified>Mon, 02 Jan 2006 15:04:05 GMT</d:getlastmodified>` +
 			`<d:getcontentlength>100</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`)
 	}
-	write(self, true) // self (el scanner lo excluye)
+	write(self, true) // self (the scanner excludes it)
 	for _, e := range entries {
 		write(e, strings.HasSuffix(e, "/"))
 	}
@@ -37,7 +37,8 @@ func multistatus(self string, entries ...string) string {
 	return b.String()
 }
 
-// davFake sirve PROPFINDs según el mapa path→(status, cuerpo); por defecto 404.
+// davFake serves PROPFINDs according to the path->(status, body) map, 404 by
+// default.
 func davFake(t *testing.T, handler func(path string) (int, string)) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,10 +60,11 @@ func newTestScanner(t *testing.T, srv *httptest.Server, st *store.Store) *Scanne
 	return NewScanner(webdav.NewBearer(srv.URL, "tok"), webdav.DefaultOptions(), st, slog.Default())
 }
 
-// TestScanAbortaSinSoftDeleteAnte401: con la credencial caducada el scan
-// ABORTA propagando ErrUnauthorized y el índice queda INTACTO (H8 §4): sin
-// este abort, el scan "completaría" con 0 vistos y soft-deletearía TODO.
-func TestScanAbortaSinSoftDeleteAnte401(t *testing.T) {
+// TestScanAbortsWithoutSoftDeleteOn401: with an expired credential the scan
+// ABORTS propagating ErrUnauthorized and the index stays INTACT (H8 §4):
+// without this abort, the scan would "complete" with 0 seen and soft-delete
+// EVERYTHING.
+func TestScanAbortsWithoutSoftDeleteOn401(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
@@ -77,31 +79,31 @@ func TestScanAbortaSinSoftDeleteAnte401(t *testing.T) {
 	sc := newTestScanner(t, srv, st)
 	err = sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos")
 	if !errors.Is(err, webdav.ErrUnauthorized) {
-		t.Fatalf("err=%v, quiero ErrUnauthorized", err)
+		t.Fatalf("err=%v, want ErrUnauthorized", err)
 	}
-	// el índice sigue vivo
+	// the index is still alive
 	stats, _ := st.Stats(ctx, "alice")
 	if stats["assets"].(int64) != 1 {
-		t.Fatalf("índice tocado tras 401: %v", stats)
+		t.Fatalf("index touched after 401: %v", stats)
 	}
 }
 
-// TestScanGuardMitadFallos: si >50% de los PROPFINDs fallan (y hubo ≥10), el
-// scan aborta SIN soft-delete (H8 §4).
-func TestScanGuardMitadFallos(t *testing.T) {
+// TestScanGuardHalfFailures: if more than 50% of the PROPFINDs fail (and there
+// were at least 10), the scan aborts WITHOUT a soft-delete (H8 §4).
+func TestScanGuardHalfFailures(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
 	ctx := context.Background()
-	// asset previo cuyo etag NO aparecerá en el scan: sin el guard sería
-	// soft-deleted
+	// previous asset whose etag will NOT show up in the scan: without the
+	// guard it would be soft-deleted
 	if _, _, err := st.UpsertByETag(ctx, "alice", "/dav/spaces/x/Fotos/vieja.jpg", "e-old", "vieja.jpg", "image", time.Now(), 100); err != nil {
 		t.Fatal(err)
 	}
 
-	// raíz con 12 subcarpetas; 7 fallan con 500, 5 sirven una foto
+	// root with 12 subfolders, 7 fail with 500, 5 serve one photo
 	dirs := make([]string, 0, 12)
 	for i := 0; i < 12; i++ {
 		dirs = append(dirs, fmt.Sprintf("/dav/spaces/x/Fotos/d%02d/", i))
@@ -122,22 +124,22 @@ func TestScanGuardMitadFallos(t *testing.T) {
 	})
 	sc := newTestScanner(t, srv, st)
 	err = sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos")
-	if err == nil || !strings.Contains(err.Error(), "PROPFINDs fallidos") {
-		t.Fatalf("err=%v, quiero abort por >50%% fallos", err)
+	if err == nil || !strings.Contains(err.Error(), "PROPFINDs failed") {
+		t.Fatalf("err=%v, want an abort for >50%% failures", err)
 	}
 	if errors.Is(err, webdav.ErrUnauthorized) {
-		t.Fatal("un 500 no es ErrUnauthorized")
+		t.Fatal("a 500 is not ErrUnauthorized")
 	}
-	// el asset viejo NO se soft-deleted (índice intacto)
+	// the old asset was NOT soft-deleted (index intact)
 	stats, _ := st.Stats(ctx, "alice")
-	if stats["assets"].(int64) != 6 { // 5 nuevas + la vieja viva
-		t.Fatalf("índice tras guard: %v", stats)
+	if stats["assets"].(int64) != 6 { // 5 new plus the old one alive
+		t.Fatalf("index after the guard: %v", stats)
 	}
 }
 
-// TestScanUpsertsPorOwner: los upserts y el soft-delete van acotados al
-// owner del scan (H8 §4).
-func TestScanUpsertsPorOwner(t *testing.T) {
+// TestScanUpsertsPerOwner: the upserts and the soft-delete are scoped to the
+// owner of the scan (H8 §4).
+func TestScanUpsertsPerOwner(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
@@ -157,21 +159,21 @@ func TestScanUpsertsPorOwner(t *testing.T) {
 			t.Fatalf("scan %s: %v", owner, err)
 		}
 	}
-	// el mismo path existe una vez POR owner
+	// the same path exists once PER owner
 	for _, owner := range []string{"alice", "bob"} {
 		stats, _ := st.Stats(ctx, owner)
 		if stats["assets"].(int64) != 1 {
 			t.Fatalf("stats %s: %v", owner, stats)
 		}
 	}
-	// un scan de carol (vacío) soft-deleted solo lo suyo (nada): alice y bob intactos
+	// a scan of carol (empty) soft-deleted only her own (nothing): alice and bob intact
 	if err := sc.ScanSpace(ctx, "carol", srv.URL+"/dav/spaces/y", "Fotos"); err != nil {
 		t.Fatal(err)
 	}
 	for _, owner := range []string{"alice", "bob"} {
 		stats, _ := st.Stats(ctx, owner)
 		if stats["assets"].(int64) != 1 {
-			t.Fatalf("stats %s tras scan de carol: %v", owner, stats)
+			t.Fatalf("stats %s after carol's scan: %v", owner, stats)
 		}
 	}
 }
@@ -187,17 +189,17 @@ func TestScanPrefix(t *testing.T) {
 			t.Errorf("scanPrefix(root=%q): got %q, want %q", c.root, got, c.want)
 		}
 	}
-	// Un path fuera del prefijo no cae en el ámbito del scan.
+	// A path outside the prefix does not fall within the scope of the scan.
 	if strings.HasPrefix("/dav/spaces/x/gestion/a.jpg", scanPrefix("https://drive.example.com/dav/spaces/x", "Fotos")) {
-		t.Error("un path de otra carpeta entra en el ámbito de Fotos")
+		t.Error("a path of another folder falls within the scope of Fotos")
 	}
 }
 
-// TestScanAvisaCambios: el hook OnIndexChange se llama cuando el scan cambia el
-// índice (altas o bajas) y NO cuando no hay nada nuevo. Es lo que dispara el
-// aviso a los clientes conectados (SSE), así que un falso negativo dejaría las
-// pestañas abiertas sin ver las fotos nuevas.
-func TestScanAvisaCambios(t *testing.T) {
+// TestScanNotifiesChanges: the OnIndexChange hook is called when the scan
+// changes the index (additions or removals) and NOT when there is nothing new.
+// It is what triggers the notification to connected clients (SSE), so a false
+// negative would leave open tabs without seeing the new photos.
+func TestScanNotifiesChanges(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
@@ -212,27 +214,27 @@ func TestScanAvisaCambios(t *testing.T) {
 		return http.StatusNotFound, ""
 	})
 
-	avisa := 0
+	notices := 0
 	sc := newTestScanner(t, srv, st)
 	sc.OnIndexChange = func(owner string) {
 		if owner != "alice" {
-			t.Errorf("owner del aviso = %q", owner)
+			t.Errorf("owner of the notification = %q", owner)
 		}
-		avisa++
+		notices++
 	}
 
 	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
 		t.Fatal(err)
 	}
-	if avisa != 1 {
-		t.Fatalf("avisos tras el primer scan = %d, quiero 1", avisa)
+	if notices != 1 {
+		t.Fatalf("notifications after the first scan = %d, want 1", notices)
 	}
 
-	// Segundo scan idéntico: nada cambia, no hay aviso.
+	// Second identical scan: nothing changes, there is no notification.
 	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
 		t.Fatal(err)
 	}
-	if avisa != 1 {
-		t.Fatalf("avisos tras un scan sin cambios = %d, quiero 1", avisa)
+	if notices != 1 {
+		t.Fatalf("notifications after a scan with no changes = %d, want 1", notices)
 	}
 }

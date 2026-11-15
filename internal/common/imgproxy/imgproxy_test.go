@@ -21,13 +21,13 @@ func newTestProxy(t *testing.T) *Proxy {
 	return p
 }
 
-// TestSignVectorFijo: firma HMAC calculada con el algoritmo EXACTO de
-// ocnews/ocnotes (hex(HMAC-SHA256(secret, url))[:32]) sobre un secret fijo.
-// Garantía de compatibilidad: las URLs firmadas por los servicios antiguos
-// siguen validando con el proxy unificado si se conserva el imgsecret.
+// TestSignVectorFijo: HMAC signature computed with the EXACT algorithm of
+// ocnews/ocnotes (hex(HMAC-SHA256(secret, url))[:32]) over a fixed secret.
+// Compatibility guarantee: URLs signed by the old services keep validating
+// with the unified proxy as long as the imgsecret is kept.
 func TestSignVectorFijo(t *testing.T) {
 	dir := t.TempDir()
-	secret := []byte("0123456789abcdef0123456789abcdef") // 32 bytes fijos
+	secret := []byte("0123456789abcdef0123456789abcdef") // 32 fixed bytes
 	if err := os.WriteFile(filepath.Join(dir, "imgsecret"), secret, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -37,13 +37,13 @@ func TestSignVectorFijo(t *testing.T) {
 	}
 	const (
 		rawURL  = "https://example.com/img/photo%20x.jpg?w=1"
-		wantSig = "a0e5a07e9778e36f5282ebe8eff1782d" // vector fijo (algoritmo ocnews)
+		wantSig = "a0e5a07e9778e36f5282ebe8eff1782d" // fixed vector (ocnews algorithm)
 	)
 	if got := p.Sign(rawURL); got != wantSig {
-		t.Fatalf("Sign: got %q, want %q (¡algoritmo HMAC cambiado, firmas viejas rotas!)", got, wantSig)
+		t.Fatalf("Sign: got %q, want %q (HMAC algorithm changed, old signatures broken!)", got, wantSig)
 	}
 	if !p.valid(rawURL, wantSig) {
-		t.Fatal("firma del vector rechazada")
+		t.Fatal("vector signature rejected")
 	}
 }
 
@@ -52,18 +52,18 @@ func TestSignRoundtrip(t *testing.T) {
 	u := "http://img.youtube.com/vi/abc/0.jpg"
 	sig := p.Sign(u)
 	if !p.valid(u, sig) {
-		t.Fatal("firma válida rechazada")
+		t.Fatal("valid signature rejected")
 	}
 	if p.valid(u+"x", sig) {
-		t.Fatal("firma de otra URL aceptada")
+		t.Fatal("signature of another URL accepted")
 	}
 	if p.valid(u, sig+"0") {
-		t.Fatal("firma manipulada aceptada")
+		t.Fatal("tampered signature accepted")
 	}
 }
 
-// TestSecretPersistente: el mismo imgsecret produce las mismas firmas entre
-// instancias (reinicio del servicio).
+// TestSecretPersistente: the same imgsecret produces the same signatures
+// across instances (service restart).
 func TestSecretPersistente(t *testing.T) {
 	dir := t.TempDir()
 	p1, err := New(dir, slog.Default())
@@ -76,19 +76,19 @@ func TestSecretPersistente(t *testing.T) {
 	}
 	u := "https://example.com/a.jpg"
 	if p1.Sign(u) != p2.Sign(u) {
-		t.Fatal("firmas distintas con el mismo imgsecret persistido")
+		t.Fatal("different signatures with the same persisted imgsecret")
 	}
 }
 
-// TestSecretCorruptoFailLoud: un imgsecret demasiado corto es un error, no
-// una regeneración silenciosa (SPEC Q3).
+// TestSecretCorruptoFailLoud: an imgsecret that is too short is an error, not
+// a silent regeneration (SPEC Q3).
 func TestSecretCorruptoFailLoud(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "imgsecret"), []byte("debil"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "imgsecret"), []byte("weak"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(dir, slog.Default()); err == nil {
-		t.Fatal("esperaba error por imgsecret corrupto")
+		t.Fatal("expected an error for a corrupt imgsecret")
 	}
 }
 
@@ -101,10 +101,10 @@ func TestProxiedURLRoundtrip(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	if q.Path != base+"img" {
-		t.Fatalf("path inesperado: %s", q.Path)
+		t.Fatalf("unexpected path: %s", q.Path)
 	}
 	if got := q.Query().Get("u"); got != u {
-		t.Fatalf("u no recupera la original: %q != %q", got, u)
+		t.Fatalf("u does not recover the original: %q != %q", got, u)
 	}
 }
 
@@ -118,12 +118,12 @@ func TestServeRejectsBadSignature(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("firma mala: got %d, want 403", resp.StatusCode)
+		t.Fatalf("bad signature: got %d, want 403", resp.StatusCode)
 	}
 }
 
-// TestServeFirmaAntiguaValida: una petición firmada con el algoritmo/secret
-// viejo (vector fijo) sirve la imagen → compat de firmas extremo a extremo.
+// TestServeFirmaAntiguaValida: a request signed with the old algorithm/secret
+// (fixed vector) serves the image -> end to end signature compatibility.
 func TestServeFirmaAntiguaValida(t *testing.T) {
 	dir := t.TempDir()
 	secret := []byte("0123456789abcdef0123456789abcdef")
@@ -135,7 +135,7 @@ func TestServeFirmaAntiguaValida(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// origen "externo" simulado
+	// simulated "external" origin
 	img := []byte("\xff\xd8\xff fake-jpeg")
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
@@ -153,17 +153,17 @@ func TestServeFirmaAntiguaValida(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("firma vieja rechazada en Serve: got %d", resp.StatusCode)
+		t.Fatalf("old signature rejected in Serve: got %d", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != string(img) {
-		t.Fatalf("cuerpo: %q", body)
+		t.Fatalf("body: %q", body)
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
 		t.Fatalf("Content-Type: %q", ct)
 	}
 
-	// segunda petición: sale de la caché en disco
+	// second request: it comes from the on disk cache
 	resp2, err := http.Get(front.URL + "?u=" + url.QueryEscape(origin.URL+"/foto.jpg") + "&t=" + sig)
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +185,7 @@ func TestServeRechazaEsquema(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("esquema file://: got %d, want 403", resp.StatusCode)
+		t.Fatalf("file:// scheme: got %d, want 403", resp.StatusCode)
 	}
 }
 
@@ -208,6 +208,6 @@ func TestServeTipoNoPermitido(t *testing.T) {
 		t.Fatalf("html: got %d, want 415", resp.StatusCode)
 	}
 	if !strings.Contains(resp.Header.Get("Content-Type"), "text/plain") {
-		t.Fatalf("error no es texto plano: %q", resp.Header.Get("Content-Type"))
+		t.Fatalf("error is not plain text: %q", resp.Header.Get("Content-Type"))
 	}
 }

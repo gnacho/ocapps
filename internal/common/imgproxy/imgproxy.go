@@ -1,17 +1,17 @@
-// Package imgproxy: proxy de imágenes firmado (merge de
-// ocnews/internal/imgproxy y ocnotes/internal/imgproxy). Los hosts OpenCloud
-// sirven CSP img-src 'self' (sin dominios externos), así que los frontends no
-// pueden cargar imágenes externas directamente. Este proxy las descarga y las
-// sirve desde el propio dominio. El tag <img> del navegador NO puede llevar
-// cabeceras de auth → la ruta es pública pero la URL va firmada con
-// HMAC-SHA256 (secret persistente por módulo): solo se proxifican URLs que el
-// propio servidor firmó. Mitiga SSRF (transporte netguard) y abuso.
+// Package imgproxy: signed image proxy (merge of
+// ocnews/internal/imgproxy and ocnotes/internal/imgproxy). OpenCloud hosts
+// serve CSP img-src 'self' (no external domains), so the frontends cannot load
+// external images directly. This proxy downloads them and serves them from the
+// domain itself. The browser <img> tag CANNOT carry auth headers, so the route
+// is public but the URL is signed with HMAC-SHA256 (persistent secret per
+// module): only URLs signed by the server itself are proxied. It mitigates
+// SSRF (netguard transport) and abuse.
 //
-// COMPATIBILIDAD DE FIRMAS: el algoritmo es exactamente el de ocnews/ocnotes
-// (hex(HMAC-SHA256(secret, url))[:32]); las URLs firmadas por los servicios
-// antiguos siguen validando mientras se conserve el fichero imgsecret.
-// Una instancia POR MÓDULO, cada una con su imgsecret e imgcache en su subdir
-// de datos (SPEC §2.1): las firmas quedan aisladas por módulo como hoy.
+// SIGNATURE COMPATIBILITY: the algorithm is exactly the one of
+// ocnews/ocnotes (hex(HMAC-SHA256(secret, url))[:32]), URLs signed by the old
+// services keep validating as long as the imgsecret file is kept.
+// One instance PER MODULE, each one with its imgsecret and imgcache in its own
+// data subdir (SPEC §2.1): signatures stay isolated per module as today.
 package imgproxy
 
 import (
@@ -40,14 +40,15 @@ const (
 
 type Proxy struct {
 	secret []byte
-	dir    string // caché en disco
+	dir    string // on disk cache
 	client *http.Client
 	log    *slog.Logger
 }
 
-// New carga (o genera) el secret en <dataDir>/imgsecret y prepara la caché
-// en <dataDir>/imgcache. Un imgsecret corrupto (<32 bytes) es un error
-// (fail-loud, SPEC Q3) en vez de regenerar y romper firmas en silencio.
+// New loads (or generates) the secret in <dataDir>/imgsecret and prepares the
+// cache in <dataDir>/imgcache. A corrupt imgsecret (<32 bytes) is an error
+// (fail loud, SPEC Q3) instead of regenerating it and silently breaking
+// signatures.
 func New(dataDir string, log *slog.Logger) (*Proxy, error) {
 	secret, err := cred.LoadOrCreateSecret(filepath.Join(dataDir, "imgsecret"))
 	if err != nil {
@@ -65,7 +66,7 @@ func New(dataDir string, log *slog.Logger) (*Proxy, error) {
 	}, nil
 }
 
-// NewAllowLocal es como New pero el transporte permite loopback. SOLO tests.
+// NewAllowLocal is like New but the transport allows loopback. Tests only.
 func NewAllowLocal(dataDir string, log *slog.Logger) (*Proxy, error) {
 	p, err := New(dataDir, log)
 	if err != nil {
@@ -75,18 +76,19 @@ func NewAllowLocal(dataDir string, log *slog.Logger) (*Proxy, error) {
 	return p, nil
 }
 
-// Sign devuelve la firma HMAC (hex, 32 chars) de una URL de imagen.
-// ALGORITMO FIJO: hex(HMAC-SHA256(secret, url))[:32] — no tocar (compat con
-// las firmas emitidas por ocnews/ocnotes, ver imgproxy_test.go).
+// Sign returns the HMAC signature (hex, 32 chars) of an image URL.
+// FIXED ALGORITHM: hex(HMAC-SHA256(secret, url))[:32] - do not touch it
+// (compatibility with the signatures issued by ocnews/ocnotes, see
+// imgproxy_test.go).
 func (p *Proxy) Sign(rawURL string) string {
 	mac := hmac.New(sha256.New, p.secret)
 	mac.Write([]byte(rawURL))
 	return hex.EncodeToString(mac.Sum(nil))[:32]
 }
 
-// ProxiedURL construye la URL pública del proxy para una URL firmada.
-// u viaja con url.QueryEscape completo (incluye %→%25) para que q.Get("u")
-// recupere EXACTAMENTE la URL que se firmó (port de ocnotes).
+// ProxiedURL builds the public proxy URL for a signed URL.
+// u travels fully url.QueryEscape'd (including %->%25) so that q.Get("u")
+// recovers EXACTLY the URL that was signed (port of ocnotes).
 func ProxiedURL(base, rawURL, sig string) string {
 	return base + "img?u=" + url.QueryEscape(rawURL) + "&t=" + sig
 }
@@ -100,25 +102,24 @@ func cachePath(rawURL string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Serve responde con la imagen (cache 24h en disco) o hace streaming de
-// audio/vídeo (con soporte Range para seek; sin caché en disco). Firma
-// inválida → 403.
+// Serve responds with the image (24h on disk cache) or streams audio/video
+// (with Range support for seeking, no on disk cache). Invalid signature -> 403.
 func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	u, sig := q.Get("u"), q.Get("t")
 	if u == "" || !p.valid(u, sig) {
-		http.Error(w, "firma inválida", http.StatusForbidden)
+		http.Error(w, "invalid signature", http.StatusForbidden)
 		return
 	}
 	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
-		http.Error(w, "esquema no permitido", http.StatusForbidden)
+		http.Error(w, "scheme not allowed", http.StatusForbidden)
 		return
 	}
 
-	// HEAD al origen: por content-type decidimos imagen (caché) o media (stream)
+	// HEAD to the origin: by content-type we decide image (cache) or media (stream)
 	ct, ok := p.probeContentType(r.Context(), u)
 	if !ok {
-		http.Error(w, "no disponible", http.StatusBadGateway)
+		http.Error(w, "not available", http.StatusBadGateway)
 		return
 	}
 	switch {
@@ -127,12 +128,13 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(ct, "audio/"), strings.HasPrefix(ct, "video/"):
 		p.serveMedia(w, r, u, ct)
 	default:
-		http.Error(w, "tipo no permitido", http.StatusUnsupportedMediaType)
+		http.Error(w, "type not allowed", http.StatusUnsupportedMediaType)
 	}
 }
 
-// probeContentType descubre el content-type del origen. HEAD primero; si el
-// origen no soporta HEAD (405/501), GET con Range 0-0 y cerrar enseguida.
+// probeContentType discovers the content-type of the origin. HEAD first, if
+// the origin does not support HEAD (405/501), GET with Range 0-0 and close
+// right away.
 func (p *Proxy) probeContentType(ctx context.Context, u string) (string, bool) {
 	for _, probe := range []struct {
 		method string
@@ -151,7 +153,7 @@ func (p *Proxy) probeContentType(ctx context.Context, u string) (string, bool) {
 		}
 		resp, err := p.client.Do(req)
 		if err != nil {
-			p.log.Debug("imgproxy probe falló", "url", u, "err", err)
+			p.log.Debug("imgproxy probe failed", "url", u, "err", err)
 			return "", false
 		}
 		ct := strings.ToLower(resp.Header.Get("Content-Type"))
@@ -162,8 +164,8 @@ func (p *Proxy) probeContentType(ctx context.Context, u string) (string, bool) {
 			if ct != "" && ct != "application/octet-stream" {
 				return ct, true
 			}
-			// octet-stream o vacío con 200: puede ser media sin mime correcto;
-			// lo dejamos pasar y serveMedia/serveImage vuelve a evaluar
+			// octet-stream or empty with 200: it may be media without the right
+			// mime, we let it through and serveMedia/serveImage evaluates again
 			if code == http.StatusOK && ct == "" {
 				return "application/octet-stream", true
 			}
@@ -172,7 +174,7 @@ func (p *Proxy) probeContentType(ctx context.Context, u string) (string, bool) {
 	return "", false
 }
 
-// serveImage: imagen con caché en disco (comportamiento original).
+// serveImage: image with on disk cache (original behavior).
 func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request, u, ct string) {
 	base := filepath.Join(p.dir, cachePath(u))
 	if cachedCT, err := os.ReadFile(base + ".ct"); err == nil {
@@ -183,27 +185,27 @@ func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request, u, ct string)
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
 	if err != nil {
-		http.Error(w, "url inválida", http.StatusForbidden)
+		http.Error(w, "invalid url", http.StatusForbidden)
 		return
 	}
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := p.client.Do(req)
 	if err != nil {
-		http.Error(w, "no disponible", http.StatusBadGateway)
+		http.Error(w, "not available", http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "no disponible", http.StatusBadGateway)
+		http.Error(w, "not available", http.StatusBadGateway)
 		return
 	}
 	if ct2 := strings.ToLower(resp.Header.Get("Content-Type")); !strings.HasPrefix(ct2, "image/") {
-		http.Error(w, "no es una imagen", http.StatusUnsupportedMediaType)
+		http.Error(w, "not an image", http.StatusUnsupportedMediaType)
 		return
 	}
 	img, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes))
 	if err != nil || len(img) == 0 {
-		http.Error(w, "no disponible", http.StatusBadGateway)
+		http.Error(w, "not available", http.StatusBadGateway)
 		return
 	}
 	_ = os.WriteFile(base, img, 0o600)
@@ -211,12 +213,12 @@ func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request, u, ct string)
 	p.respond(w, ct, img)
 }
 
-// serveMedia: streaming de audio/vídeo con Range passthrough (el <video> del
-// navegador necesita 206 para seek). Sin buffer completo ni caché en disco.
+// serveMedia: audio/video streaming with Range passthrough (the browser
+// <video> needs 206 to seek). No full buffer and no on disk cache.
 func (p *Proxy) serveMedia(w http.ResponseWriter, r *http.Request, u, ct string) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
 	if err != nil {
-		http.Error(w, "url inválida", http.StatusForbidden)
+		http.Error(w, "invalid url", http.StatusForbidden)
 		return
 	}
 	req.Header.Set("User-Agent", userAgent)
@@ -225,13 +227,13 @@ func (p *Proxy) serveMedia(w http.ResponseWriter, r *http.Request, u, ct string)
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		p.log.Debug("imgproxy media falló", "url", u, "err", err)
-		http.Error(w, "no disponible", http.StatusBadGateway)
+		p.log.Debug("imgproxy media failed", "url", u, "err", err)
+		http.Error(w, "not available", http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		http.Error(w, "no disponible", http.StatusBadGateway)
+		http.Error(w, "not available", http.StatusBadGateway)
 		return
 	}
 

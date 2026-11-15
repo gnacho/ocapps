@@ -14,44 +14,44 @@ import (
 	"github.com/gnacho/ocapps/internal/common/webdav"
 )
 
-// sessionTTL es la inactividad tras la que se purga una sesión Bearer (H8
-// §6.2). Las sesiones Basic (app-password duradero) y las sembradas por
-// config (OCAPPS_PHOTOS_USERS) NO se purgan.
+// sessionTTL is the inactivity after which a Bearer session is purged (H8
+// §6.2). Basic sessions (durable app password) and those seeded by config
+// (OCAPPS_PHOTOS_USERS) are NOT purged.
 const sessionTTL = 24 * time.Hour
 
-// session es la sesión EN MEMORIA de un owner (H8 §6.2): su cliente DAV con
-// la credencial del request y el webDavUrl de su espacio personal cacheado.
-// NUNCA se persiste a disco.
+// session is the IN-MEMORY session of an owner (H8 §6.2): its DAV client with
+// the credential of the request and the cached webDavUrl of its personal space.
+// It is NEVER persisted to disk.
 type session struct {
 	dav       *webdav.Client
-	webdavURL string // espacio personal resuelto (lazy); "" si pendiente
-	isBasic   bool   // credencial Basic app-password (duradera)
-	seeded    bool   // sembrada por config (background scan)
-	expired   bool   // un scan detectó 401/403 (Bearer caducado)
+	webdavURL string // resolved personal space (lazy), "" if pending
+	isBasic   bool   // Basic app-password credential (durable)
+	seeded    bool   // seeded by config (background scan)
+	expired   bool   // a scan detected 401/403 (expired Bearer)
 	lastSeen  time.Time
 }
 
-// registry es el mapa ownerID → sesión del módulo (H8 §6.2). Implementa
-// api.SessionProvider: la API toca el registry en cada request autenticado
-// con la credencial del request.
+// registry is the ownerID -> session map of the module (H8 §6.2). It implements
+// api.SessionProvider: the API touches the registry on every authenticated
+// request with the credential of the request.
 type registry struct {
 	baseURL string
 	log     *slog.Logger
-	// space: drive al que se acota el scan ("" = personal). Sale de
-	// OCAPPS_PHOTOS_SCAN_SPACE; ver resolveSpace.
+	// space: drive the scan is limited to ("" = personal). It comes from
+	// OCAPPS_PHOTOS_SCAN_SPACE, see resolveSpace.
 	space string
 
-	// hooks al scheduler (se cablean en New tras construir ambos; sin lock
-	// porque se fijan antes de servir el primer request)
+	// hooks to the scheduler (wired in New after building both, no lock
+	// because they are set before serving the first request)
 	touchHook func(owner string)
 	scanHook  func(owner string)
 
 	mu       sync.Mutex
 	sessions map[string]*session
 
-	// identidad del Bearer estático DEPRECATED (OCAPPS_PHOTOS_TOKEN): el
-	// oc_id del usuario legacy OCAPPS_PHOTOS_USER, resuelto lazy con su
-	// app-token y cacheado en memoria.
+	// identity of the DEPRECATED static Bearer (OCAPPS_PHOTOS_TOKEN): the
+	// oc_id of the legacy user OCAPPS_PHOTOS_USER, resolved lazily with its
+	// app token and cached in memory.
 	legacyUser  string
 	legacyToken string
 	legacyOwner string
@@ -66,17 +66,17 @@ func newRegistry(baseURL, legacyUser, legacyToken, space string, log *slog.Logge
 	}
 }
 
-// Touch registra actividad del owner con la credencial del request: crea o
-// actualiza su sesión (el cliente DAV se reconstruye con la credencial
-// FRESCA — un Bearer caducado se reemplaza por el nuevo token) y avisa al
-// scheduler para que encole un scan si toca.
+// Touch registers owner activity with the credential of the request: it creates
+// or updates its session (the DAV client is rebuilt with the FRESH credential,
+// an expired Bearer is replaced by the new token) and notifies the scheduler so
+// that it enqueues a scan when due.
 //
-// EXCEPCIÓN (H8 review): una sesión SEMBRADA (OCAPPS_PHOTOS_USERS) conserva
-// siempre su cliente Basic con app-token: si Touch lo reemplazara por el
-// Bearer OIDC efímero del request, el background scan del ticker moriría al
-// caducar ese token. Los requests del usuario usan entonces el app-token de
-// su sesión (misma identidad) — es la variante más simple y no degrada el
-// background scan.
+// EXCEPTION (H8 review): a SEEDED session (OCAPPS_PHOTOS_USERS) always keeps its
+// Basic client with the app token: if Touch replaced it with the ephemeral OIDC
+// Bearer of the request, the background scan of the ticker would die when that
+// token expires. The user requests then use the app token of its session (same
+// identity), it is the simplest variant and does not degrade the background
+// scan.
 func (r *registry) Touch(_ context.Context, u *auth.User, cred auth.Credential) {
 	if u == nil || u.ID == "" {
 		return
@@ -104,9 +104,9 @@ func (r *registry) Touch(_ context.Context, u *auth.User, cred auth.Credential) 
 	}
 }
 
-// get devuelve una COPIA de la sesión del owner (o nil), tomada bajo lock:
-// los lectores (scheduler, API) nunca tocan los campos mutables del struct
-// almacenado fuera del mutex (race Touch-vs-DavFor/scanOne, H8 review).
+// get returns a COPY of the owner session (or nil), taken under the lock: the
+// readers (scheduler, API) never touch the mutable fields of the stored struct
+// outside the mutex (Touch-vs-DavFor/scanOne race, H8 review).
 func (r *registry) get(owner string) *session {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -117,10 +117,10 @@ func (r *registry) get(owner string) *session {
 	return nil
 }
 
-// DavFor devuelve el cliente DAV de la sesión del owner: nil si no hay
-// sesión o si está marcada como caducada (un scan detectó 401/403; la API
-// responde 503 hasta que el próximo request del usuario la refresque vía
-// Touch con su token nuevo).
+// DavFor returns the DAV client of the owner session: nil if there is no
+// session or if it is marked as expired (a scan detected 401/403, the API
+// responds 503 until the next user request refreshes it through Touch with the
+// new token).
 func (r *registry) DavFor(_ context.Context, owner string) *webdav.Client {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -130,13 +130,13 @@ func (r *registry) DavFor(_ context.Context, owner string) *webdav.Client {
 	return nil
 }
 
-// resolveSpace resuelve (y cachea) el webDavUrl del espacio personal del
-// owner con SU credencial (driveType == "personal", fallback: el primero).
-// sess es la copia snapshot de get(): la caché se escribe en la sesión
-// ALMACENADA bajo lock.
-// space: id del drive a usar ("" = el personal). Un espacio explícito se
-// resuelve siempre contra /me/drives, sin fiarse de la caché: el personal
-// cacheado no sirve cuando el owner tiene las fotos en otro drive.
+// resolveSpace resolves (and caches) the webDavUrl of the personal space of the
+// owner with ITS credential (driveType == "personal", fallback: the first one).
+// sess is the snapshot copy from get(): the cache is written to the STORED
+// session under the lock.
+// space: id of the drive to use ("" = the personal one). An explicit space is
+// always resolved against /me/drives, without trusting the cache: the cached
+// personal one is useless when the owner has the photos in another drive.
 func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string) (string, error) {
 	space := r.space
 	if space == "" && sess.webdavURL != "" {
@@ -155,7 +155,7 @@ func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string
 			}
 		}
 		if webdavURL == "" {
-			return "", fmt.Errorf("espacio %q no disponible para el owner (%d drives visibles)", space, len(drives))
+			return "", fmt.Errorf("space %q not available for the owner (%d visible drives)", space, len(drives))
 		}
 	} else {
 		for _, d := range drives {
@@ -168,7 +168,7 @@ func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string
 			webdavURL = drives[0].WebDAVURL
 		}
 		if webdavURL == "" {
-			return "", errors.New("ningún espacio con webDavUrl disponible")
+			return "", errors.New("no space with a webDavUrl available")
 		}
 	}
 	r.mu.Lock()
@@ -176,13 +176,14 @@ func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string
 		cur.webdavURL = webdavURL
 	}
 	r.mu.Unlock()
-	r.log.Info("espacio OpenCloud localizado", "owner", owner, "webdav", webdavURL, "configurado", space)
+	r.log.Info("OpenCloud space located", "owner", owner, "webdav", webdavURL, "configured", space)
 	return webdavURL, nil
 }
 
-// SpacePrefix devuelve el path del webDavUrl del espacio personal del owner
-// (handler de carpetas), resolviéndolo on-demand si hace falta. "" si no se
-// puede (sin sesión o espacio no resoluble: la API responde vacío coherente).
+// SpacePrefix returns the path of the webDavUrl of the personal space of the
+// owner (folders handler), resolving it on demand when needed. "" if it cannot
+// (no session or unresolvable space: the API responds with a coherent empty
+// value).
 func (r *registry) SpacePrefix(ctx context.Context, owner string) string {
 	sess := r.get(owner)
 	if sess == nil {
@@ -192,7 +193,7 @@ func (r *registry) SpacePrefix(ctx context.Context, owner string) string {
 	defer cancel()
 	webdavURL, err := r.resolveSpace(sctx, sess, owner)
 	if err != nil {
-		r.log.Warn("espacio del usuario no resoluble", "owner", owner, "err", err)
+		r.log.Warn("user space not resolvable", "owner", owner, "err", err)
 		return ""
 	}
 	if u, err := url.Parse(webdavURL); err == nil {
@@ -201,9 +202,9 @@ func (r *registry) SpacePrefix(ctx context.Context, owner string) string {
 	return ""
 }
 
-// LegacyOwner resuelve el oc_id del usuario legacy OCAPPS_PHOTOS_USER con su
-// app-token (identidad del Bearer estático DEPRECATED y del backfill). Se
-// cachea en memoria; si falla se reintenta en la próxima llamada.
+// LegacyOwner resolves the oc_id of the legacy user OCAPPS_PHOTOS_USER with its
+// app token (identity of the DEPRECATED static Bearer and of the backfill). It
+// is cached in memory, on failure it is retried on the next call.
 func (r *registry) LegacyOwner(ctx context.Context) (string, error) {
 	r.mu.Lock()
 	cached := r.legacyOwner
@@ -212,13 +213,13 @@ func (r *registry) LegacyOwner(ctx context.Context) (string, error) {
 		return cached, nil
 	}
 	if r.legacyUser == "" || r.legacyToken == "" {
-		return "", errors.New("OCAPPS_PHOTOS_USER/APP_TOKEN no configurados")
+		return "", errors.New("OCAPPS_PHOTOS_USER/APP_TOKEN not configured")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id, err := webdav.New(r.baseURL, r.legacyUser, r.legacyToken).MeID(ctx)
 	if err != nil {
-		return "", fmt.Errorf("resolver oc_id del usuario legacy: %w", err)
+		return "", fmt.Errorf("resolve oc_id of the legacy user: %w", err)
 	}
 	r.mu.Lock()
 	r.legacyOwner = id
@@ -226,38 +227,38 @@ func (r *registry) LegacyOwner(ctx context.Context) (string, error) {
 	return id, nil
 }
 
-// RequestScan encola un scan solo del owner (POST /api/admin/rescan).
+// RequestScan enqueues a scan of the owner only (POST /api/admin/rescan).
 func (r *registry) RequestScan(owner string) {
 	if r.scanHook != nil {
 		r.scanHook(owner)
 	}
 }
 
-// seed crea la sesión de un usuario con app-token de OCAPPS_PHOTOS_USERS
-// (background scan): cliente Basic + resolución de MeID y espacio personal.
-// Devuelve el oc_id del usuario.
+// seed creates the session of a user with an app token from OCAPPS_PHOTOS_USERS
+// (background scan): Basic client plus resolution of MeID and personal space.
+// It returns the oc_id of the user.
 func (r *registry) seed(ctx context.Context, user, appToken string) (string, error) {
 	dav := webdav.New(r.baseURL, user, appToken)
 	sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	owner, err := dav.MeID(sctx)
 	if err != nil {
-		return "", fmt.Errorf("MeID de %q: %w", user, err)
+		return "", fmt.Errorf("MeID of %q: %w", user, err)
 	}
 	sess := &session{dav: dav, isBasic: true, seeded: true, lastSeen: time.Now()}
 	r.mu.Lock()
 	r.sessions[owner] = sess
 	r.mu.Unlock()
 	if _, err := r.resolveSpace(sctx, r.get(owner), owner); err != nil {
-		return owner, fmt.Errorf("espacio de %q: %w", user, err)
+		return owner, fmt.Errorf("space of %q: %w", user, err)
 	}
 	return owner, nil
 }
 
-// markExpired invalida el espacio cacheado de una sesión Bearer cuya
-// credencial resultó caducada (401/403 en un scan): el próximo Touch del
-// usuario la refresca con su token nuevo. Las sesiones Basic no se marcan
-// (un app-token no caduca; un 401 ahí es un cambio de credencial real).
+// markExpired invalidates the cached space of a Bearer session whose credential
+// turned out to be expired (401/403 in a scan): the next Touch of the user
+// refreshes it with the new token. Basic sessions are not marked (an app token
+// does not expire, a 401 there is a real credential change).
 func (r *registry) markExpired(owner string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -267,9 +268,9 @@ func (r *registry) markExpired(owner string) {
 	}
 }
 
-// purge elimina las sesiones Bearer sin actividad > sessionTTL (24h, H8
-// §6.2). Las Basic y las sembradas por config no se purgan. Devuelve cuántas
-// purgó.
+// purge removes the Bearer sessions without activity for more than sessionTTL
+// (24h, H8 §6.2). Basic and config-seeded sessions are not purged. It returns
+// how many were purged.
 func (r *registry) purge(now time.Time) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -286,8 +287,8 @@ func (r *registry) purge(now time.Time) int {
 	return n
 }
 
-// activeBasicOwners devuelve los owners con sesión Basic o sembrada activa
-// (a los que el ticker programado encola scans, H8 §7).
+// activeBasicOwners returns the owners with an active Basic or seeded session
+// (the ones the scheduled ticker enqueues scans for, H8 §7).
 func (r *registry) activeBasicOwners() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

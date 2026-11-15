@@ -70,7 +70,7 @@ func TestMigrateOrdenYUserVersion(t *testing.T) {
 			`CREATE TABLE tres (id INTEGER PRIMARY KEY);
 			 INSERT INTO tres (id) SELECT id FROM uno;
 			 INSERT INTO tres (id) SELECT id FROM dos;`)},
-		"migrations/notas.txt": &fstest.MapFile{Data: []byte("no es SQL")},
+		"migrations/notas.txt": &fstest.MapFile{Data: []byte("not SQL")},
 	}
 
 	if err := Migrate(db, fsys, "migrations"); err != nil {
@@ -79,10 +79,10 @@ func TestMigrateOrdenYUserVersion(t *testing.T) {
 	if v := userVersion(t, db); v != 3 {
 		t.Fatalf("user_version: got %d, want 3", v)
 	}
-	// la 003 depende de uno y dos → prueba que el orden fue 001, 002, 003
+	// 003 depends on uno and dos -> proves the order was 001, 002, 003
 	var n int
 	if err := db.QueryRow("SELECT count(*) FROM tres").Scan(&n); err != nil || n != 2 {
-		t.Fatalf("tres: n=%d err=%v (¿orden incorrecto?)", n, err)
+		t.Fatalf("tres: n=%d err=%v (wrong order?)", n, err)
 	}
 }
 
@@ -98,7 +98,7 @@ func TestMigrateReaperturaNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := Migrate(db, fsys, "migrations"); err != nil {
-		t.Fatalf("primera: %v", err)
+		t.Fatalf("first: %v", err)
 	}
 	db.Close()
 
@@ -108,10 +108,10 @@ func TestMigrateReaperturaNoOp(t *testing.T) {
 	}
 	defer db2.Close()
 	if err := Migrate(db2, fsys, "migrations"); err != nil {
-		t.Fatalf("re-apertura: %v", err)
+		t.Fatalf("re-open: %v", err)
 	}
 	if v := userVersion(t, db2); v != 1 {
-		t.Fatalf("user_version tras re-apertura: %d", v)
+		t.Fatalf("user_version after re-open: %d", v)
 	}
 }
 
@@ -132,27 +132,27 @@ func TestMigrateRollbackEnDefectuosa(t *testing.T) {
 	}
 	err := Migrate(db, bad, "migrations")
 	if err == nil {
-		t.Fatal("esperaba error en migración defectuosa")
+		t.Fatal("expected an error on a defective migration")
 	}
 	if v := userVersion(t, db); v != 1 {
-		t.Fatalf("user_version tras rollback: got %d, want 1 (intacto)", v)
+		t.Fatalf("user_version after rollback: got %d, want 1 (untouched)", v)
 	}
-	// la transacción de 002 quedó revertida: la BD sigue usable
+	// the transaction of 002 was reverted: the DB is still usable
 	if _, err := db.Exec(`INSERT INTO uno (id) VALUES (1)`); err != nil {
-		t.Fatalf("BD inusable tras rollback: %v", err)
+		t.Fatalf("DB unusable after rollback: %v", err)
 	}
 }
 
-// TestBaselineSobreEsquemaPhotos: simula la adopción de una memories.db viva
-// (SPEC §5.3): BD creada con el esquema histórico de photos (CREATE TABLE IF
-// NOT EXISTS + los 2 ALTER de is_archived/phash, user_version=0) → verificar
-// tablas/columnas esperadas → Baseline(db, 1).
+// TestBaselineSobreEsquemaPhotos: simulates the adoption of a live memories.db
+// (SPEC §5.3): DB created with the historical photos schema (CREATE TABLE IF
+// NOT EXISTS + the 2 ALTERs of is_archived/phash, user_version=0) -> verify the
+// expected tables/columns -> Baseline(db, 1).
 func TestBaselineSobreEsquemaPhotos(t *testing.T) {
 	db, _ := open(t)
 	defer db.Close()
 
-	// esquema histórico de photos (ocphotos internal/store/sqlite.go), ya con
-	// las columnas de los ALTERs idempotentes aplicadas
+	// historical photos schema (ocphotos internal/store/sqlite.go), already with
+	// the columns of the idempotent ALTERs applied
 	const photosSchema = `
 CREATE TABLE IF NOT EXISTS assets (
     id          INTEGER PRIMARY KEY,
@@ -186,17 +186,17 @@ CREATE TABLE IF NOT EXISTS geocode (
     PRIMARY KEY (lat_key, lon_key)
 );`
 	if _, err := db.Exec(photosSchema); err != nil {
-		t.Fatalf("crear esquema photos: %v", err)
+		t.Fatalf("create photos schema: %v", err)
 	}
 	if v := userVersion(t, db); v != 0 {
-		t.Fatalf("una BD viva de photos llega con user_version=0, got %d", v)
+		t.Fatalf("a live photos DB arrives with user_version=0, got %d", v)
 	}
 
-	// verificación previa a la adopción (la hará internal/photos en H3):
-	// tablas esperadas y columnas is_archived/phash en assets
+	// verification prior to the adoption (internal/photos will do it in H3):
+	// expected tables and is_archived/phash columns in assets
 	for _, table := range []string{"assets", "scan_state", "albums", "album_assets", "asset_tags", "geocode"} {
 		if !tableExists(t, db, table) {
-			t.Fatalf("falta la tabla esperada %s", table)
+			t.Fatalf("missing expected table %s", table)
 		}
 	}
 	cols := map[string]bool{}
@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS geocode (
 	}
 	for _, col := range []string{"is_archived", "phash"} {
 		if !cols[col] {
-			t.Fatalf("falta la columna assets.%s", col)
+			t.Fatalf("missing column assets.%s", col)
 		}
 	}
 
@@ -225,10 +225,10 @@ CREATE TABLE IF NOT EXISTS geocode (
 		t.Fatalf("Baseline: %v", err)
 	}
 	if v := userVersion(t, db); v != 1 {
-		t.Fatalf("user_version tras Baseline: got %d, want 1", v)
+		t.Fatalf("user_version after Baseline: got %d, want 1", v)
 	}
 
-	// tras baselinar, el runner no aplica 001_baseline.sql de nuevo
+	// after baselining, the runner does not apply 001_baseline.sql again
 	fsys := fstest.MapFS{
 		"migrations/001_baseline.sql": &fstest.MapFile{Data: []byte(
 			`CREATE TABLE IF NOT EXISTS baseline_marker (id INTEGER);`)},
@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS geocode (
 		t.Fatal(err)
 	}
 	if tableExists(t, db, "baseline_marker") {
-		t.Fatal("Migrate aplicó 001_baseline.sql sobre una BD ya baselinada")
+		t.Fatal("Migrate applied 001_baseline.sql on an already baselined DB")
 	}
 }
 
@@ -245,6 +245,6 @@ func TestBaselineRechazaNegativo(t *testing.T) {
 	db, _ := open(t)
 	defer db.Close()
 	if err := Baseline(db, -1); err == nil {
-		t.Fatal("esperaba error con versión negativa")
+		t.Fatal("expected an error with a negative version")
 	}
 }

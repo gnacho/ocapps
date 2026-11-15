@@ -2,8 +2,8 @@ package store
 
 import "testing"
 
-// TestNestedFolders: crear subcarpetas, listarlas con parentId y que el scope
-// de carpeta padre incluya los feeds de sus subcarpetas (#41).
+// TestNestedFolders: create subfolders, list them with parentId and check that the
+// parent folder scope includes the feeds of its subfolders (#41).
 func TestNestedFolders(t *testing.T) {
 	st, uid := newTestStore(t)
 	parent, err := st.CreateFolder(uid, "Padre", nil)
@@ -19,35 +19,35 @@ func TestNestedFolders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// listar carpetas: parentId presente
+	// list folders: parentId present
 	folders, err := st.ListFolders(uid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(folders) != 2 {
-		t.Fatalf("esperaba 2 carpetas: %+v", folders)
+		t.Fatalf("expected 2 folders: %+v", folders)
 	}
 	for _, f := range folders {
 		if f.ID == child.ID && (f.ParentID == nil || *f.ParentID != parent.ID) {
-			t.Errorf("hijo sin parentId correcto: %+v", f)
+			t.Errorf("child without the right parentId: %+v", f)
 		}
 		if f.ID == parent.ID && f.ParentID != nil {
-			t.Errorf("padre con parentId: %+v", f)
+			t.Errorf("parent with parentId: %+v", f)
 		}
 	}
 
-	// el scope del folder padre incluye los feeds de la subcarpeta
+	// the parent folder scope includes the feeds of the subfolder
 	got, err := st.ListItems(ItemFilter{UserID: uid, Type: 1, ID: parent.ID, GetRead: true, BatchSize: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 {
-		t.Fatalf("el folder padre debería incluir 1 item de la subcarpeta, tengo %d", len(got))
+		t.Fatalf("the parent folder should include 1 item from the subfolder, I have %d", len(got))
 	}
 }
 
-// TestDeleteParentFolderPromotesChildren: borrar un folder padre sube sus
-// subcarpetas a la raíz.
+// TestDeleteParentFolderPromotesChildren: deleting a parent folder moves its
+// subfolders up to the root.
 func TestDeleteParentFolderPromotesChildren(t *testing.T) {
 	st, uid := newTestStore(t)
 	parent, err := st.CreateFolder(uid, "Padre", nil)
@@ -62,9 +62,9 @@ func TestDeleteParentFolderPromotesChildren(t *testing.T) {
 	}
 	folders, _ := st.ListFolders(uid)
 	if len(folders) != 1 {
-		t.Fatalf("tras borrar el padre debería quedar 1 subcarpeta, tengo %d", len(folders))
+		t.Fatalf("after deleting the parent 1 subfolder should remain, I have %d", len(folders))
 	}
 	if folders[0].ParentID != nil {
-		t.Errorf("la subcarpeta debería estar en la raíz: %+v", folders[0])
+		t.Errorf("the subfolder should be at the root: %+v", folders[0])
 	}
 }

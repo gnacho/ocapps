@@ -1,5 +1,5 @@
-// Package xmp construye y lee el paquete XMP que se guarda junto a cada foto
-// (sidecar .xmp) para que etiquetas y favorito sobrevivan fuera del índice.
+// Package xmp builds and reads the XMP packet stored next to each photo
+// (.xmp sidecar) so that tags and favorite survive outside the index.
 package xmp
 
 import (
@@ -10,24 +10,24 @@ import (
 	"time"
 )
 
-// RatingFavorite es la puntuación que representa "favorita" en xmp:Rating.
+// RatingFavorite is the rating that means "favorite" in xmp:Rating.
 const RatingFavorite = 5
 
-// Meta son los campos que el servicio proyecta al sidecar. HasRating distingue
-// "el sidecar no trae xmp:Rating" de "trae un 0 explícito": al leer un paquete
-// ajeno, sin esa diferencia no se puede saber si el favorito debe borrarse o
-// dejarse como esté.
+// Meta holds the fields the service projects into the sidecar. HasRating tells
+// "the sidecar has no xmp:Rating" apart from "it carries an explicit 0": when
+// reading a foreign packet, without that difference you cannot know whether the
+// favorite should be cleared or left as it is.
 type Meta struct {
 	Tags      []string
 	Favorite  bool
 	HasRating bool
 }
 
-// SidecarPath devuelve la ruta del sidecar de una foto (misma carpeta, nombre + .xmp).
+// SidecarPath returns the sidecar path of a photo (same folder, name + .xmp).
 func SidecarPath(path string) string { return path + ".xmp" }
 
-// Build genera un paquete XMP con dc:subject para las etiquetas y xmp:Rating
-// para el favorito. Es un paquete completo: sustituye al anterior.
+// Build produces an XMP packet with dc:subject for the tags and xmp:Rating
+// for the favorite flag. It is a complete packet: it replaces the previous one.
 func Build(m Meta) []byte {
 	var b bytes.Buffer
 	b.WriteString(`<?xpacket begin="` + "\ufeff" + `" id="W5M0MpCehiHzreSzNTczkc9d"?>` + "\n")
@@ -56,9 +56,9 @@ func Build(m Meta) []byte {
 	return b.Bytes()
 }
 
-// Extract lee los campos que gestiona el servicio de un paquete XMP. Tolera
-// paquetes escritos por otras herramientas: lo que no reconoce se ignora, y un
-// documento ilegible devuelve Meta vacío en vez de error.
+// Extract reads the fields the service manages from an XMP packet. It tolerates
+// packets written by other tools: whatever it does not recognize is ignored, and
+// an unreadable document returns an empty Meta instead of an error.
 func Extract(data []byte) Meta {
 	var doc struct {
 		RDF struct {

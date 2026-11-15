@@ -1,5 +1,5 @@
-// Package feed obtiene y normaliza feeds RSS/Atom a los modelos del store.
-// Fetcher es una interfaz para inyectar fakes en tests y en la API.
+// Package feed fetches and normalizes RSS/Atom feeds into the store models.
+// Fetcher is an interface to inject fakes in tests and in the API.
 package feed
 
 import (
@@ -22,18 +22,18 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-const maxBodyBytes = 10 << 20 // 10 MB de techo por feed
+const maxBodyBytes = 10 << 20 // 10 MB cap per feed
 
 type Fetcher interface {
-	// Fetch descarga y parsea el feed; error si no se puede leer.
-	// authUser/authPass: credenciales HTTP Basic del feed (vacías = sin auth).
+	// Fetch downloads and parses the feed, error if it cannot be read.
+	// authUser/authPass: feed HTTP Basic credentials (empty = no auth).
 	Fetch(ctx context.Context, url, authUser, authPass string) (*store.Feed, []store.NewItem, error)
-	// Discover autodetecta feeds RSS/Atom en una página web.
+	// Discover autodetects RSS/Atom feeds on a web page.
 	Discover(ctx context.Context, url string) ([]DiscoveredFeed, error)
 }
 
-// ErrAuthRequired: el origen respondió 401/403 (feed tras autenticación).
-var ErrAuthRequired = errors.New("el feed requiere autenticación")
+// ErrAuthRequired: the origin responded 401/403 (feed behind authentication).
+var ErrAuthRequired = errors.New("the feed requires authentication")
 
 type HTTPFetcher struct {
 	Client *http.Client
@@ -43,8 +43,8 @@ func NewHTTPFetcher(timeout time.Duration) *HTTPFetcher {
 	return &HTTPFetcher{Client: netguard.Client(timeout)}
 }
 
-// NewHTTPFetcherAllowLocal crea un fetcher cuyo transporte permite loopback.
-// SOLO para tests (httptest escucha en 127.0.0.1).
+// NewHTTPFetcherAllowLocal creates a fetcher whose transport allows loopback.
+// TESTS only (httptest listens on 127.0.0.1).
 func NewHTTPFetcherAllowLocal(timeout time.Duration) *HTTPFetcher {
 	return &HTTPFetcher{Client: netguard.ClientAllowLocal(timeout)}
 }
@@ -52,7 +52,7 @@ func NewHTTPFetcherAllowLocal(timeout time.Duration) *HTTPFetcher {
 func (h *HTTPFetcher) Fetch(ctx context.Context, url, authUser, authPass string) (*store.Feed, []store.NewItem, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("url inválida: %w", err)
+		return nil, nil, fmt.Errorf("invalid url: %w", err)
 	}
 	req.Header.Set("User-Agent", "ocnews/0.5 (+https://github.com/gnacho/ocnews)")
 	req.Header.Set("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*")
@@ -61,28 +61,28 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, url, authUser, authPass string)
 	}
 	resp, err := h.Client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("descargar feed: %w", err)
+		return nil, nil, fmt.Errorf("download feed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, nil, fmt.Errorf("descargar feed: HTTP %d: %w", resp.StatusCode, ErrAuthRequired)
+		return nil, nil, fmt.Errorf("download feed: HTTP %d: %w", resp.StatusCode, ErrAuthRequired)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("descargar feed: HTTP %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("download feed: HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
-		return nil, nil, fmt.Errorf("leer feed: %w", err)
+		return nil, nil, fmt.Errorf("read feed: %w", err)
 	}
 	return Parse(body)
 }
 
-// minFullText: umbral de texto plano para considerar que un item llega
-// completo desde el feed (los resúmenes típicos quedan en 100-600 chars).
+// minFullText: plain text threshold to consider that an item arrives
+// complete from the feed (typical summaries stay at 100-600 chars).
 const minFullText = 900
 
-// HasFullContent dice si ALGÚN item de la tanda ya trae el artículo entero
-// (heurística: suficiente texto plano). Se evalúa ANTES de sanitizar.
+// HasFullContent says whether ANY item of the batch already brings the whole
+// article (heuristic: enough plain text). It is evaluated BEFORE sanitizing.
 func HasFullContent(items []store.NewItem) bool {
 	for _, it := range items {
 		if len(plainTextLen(it.Body)) >= minFullText {
@@ -92,7 +92,7 @@ func HasFullContent(items []store.NewItem) bool {
 	return false
 }
 
-// plainTextLen: longitud aproximada de texto (etiquetas fuera).
+// plainTextLen: approximate text length (tags out).
 func plainTextLen(html string) string {
 	var b strings.Builder
 	inTag := false
@@ -109,21 +109,21 @@ func plainTextLen(html string) string {
 	return b.String()
 }
 
-// SanitizeItems limpia el HTML de los cuerpos de una tanda de items.
-// ÚNICA vía de entrada a la BD: la llaman la suscripción (API) y el
-// refresher (scheduler) — nunca persistir bodies sin pasar por aquí.
+// SanitizeItems cleans the HTML of the bodies of a batch of items.
+// ONLY entry path to the DB: the subscription (API) and the
+// refresher (scheduler) call it, never persist bodies without going through here.
 func SanitizeItems(items []store.NewItem) {
 	for i := range items {
 		items[i].Body = sanitize.Body(items[i].Body)
 	}
 }
 
-// Parse normaliza un documento RSS/Atom (separable de la red para tests).
+// Parse normalizes an RSS/Atom document (separable from the network for tests).
 func Parse(body []byte) (*store.Feed, []store.NewItem, error) {
 	fp := gofeed.NewParser()
 	parsed, err := fp.ParseString(string(body))
 	if err != nil {
-		return nil, nil, fmt.Errorf("parsear feed: %w", err)
+		return nil, nil, fmt.Errorf("parse feed: %w", err)
 	}
 
 	f := &store.Feed{
@@ -134,7 +134,7 @@ func Parse(body []byte) (*store.Feed, []store.NewItem, error) {
 		Hub:   hubFromBody(body),
 	}
 	if f.Title == "" {
-		f.Title = "feed sin título"
+		f.Title = "feed without title"
 	}
 
 	items := make([]store.NewItem, 0, len(parsed.Items))
@@ -144,7 +144,7 @@ func Parse(body []byte) (*store.Feed, []store.NewItem, error) {
 			guid = it.Link
 		}
 		if guid == "" {
-			continue // sin identificador no es deduplicable
+			continue // without an identifier it is not deduplicable
 		}
 		pubDate := time.Now().Unix()
 		if it.PublishedParsed != nil {
@@ -183,8 +183,8 @@ func Parse(body []byte) (*store.Feed, []store.NewItem, error) {
 	return f, items, nil
 }
 
-// clusterKey agrupa la misma noticia en varios feeds: hash sobre el título
-// y el inicio del cuerpo normalizados (sin URL, que difiere por sitio).
+// clusterKey groups the same story across several feeds: hash over the title
+// and the beginning of the normalized body (without URL, which differs per site).
 func clusterKey(ni store.NewItem) string {
 	title := normalizeText(ni.Title)
 	body := normalizeText(plainTextLen(ni.Body))
@@ -195,13 +195,13 @@ func clusterKey(ni store.NewItem) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-// normalizeText: minúsculas y whitespace colapsado para comparar títulos.
+// normalizeText: lowercase and collapsed whitespace to compare titles.
 func normalizeText(s string) string {
 	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
-// applyPrivacy limpia parámetros de tracking y pixel trackers del item ANTES
-// del fingerprint (la URL y el body entran ya limpios al hash).
+// applyPrivacy cleans tracking parameters and pixel trackers from the item BEFORE
+// the fingerprint (the URL and the body enter the hash already clean).
 func applyPrivacy(ni *store.NewItem) {
 	ni.URL = privacy.StripParams(ni.URL)
 	if ni.EnclosureLink != nil {
@@ -239,7 +239,7 @@ func authorOf(it *gofeed.Item) string {
 	return ""
 }
 
-// mediaExt extrae extensiones media:* (RSS con namespaces media).
+// mediaExt extracts media:* extensions (RSS with media namespaces).
 func mediaExt(it *gofeed.Item, name, attr string) (string, bool) {
 	exts, ok := it.Extensions["media"]
 	if !ok {
@@ -264,7 +264,7 @@ func hashGUID(guid string) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-// fingerprint: hash sobre título+body+url+enclosure (dedupe entre feeds).
+// fingerprint: hash over title+body+url+enclosure (dedupe across feeds).
 func fingerprint(ni store.NewItem) string {
 	enc := ""
 	if ni.EnclosureLink != nil {
@@ -274,7 +274,7 @@ func fingerprint(ni store.NewItem) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-// DiscoveredFeed: un feed candidato detectado en la página de un sitio.
+// DiscoveredFeed: a candidate feed detected on the page of a site.
 type DiscoveredFeed struct {
 	URL   string `json:"url"`
 	Title string `json:"title"`
@@ -284,7 +284,7 @@ type DiscoveredFeed struct {
 var feedLinkRe = regexp.MustCompile(`(?i)<link[^>]*rel=["']\s*alternate\s*["'][^>]*>`)
 var hubLinkRe = regexp.MustCompile(`(?i)<link[^>]*rel=["']\s*hub\s*["'][^>]*>`)
 
-// hubFromBody extrae el primer href rel="hub" del documento (WebSub, #44).
+// hubFromBody extracts the first rel="hub" href of the document (WebSub, #44).
 func hubFromBody(body []byte) string {
 	for _, m := range hubLinkRe.FindAll(body, -1) {
 		if href := linkAttr(string(m), "href"); href != "" {
@@ -294,36 +294,36 @@ func hubFromBody(body []byte) string {
 	return ""
 }
 
-// Discover descarga una página y detecta sus feeds RSS/Atom (autodetección).
-// Descarga UNA sola vez: primero intenta parsear el cuerpo como feed; si no
-// es un feed, extrae los <link rel="alternate" type="rss|atom"> del HTML.
+// Discover downloads a page and detects its RSS/Atom feeds (autodiscovery).
+// It downloads ONCE: it first tries to parse the body as a feed, if it
+// is not a feed, it extracts the <link rel="alternate" type="rss|atom"> from the HTML.
 func (h *HTTPFetcher) Discover(ctx context.Context, url string) ([]DiscoveredFeed, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("url inválida: %w", err)
+		return nil, fmt.Errorf("invalid url: %w", err)
 	}
 	req.Header.Set("User-Agent", "ocnews/0.5 (+https://github.com/gnacho/ocnews)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/rss+xml,application/atom+xml,application/xml,*/*")
 	resp, err := h.Client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("descargar: %w", err)
+		return nil, fmt.Errorf("download: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("descargar: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("download: HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("leer: %w", err)
+		return nil, fmt.Errorf("read: %w", err)
 	}
 
-	// ¿Es un feed? Lo intentamos primero para no rascar HTML.
+	// Is it a feed? We try it first to avoid scraping HTML.
 	if f, items, err := Parse(body); err == nil {
 		_ = items
 		return []DiscoveredFeed{{URL: url, Title: f.Title, Type: feedKind(f.URL)}}, nil
 	}
 
-	// No es un feed: extraer los feeds de los <link rel="alternate">.
+	// It is not a feed: extract the feeds from the <link rel="alternate">.
 	base, _ := urlpkg.Parse(url)
 	out := []DiscoveredFeed{}
 	seen := map[string]bool{}
@@ -351,7 +351,7 @@ func (h *HTTPFetcher) Discover(ctx context.Context, url string) ([]DiscoveredFee
 		out = append(out, DiscoveredFeed{URL: privacy.StripParams(abs.String()), Title: titleFromFeedLink(string(m)), Type: kind})
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no se encontraron feeds en la página")
+		return nil, fmt.Errorf("no feeds found on the page")
 	}
 	return out, nil
 }

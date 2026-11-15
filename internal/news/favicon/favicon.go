@@ -1,6 +1,6 @@
-// Package favicon: obtiene, cachea y sirve el favicon de cada feed.
-// Caché en DATA_DIR/favicons/{url_hash}.ext; el endpoint de la API v1.3
-// GET /favicon/{feedUrlHash} lo consulta (hash = md5 de la URL del feed).
+// Package favicon: fetches, caches and serves the favicon of each feed.
+// Cache in DATA_DIR/favicons/{url_hash}.ext, the API v1.3 endpoint
+// GET /favicon/{feedUrlHash} reads it (hash = md5 of the feed URL).
 package favicon
 
 import (
@@ -33,20 +33,20 @@ type Cache struct {
 
 func NewCache(dir string, log *slog.Logger) (*Cache, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("crear caché favicons: %w", err)
+		return nil, fmt.Errorf("create favicons cache: %w", err)
 	}
 	return &Cache{dir: dir, client: netguard.Client(fetchTimeout), log: log}, nil
 }
 
-// Hash devuelve el md5 hex de una URL de feed (identificador del endpoint).
+// Hash returns the hex md5 of a feed URL (endpoint identifier).
 func Hash(feedURL string) string {
 	sum := md5.Sum([]byte(feedURL))
 	return fmt.Sprintf("%x", sum)
 }
 
-// Fetch descarga el favicon del sitio del feed (best-effort: los errores
-// solo se loguean). Prueba /favicon.ico del origen del enlace del sitio.
-// La caché se indexa por el hash de la URL DEL FEED (la que usa el endpoint).
+// Fetch downloads the favicon of the feed site (best-effort, errors
+// are only logged). It tries /favicon.ico from the origin of the site link.
+// The cache is indexed by the hash of the FEED URL (the one the endpoint uses).
 func (c *Cache) Fetch(ctx context.Context, feedURL, siteLink string) {
 	icoURL, ok := faviconURL(siteLink)
 	if !ok {
@@ -59,7 +59,7 @@ func (c *Cache) Fetch(ctx context.Context, feedURL, siteLink string) {
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		c.log.Debug("favicon no descargado", "url", icoURL, "err", err)
+		c.log.Debug("favicon not downloaded", "url", icoURL, "err", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -72,12 +72,12 @@ func (c *Cache) Fetch(ctx context.Context, feedURL, siteLink string) {
 	}
 	ctype := strings.ToLower(resp.Header.Get("Content-Type"))
 	if !strings.HasPrefix(ctype, "image/") {
-		return // HTML de error u otro contenido: no vale como icono
+		return // error HTML or other content, not valid as an icon
 	}
 	_ = os.WriteFile(c.pathFor(Hash(feedURL)+ext(ctype)), body, 0o600)
 }
 
-// Has dice si ya hay un favicon cacheado para el hash dado.
+// Has says whether there is already a cached favicon for the given hash.
 func (c *Cache) Has(hash string) bool {
 	for _, ext := range []string{".ico", ".png", ".svg", ".jpg", ".jpeg", ".gif", ".webp"} {
 		if _, err := os.Stat(c.pathFor(hash + ext)); err == nil {
@@ -87,7 +87,7 @@ func (c *Cache) Has(hash string) bool {
 	return false
 }
 
-// Serve responde con el favicon cacheado para el hash dado, o 404.
+// Serve responds with the cached favicon for the given hash, or 404.
 func (c *Cache) Serve(w http.ResponseWriter, hash string) {
 	for _, ext := range []string{".ico", ".png", ".svg", ".jpg", ".jpeg", ".gif", ".webp"} {
 		p := c.pathFor(hash + ext)
@@ -106,7 +106,7 @@ func (c *Cache) pathFor(name string) string {
 	return filepath.Join(c.dir, name)
 }
 
-// faviconURL deriva https://host/favicon.ico del enlace del sitio.
+// faviconURL derives https://host/favicon.ico from the site link.
 func faviconURL(siteLink string) (string, bool) {
 	if siteLink == "" {
 		return "", false

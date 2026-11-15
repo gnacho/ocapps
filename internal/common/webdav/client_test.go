@@ -26,15 +26,15 @@ func TestOptionsClasificacion(t *testing.T) {
 		}
 	}
 	if !o.IsImage("a.png") || o.IsVideo("a.png") {
-		t.Error("png debe ser imagen y no vídeo")
+		t.Error("png must be an image and not a video")
 	}
 	if !o.IsVideo("a.mp4") || o.IsImage("a.mp4") {
-		t.Error("mp4 debe ser vídeo y no imagen")
+		t.Error("mp4 must be a video and not an image")
 	}
-	// opciones personalizadas (salen del cliente al scanner, SPEC §2.1)
+	// custom options (they go from the client to the scanner, SPEC §2.1)
 	custom := Options{ImageExts: []string{".arw"}}
 	if !custom.IsImage("foto.ARW") || custom.IsMedia("foto.jpg") {
-		t.Error("Options personalizadas no respetadas")
+		t.Error("custom Options not honored")
 	}
 }
 
@@ -45,7 +45,7 @@ func TestSpaceFileURL(t *testing.T) {
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	// webdavURL vacía → base + relPath
+	// empty webdavURL -> base + relPath
 	if got := c.SpaceFileURL("", "/Fotos/a.jpg"); got != "https://internal:9200/Fotos/a.jpg" {
 		t.Fatalf("fallback: %q", got)
 	}
@@ -78,7 +78,7 @@ const multistatusXML = `<?xml version="1.0"?>
 func TestPropfind(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "PROPFIND" {
-			t.Errorf("método: %s", r.Method)
+			t.Errorf("method: %s", r.Method)
 		}
 		if r.Header.Get("Depth") != "1" {
 			t.Errorf("Depth: %q", r.Header.Get("Depth"))
@@ -99,7 +99,7 @@ func TestPropfind(t *testing.T) {
 		t.Fatalf("Propfind: %v", err)
 	}
 	if len(entries) != 2 {
-		t.Fatalf("entries: got %d, want 2 (self excluido)", len(entries))
+		t.Fatalf("entries: got %d, want 2 (self excluded)", len(entries))
 	}
 	var img, dir *Entry
 	for i := range entries {
@@ -112,20 +112,20 @@ func TestPropfind(t *testing.T) {
 	}
 	if img == nil || img.Href != "/dav/spaces/personal/Fotos/IMG.jpg" ||
 		img.ETag != `"abc123"` || img.Size != 12345 || img.ContentType != "image/jpeg" {
-		t.Fatalf("entry imagen: %+v", img)
+		t.Fatalf("image entry: %+v", img)
 	}
 	if img.LastModified.IsZero() {
-		t.Fatal("LastModified no parseado")
+		t.Fatal("LastModified not parsed")
 	}
 	if dir == nil || dir.Href != "/dav/spaces/personal/Fotos/Viajes/" {
-		t.Fatalf("entry dir: %+v", dir)
+		t.Fatalf("dir entry: %+v", dir)
 	}
 
 	if _, err := c.Propfind(context.Background(), "/dav/../etc", 1); err == nil {
-		t.Fatal("path traversal no rechazado")
+		t.Fatal("path traversal not rejected")
 	}
 	if _, err := c.Propfind(context.Background(), "/dav/x", 2); err == nil {
-		t.Fatal("depth>1 no rechazado")
+		t.Fatal("depth>1 not rejected")
 	}
 }
 
@@ -153,10 +153,10 @@ func TestGetRangeConOffset(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, "4567")
 	}
 	if _, err := c.GetRange(context.Background(), "/dav/f.bin", -1, 4); err == nil {
-		t.Fatal("offset negativo no rechazado")
+		t.Fatal("negative offset not rejected")
 	}
 	if _, err := c.GetRange(context.Background(), "/dav/f.bin", 0, 0); err == nil {
-		t.Fatal("n=0 no rechazado")
+		t.Fatal("n=0 not rejected")
 	}
 }
 
@@ -191,8 +191,8 @@ func TestDownloadYMeID(t *testing.T) {
 	}
 }
 
-// TestNewBearerAuth: NewBearer manda "Authorization: Bearer <token>" en TODAS
-// las operaciones (Graph, PROPFIND, GET, Range) y nunca Basic (H8 §2).
+// TestNewBearerAuth: NewBearer sends "Authorization: Bearer <token>" in ALL
+// the operations (Graph, PROPFIND, GET, Range) and never Basic (H8 §2).
 func TestNewBearerAuth(t *testing.T) {
 	var auths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +208,7 @@ func TestNewBearerAuth(t *testing.T) {
 			fmt.Fprint(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
 		default:
 			w.Header().Set("Content-Type", "application/octet-stream")
-			fmt.Fprint(w, "datos")
+			fmt.Fprint(w, "data")
 		}
 	}))
 	defer srv.Close()
@@ -239,24 +239,24 @@ func TestNewBearerAuth(t *testing.T) {
 	rc2.Close()
 
 	if len(auths) != 6 {
-		t.Fatalf("peticiones: %d (%v)", len(auths), auths)
+		t.Fatalf("requests: %d (%v)", len(auths), auths)
 	}
 	for _, a := range auths {
 		if want := " Bearer oidc-token-123"; !strings.HasSuffix(a, want) {
-			t.Fatalf("auth %q: quiero Bearer, no Basic", a)
+			t.Fatalf("auth %q: want Bearer, not Basic", a)
 		}
 	}
 }
 
-// TestErrUnauthorized: un 401/403 de cualquier operación envuelve
-// ErrUnauthorized (errors.Is) para que el scanner/worker aborten sin
-// soft-delete (H8 §2). Un 404 de PROPFIND NO es ErrUnauthorized.
+// TestErrUnauthorized: a 401/403 of any operation wraps ErrUnauthorized
+// (errors.Is) so that the scanner/worker abort without a soft-delete (H8 §2).
+// A 404 from PROPFIND is NOT ErrUnauthorized.
 func TestErrUnauthorized(t *testing.T) {
 	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(code)
 		}))
-		c := NewBearer(srv.URL, "caducado")
+		c := NewBearer(srv.URL, "expired")
 		ctx := context.Background()
 		if _, err := c.MeID(ctx); !errors.Is(err, ErrUnauthorized) {
 			t.Fatalf("MeID %d: %v", code, err)
@@ -279,14 +279,14 @@ func TestErrUnauthorized(t *testing.T) {
 		srv.Close()
 	}
 
-	// 404 en PROPFIND no es un problema de credenciales
+	// a 404 in PROPFIND is not a credential problem
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "u", "t")
 	if _, err := c.Propfind(context.Background(), "/dav/noexiste/", 1); err == nil || errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("404 no debe ser ErrUnauthorized: %v", err)
+		t.Fatalf("404 must not be ErrUnauthorized: %v", err)
 	}
 }
 
@@ -307,7 +307,7 @@ func TestPutEscribeContenido(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	if gotMethod != http.MethodPut {
-		t.Errorf("método: got %q, want PUT", gotMethod)
+		t.Errorf("method: got %q, want PUT", gotMethod)
 	}
 	if gotType != "application/rdf+xml" {
 		t.Errorf("content-type: got %q", gotType)
@@ -316,7 +316,7 @@ func TestPutEscribeContenido(t *testing.T) {
 		t.Errorf("body: got %q", gotBody)
 	}
 	if gotAuth == "" {
-		t.Error("falta Authorization")
+		t.Error("missing Authorization")
 	}
 }
 
@@ -329,10 +329,10 @@ func TestPutError(t *testing.T) {
 	c := New(srv.URL, "nacho", "token")
 	err := c.Put(context.Background(), "/Fotos/IMG_1.jpg.xmp", "application/rdf+xml", []byte("<xmp/>"))
 	if err == nil {
-		t.Fatal("esperaba error en 403")
+		t.Fatal("expected an error on 403")
 	}
 	if !errors.Is(err, ErrUnauthorized) {
-		t.Errorf("esperaba ErrUnauthorized, got %v", err)
+		t.Errorf("expected ErrUnauthorized, got %v", err)
 	}
 }
 
@@ -348,13 +348,13 @@ func TestGetSmallNoEncontrado(t *testing.T) {
 		t.Fatalf("GetSmall: %v", err)
 	}
 	if found || data != nil {
-		t.Errorf("esperaba found=false sin datos, got found=%v data=%q", found, data)
+		t.Errorf("expected found=false without data, got found=%v data=%q", found, data)
 	}
 }
 
 func TestGetSmallLeeContenido(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("<xmp>hola</xmp>"))
+		_, _ = w.Write([]byte("<xmp>hello</xmp>"))
 	}))
 	defer srv.Close()
 
@@ -363,13 +363,14 @@ func TestGetSmallLeeContenido(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSmall: %v", err)
 	}
-	if !found || string(data) != "<xmp>hola</xmp>" {
+	if !found || string(data) != "<xmp>hello</xmp>" {
 		t.Errorf("got found=%v data=%q", found, data)
 	}
 }
 
-// TestFileURL: los caracteres que rompen la URL se escapan y lo que ya viene
-// percent-encoded se respeta (un doble escape daría 404 en todo).
+// TestFileURL: the characters that break the URL are escaped and what already
+// comes percent-encoded is respected (a double escape would give 404 on
+// everything).
 func TestFileURL(t *testing.T) {
 	c := &Client{base: "https://cloud.example"}
 	cases := map[string]string{

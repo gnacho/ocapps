@@ -22,30 +22,30 @@ func TestArchiveCalendarPHash(t *testing.T) {
 	id2, _, _ := st.UpsertByETag(ctx, owner, "/dav/spaces/x/Fotos/b.jpg", "e2", "b.jpg", "image", t2, 100)
 	_, _, _ = st.UpsertByETag(ctx, owner, "/dav/spaces/x/Fotos/c.jpg", "e3", "c.jpg", "image", t3, 100)
 
-	// --- archivado ---
+	// --- archived ---
 	if err := st.SetArchived(ctx, owner, id1, true); err != nil {
 		t.Fatal(err)
 	}
 	normal, _ := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, false, "")
 	if len(normal) != 2 {
-		t.Fatalf("timeline sin archivadas: %d", len(normal))
+		t.Fatalf("timeline without archived: %d", len(normal))
 	}
 	archived, _ := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, true, "")
 	if len(archived) != 1 || archived[0].ID != id1 || !archived[0].IsArchived {
-		t.Fatalf("archivadas: %+v", archived)
+		t.Fatalf("archived: %+v", archived)
 	}
 
-	// --- calendario con meses ---
+	// --- calendar with months ---
 	years, err := st.Calendar(ctx, owner)
 	if err != nil || len(years) != 2 {
 		t.Fatalf("calendar: %+v %v", years, err)
 	}
 	if years[0].Year != 2025 || years[0].Count != 1 {
-		t.Fatalf("año 2025: %+v", years[0])
+		t.Fatalf("year 2025: %+v", years[0])
 	}
-	// 2024: marzo con 2 fotos (la archivada se excluye -> 1)
+	// 2024: March with 2 photos (the archived one is excluded -> 1)
 	if years[1].Year != 2024 || len(years[1].Months) != 1 || years[1].Months[0].Month != 3 || years[1].Months[0].Count != 1 {
-		t.Fatalf("año 2024: %+v", years[1])
+		t.Fatalf("year 2024: %+v", years[1])
 	}
 
 	// --- phash ---
@@ -57,7 +57,7 @@ func TestArchiveCalendarPHash(t *testing.T) {
 	}
 	missing, err := st.AssetsWithoutPHash(ctx, owner, 10)
 	if err != nil || len(missing) != 1 {
-		t.Fatalf("sin phash: %d %v", len(missing), err)
+		t.Fatalf("without phash: %d %v", len(missing), err)
 	}
 	hashes, err := st.AllPHashes(ctx, owner)
 	if err != nil || len(hashes) != 2 {

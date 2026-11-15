@@ -25,8 +25,8 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// testCipher: cipher con feedsecret efímero en dir temporal (common/cred;
-// sustituye al antiguo cred.Load de ocnews).
+// testCipher: cipher with an ephemeral feedsecret in a temp dir (common/cred,
+// it replaces the old cred.Load of ocnews).
 func testCipher(t *testing.T) *cred.Cipher {
 	t.Helper()
 	key, err := cred.LoadOrCreateSecret(filepath.Join(t.TempDir(), "feedsecret"))
@@ -40,12 +40,12 @@ func testCipher(t *testing.T) *cred.Cipher {
 	return c
 }
 
-// fakeFetcher sirve feeds enlatados por URL; refreshes cuenta las llamadas
-// para simular que el feed publica items nuevos.
+// fakeFetcher serves canned feeds by URL, refreshes counts the calls
+// to simulate the feed publishing new items.
 type fakeFetcher struct {
 	fetches  int
 	failURLs map[string]bool
-	// credenciales recibidas en la última llamada (tests de feeds con auth)
+	// credentials received in the last call (feed auth tests)
 	lastAuthUser string
 	lastAuthPass string
 }
@@ -59,7 +59,7 @@ func (f *fakeFetcher) Fetch(_ context.Context, url, authUser, authPass string) (
 	fd := &store.Feed{Title: "Feed " + url, Link: "https://site.example"}
 	base := len(url)
 	if f.fetches > 1 {
-		base++ // tras un refresh aparece un item extra
+		base++ // after a refresh an extra item shows up
 	}
 	items := make([]store.NewItem, 0, base)
 	for i := 0; i < base; i++ {
@@ -67,7 +67,7 @@ func (f *fakeFetcher) Fetch(_ context.Context, url, authUser, authPass string) (
 		items = append(items, store.NewItem{
 			GUID: guid, GUIDHash: fmt.Sprintf("h%d", i),
 			URL:     "https://site.example/" + fmt.Sprint(i),
-			Title:   fmt.Sprintf("Item %d de %s", i, url),
+			Title:   fmt.Sprintf("Item %d of %s", i, url),
 			PubDate: int64(1000 + i),
 		})
 	}
@@ -109,8 +109,8 @@ func newTestEnv(t *testing.T, fetcher feed.Fetcher) *testEnv {
 	if err := st.SetUserLanguage(nachoID, "es"); err != nil {
 		t.Fatal(err)
 	}
-	hash2, _ := auth.HashPassword("otra1234")
-	if _, err := st.CreateUser("otro", hash2, "Otro", "user"); err != nil {
+	hash2, _ := auth.HashPassword("other1234")
+	if _, err := st.CreateUser("other", hash2, "Other", "user"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -135,7 +135,7 @@ func newTestEnv(t *testing.T, fetcher feed.Fetcher) *testEnv {
 	return &testEnv{ts: ts, client: ts.Client(), user: "nacho", pass: "pass1234", faviconDir: favDir, srv: srv}
 }
 
-// do ejecuta una petición con Basic auth del usuario dado.
+// do runs a request with Basic auth of the given user.
 func (e *testEnv) do(t *testing.T, method, path, user, pass string, body any) (int, []byte) {
 	t.Helper()
 	if strings.HasPrefix(path, "/api/") {
@@ -191,11 +191,11 @@ func TestAuthRequired(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 	code, _ := e.do(t, "GET", "/version", "", "", nil)
 	if code != 401 {
-		t.Fatalf("sin auth esperaba 401, tengo %d", code)
+		t.Fatalf("without auth expected 401, I have %d", code)
 	}
-	code, _ = e.do(t, "GET", "/version", "nacho", "malapass", nil)
+	code, _ = e.do(t, "GET", "/version", "nacho", "badpass", nil)
 	if code != 401 {
-		t.Fatalf("pass mala esperaba 401, tengo %d", code)
+		t.Fatalf("bad password expected 401, I have %d", code)
 	}
 }
 
@@ -216,7 +216,7 @@ func TestMiscEndpoints(t *testing.T) {
 		t.Fatalf("status: %d", code)
 	}
 	if !strings.Contains(string(body), "improperlyConfiguredCron") {
-		t.Errorf("status sin warnings: %s", body)
+		t.Errorf("status without warnings: %s", body)
 	}
 
 	code, body = e.do(t, "GET", "/user", e.user, e.pass, nil)
@@ -236,27 +236,27 @@ func TestFolderCRUD(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 	code, body := e.do(t, "POST", "/folders", e.user, e.pass, map[string]string{"name": "Tech"})
 	if code != 200 {
-		t.Fatalf("crear carpeta: %d %s", code, body)
+		t.Fatalf("create folder: %d %s", code, body)
 	}
 	var fr struct {
 		Folders []store.Folder
 	}
 	decode(t, body, &fr)
 	if len(fr.Folders) != 1 || fr.Folders[0].Name != "Tech" {
-		t.Fatalf("respuesta carpeta: %s", body)
+		t.Fatalf("folder response: %s", body)
 	}
 	folderID := fr.Folders[0].ID
 
 	if code, _ := e.do(t, "POST", "/folders", e.user, e.pass, map[string]string{"name": "Tech"}); code != 409 {
-		t.Fatalf("duplicada esperaba 409, tengo %d", code)
+		t.Fatalf("duplicate expected 409, I have %d", code)
 	}
 	if code, _ := e.do(t, "POST", "/folders", e.user, e.pass, map[string]string{"name": ""}); code != 422 {
-		t.Fatalf("vacía esperaba 422, tengo %d", code)
+		t.Fatalf("empty expected 422, I have %d", code)
 	}
-	// aislamiento: otro usuario no ve la carpeta
-	code, body = e.do(t, "GET", "/folders", "otro", "otra1234", nil)
+	// isolation: another user does not see the folder
+	code, body = e.do(t, "GET", "/folders", "other", "other1234", nil)
 	if code != 200 || strings.Contains(string(body), "Tech") {
-		t.Fatalf("aislamiento carpetas roto: %d %s", code, body)
+		t.Fatalf("broken folder isolation: %d %s", code, body)
 	}
 
 	if code, _ = e.do(t, "PUT", fmt.Sprintf("/folders/%d", folderID), e.user, e.pass, map[string]string{"name": "Tech2"}); code != 204 {
@@ -264,10 +264,10 @@ func TestFolderCRUD(t *testing.T) {
 	}
 	code, body = e.do(t, "GET", "/folders", e.user, e.pass, nil)
 	if !strings.Contains(string(body), "Tech2") {
-		t.Fatalf("rename no aplicado: %s", body)
+		t.Fatalf("rename not applied: %s", body)
 	}
 	if code, _ = e.do(t, "DELETE", "/folders/999", e.user, e.pass, nil); code != 404 {
-		t.Fatalf("delete inexistente esperaba 404, tengo %d", code)
+		t.Fatalf("delete of a missing one expected 404, I have %d", code)
 	}
 	if code, _ = e.do(t, "DELETE", fmt.Sprintf("/folders/%d", folderID), e.user, e.pass, nil); code != 204 {
 		t.Fatalf("delete: %d", code)
@@ -278,10 +278,10 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	ff := &fakeFetcher{}
 	e := newTestEnv(t, ff)
 
-	// carpeta + feed
+	// folder + feed
 	code, body := e.do(t, "POST", "/folders", e.user, e.pass, map[string]string{"name": "Lecturas"})
 	if code != 200 {
-		t.Fatalf("crear carpeta: %d", code)
+		t.Fatalf("create folder: %d", code)
 	}
 	var fr struct {
 		Folders []store.Folder
@@ -292,7 +292,7 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	code, body = e.do(t, "POST", "/feeds", e.user, e.pass,
 		map[string]any{"url": "https://feed.example/rss", "folderId": folderID})
 	if code != 200 {
-		t.Fatalf("crear feed: %d %s", code, body)
+		t.Fatalf("create feed: %d %s", code, body)
 	}
 	var feedResp struct {
 		Feeds []struct {
@@ -306,9 +306,9 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	}
 	decode(t, body, &feedResp)
 	if len(feedResp.Feeds) != 1 || feedResp.Feeds[0].URL != "https://feed.example/rss" {
-		t.Fatalf("respuesta feed: %s", body)
+		t.Fatalf("feed response: %s", body)
 	}
-	// la URL de suscripción manda sobre la del XML
+	// the subscription URL wins over the XML one
 	if feedResp.Feeds[0].Title != "Feed https://feed.example/rss" {
 		t.Errorf("title feed: %s", body)
 	}
@@ -320,17 +320,17 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	}
 	newest := feedResp.NewestItemID
 	if newest == 0 {
-		t.Fatal("newestItemId debería existir con items")
+		t.Fatal("newestItemId should exist with items")
 	}
 	feedID := feedResp.Feeds[0].ID
 
-	// duplicado → 409; roto → 422
+	// duplicate -> 409, broken -> 422
 	if code, _ = e.do(t, "POST", "/feeds", e.user, e.pass, map[string]string{"url": "https://feed.example/rss"}); code != 409 {
-		t.Fatalf("feed dup esperaba 409: %d", code)
+		t.Fatalf("dup feed expected 409: %d", code)
 	}
 	ff.failURLs = map[string]bool{"https://roto.example/rss": true}
 	if code, _ = e.do(t, "POST", "/feeds", e.user, e.pass, map[string]string{"url": "https://roto.example/rss"}); code != 422 {
-		t.Fatalf("feed roto esperaba 422: %d", code)
+		t.Fatalf("broken feed expected 422: %d", code)
 	}
 
 	// initial sync: unread all + starred
@@ -346,15 +346,15 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	if n != len("https://feed.example/rss") {
 		t.Fatalf("items iniciales: %d", n)
 	}
-	// orden por defecto: newest first
+	// default order: newest first
 	if itemsResp.Items[0].ID != newest {
-		t.Errorf("orden: primero %d, esperaba %d", itemsResp.Items[0].ID, newest)
+		t.Errorf("order: first %d, expected %d", itemsResp.Items[0].ID, newest)
 	}
 	firstID := itemsResp.Items[0].ID
 
-	// paginación: batchSize 2 + offset por id (cursor: items con id <= cursor)
-	// OJO: capturar ids ANTES del siguiente decode (json.Unmarshal reutiliza
-	// el backing array del slice y pisaría page1).
+	// pagination: batchSize 2 + offset by id (cursor: items with id <= cursor)
+	// NOTE: capture ids BEFORE the next decode (json.Unmarshal reuses
+	// the slice backing array and would overwrite page1).
 	code, body = e.do(t, "GET", "/items?type=3&getRead=true&batchSize=2", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	page1 := itemsResp.Items
@@ -362,24 +362,24 @@ func TestFeedAndSyncFlow(t *testing.T) {
 		t.Fatalf("batchSize: %d", len(page1))
 	}
 	cursor := page1[len(page1)-1].ID
-	secondID := page1[1].ID // page1[0] == firstID (mismo item más nuevo)
+	secondID := page1[1].ID // page1[0] == firstID (same newest item)
 	code, body = e.do(t, "GET", fmt.Sprintf("/items?type=3&getRead=true&batchSize=2&offset=%d", cursor), e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 2 {
-		t.Fatalf("página 2 con batchSize=2 debe tener 2 items, tengo %d", len(itemsResp.Items))
+		t.Fatalf("page 2 with batchSize=2 must have 2 items, I have %d", len(itemsResp.Items))
 	}
 	for _, it := range itemsResp.Items {
 		if it.ID > cursor {
-			t.Fatalf("offset devuelve items más nuevos que el cursor: %d > %d", it.ID, cursor)
+			t.Fatalf("offset returns items newer than the cursor: %d > %d", it.ID, cursor)
 		}
 	}
 
-	// marcar leído múltiple: variante spec (POST itemIds)
+	// bulk mark read: spec variant (POST itemIds)
 	if code, _ = e.do(t, "POST", "/items/read/multiple", e.user, e.pass,
 		map[string]any{"itemIds": []int64{firstID}}); code != 204 {
 		t.Fatalf("read multiple POST: %d", code)
 	}
-	// variante How To Sync (PUT items)
+	// How To Sync variant (PUT items)
 	if code, _ = e.do(t, "PUT", "/items/read/multiple", e.user, e.pass,
 		map[string]any{"items": []int64{secondID}}); code != 204 {
 		t.Fatalf("read multiple PUT: %d", code)
@@ -388,10 +388,10 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	code, body = e.do(t, "GET", "/items?type=3&getRead=false&batchSize=-1", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != n-2 {
-		t.Fatalf("tras marcar 2 leídos quedan %d, esperaba %d", len(itemsResp.Items), n-2)
+		t.Fatalf("after marking 2 as read %d remain, expected %d", len(itemsResp.Items), n-2)
 	}
 
-	// GET /feeds refleja unreadCount
+	// GET /feeds reflects unreadCount
 	code, body = e.do(t, "GET", "/feeds", e.user, e.pass, nil)
 	decode(t, body, &feedResp)
 	if feedResp.Feeds[0].UnreadCount != int64(n-2) {
@@ -408,14 +408,14 @@ func TestFeedAndSyncFlow(t *testing.T) {
 		t.Fatalf("starred: %s", body)
 	}
 
-	// /items/updated refleja cambios de estado (lastModified bump)
+	// /items/updated reflects state changes (lastModified bump)
 	code, body = e.do(t, "GET", "/items/updated?lastModified=1&type=3", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != n {
-		t.Fatalf("updated tras marcas: %d (esperaba %d)", len(itemsResp.Items), n)
+		t.Fatalf("updated after the marks: %d (expected %d)", len(itemsResp.Items), n)
 	}
 
-	// feed read con tope newestItemId
+	// feed read with a newestItemId cap
 	if code, _ = e.do(t, "POST", fmt.Sprintf("/feeds/%d/read", feedID), e.user, e.pass,
 		map[string]any{"newestItemId": newest}); code != 204 {
 		t.Fatalf("feed read: %d", code)
@@ -423,28 +423,28 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	code, body = e.do(t, "GET", "/items?type=3&getRead=false", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 0 {
-		t.Fatalf("tras feed read quedan %d unread", len(itemsResp.Items))
+		t.Fatalf("%d unread remain after feed read", len(itemsResp.Items))
 	}
 
-	// updater API: admin refresca y aparece 1 item nuevo
+	// updater API: admin refreshes and 1 new item shows up
 	fetchesBefore := ff.fetches
 	code, _ = e.do(t, "GET", "/feeds/update?userId=nacho&feedId="+fmt.Sprint(feedID), e.user, e.pass, nil)
 	if code != 204 {
 		t.Fatalf("feeds/update: %d", code)
 	}
 	if ff.fetches != fetchesBefore+1 {
-		t.Fatal("el updater no ha fetcheado")
+		t.Fatal("the updater has not fetched")
 	}
 	code, body = e.do(t, "GET", "/items?type=3&getRead=true&batchSize=1&oldestFirst=false", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	code, body = e.do(t, "GET", "/items?type=3&getRead=false", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 1 {
-		t.Fatalf("tras refresh esperaba 1 unread nuevo, tengo %d", len(itemsResp.Items))
+		t.Fatalf("after refresh expected 1 new unread, I have %d", len(itemsResp.Items))
 	}
 
-	// updater con usuario no-admin → 401
-	if code, _ = e.do(t, "GET", "/feeds/update?userId=nacho&feedId=1", "otro", "otra1234", nil); code != 401 {
+	// updater with a non-admin user -> 401
+	if code, _ = e.do(t, "GET", "/feeds/update?userId=nacho&feedId=1", "other", "other1234", nil); code != 401 {
 		t.Fatalf("updater por no-admin: %d", code)
 	}
 
@@ -463,7 +463,7 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	code, body = e.do(t, "GET", "/items?type=3&getRead=true", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 0 {
-		t.Fatalf("borrar feed debe llevarse sus items: %d", len(itemsResp.Items))
+		t.Fatalf("deleting a feed must take its items away: %d", len(itemsResp.Items))
 	}
 }
 
@@ -477,7 +477,7 @@ func TestMarkAllRead(t *testing.T) {
 
 	if code, _ := e.do(t, "POST", "/items/read", e.user, e.pass,
 		map[string]any{"newestItemId": feedResp.NewestItemID}); code != 204 {
-		t.Fatal("mark all read falló")
+		t.Fatal("mark all read failed")
 	}
 	_, body = e.do(t, "GET", "/items?type=3&getRead=false", e.user, e.pass, nil)
 	var itemsResp struct {
@@ -489,103 +489,103 @@ func TestMarkAllRead(t *testing.T) {
 	}
 }
 
-// TestFeedCredentials: suscripción con Basic auth (las credenciales llegan
-// al fetcher), edición posterior (password vacío conserva) y borrado. La
-// contraseña NUNCA aparece en las respuestas.
+// TestFeedCredentials: subscription with Basic auth (the credentials reach
+// the fetcher), later edit (an empty password keeps it) and delete. The
+// password NEVER shows up in the responses.
 func TestFeedCredentials(t *testing.T) {
 	ff := &fakeFetcher{}
 	e := newTestEnv(t, ff)
 
 	code, body := e.do(t, "POST", "/feeds", e.user, e.pass,
-		map[string]string{"url": "https://auth.example/f", "username": "lector", "password": "s3cret"})
+		map[string]string{"url": "https://auth.example/f", "username": "reader", "password": "s3cret"})
 	if code != 200 {
-		t.Fatalf("crear feed con auth: %d %s", code, body)
+		t.Fatalf("create feed with auth: %d %s", code, body)
 	}
-	if ff.lastAuthUser != "lector" || ff.lastAuthPass != "s3cret" {
-		t.Fatalf("el fetcher no recibió las credenciales: %q/%q", ff.lastAuthUser, ff.lastAuthPass)
+	if ff.lastAuthUser != "reader" || ff.lastAuthPass != "s3cret" {
+		t.Fatalf("the fetcher did not receive the credentials: %q/%q", ff.lastAuthUser, ff.lastAuthPass)
 	}
 	var fr struct {
 		Feeds []store.Feed `json:"feeds"`
 	}
 	decode(t, body, &fr)
-	if len(fr.Feeds) != 1 || fr.Feeds[0].AuthUser != "lector" {
-		t.Fatalf("authUser en respuesta: %s", body)
+	if len(fr.Feeds) != 1 || fr.Feeds[0].AuthUser != "reader" {
+		t.Fatalf("authUser in response: %s", body)
 	}
 	if strings.Contains(string(body), "s3cret") {
-		t.Fatal("la contraseña NO debe aparecer en la respuesta")
+		t.Fatal("the password must NOT show up in the response")
 	}
 	feedID := fr.Feeds[0].ID
 
-	// GET /feeds expone authUser pero no la contraseña
+	// GET /feeds exposes authUser but not the password
 	code, body = e.do(t, "GET", "/feeds", e.user, e.pass, nil)
 	if code != 200 {
 		t.Fatalf("list feeds: %d", code)
 	}
-	if !strings.Contains(string(body), `"authUser":"lector"`) {
-		t.Fatalf("authUser no expuesto: %s", body)
+	if !strings.Contains(string(body), `"authUser":"reader"`) {
+		t.Fatalf("authUser not exposed: %s", body)
 	}
 	if strings.Contains(string(body), "s3cret") {
-		t.Fatal("la contraseña NO debe aparecer en /feeds")
+		t.Fatal("the password must NOT show up in /feeds")
 	}
 
-	// cambiar solo el usuario (password vacío = conservar)
+	// change only the user (empty password = keep it)
 	if code, _ := e.do(t, "POST", fmt.Sprintf("/feeds/%d/credentials", feedID), e.user, e.pass,
-		map[string]string{"username": "lector2"}); code != 200 {
+		map[string]string{"username": "reader2"}); code != 200 {
 		t.Fatalf("update user: %d", code)
 	}
-	// la contraseña conservada sigue funcionando: forzar refresh vía updater admin
+	// the kept password still works: force a refresh through the admin updater
 	if code, _ := e.do(t, "GET", fmt.Sprintf("/feeds/update?userId=%s&feedId=%d", e.user, feedID), e.user, e.pass, nil); code != 204 {
-		t.Fatalf("update tras cambiar user: %d", code)
+		t.Fatalf("update after changing the user: %d", code)
 	}
-	if ff.lastAuthUser != "lector2" || ff.lastAuthPass != "s3cret" {
-		t.Fatalf("credenciales tras edición: %q/%q", ff.lastAuthUser, ff.lastAuthPass)
+	if ff.lastAuthUser != "reader2" || ff.lastAuthPass != "s3cret" {
+		t.Fatalf("credentials after the edit: %q/%q", ff.lastAuthUser, ff.lastAuthPass)
 	}
 
-	// cambiar la contraseña
+	// change the password
 	if code, _ := e.do(t, "POST", fmt.Sprintf("/feeds/%d/credentials", feedID), e.user, e.pass,
-		map[string]string{"username": "lector2", "password": "nueva"}); code != 200 {
+		map[string]string{"username": "reader2", "password": "new"}); code != 200 {
 		t.Fatalf("update pass: %d", code)
 	}
 	if code, _ := e.do(t, "GET", fmt.Sprintf("/feeds/update?userId=%s&feedId=%d", e.user, feedID), e.user, e.pass, nil); code != 204 {
-		t.Fatalf("update tras cambiar pass: %d", code)
+		t.Fatalf("update after changing the password: %d", code)
 	}
-	if ff.lastAuthPass != "nueva" {
-		t.Fatalf("contraseña no actualizada: %q", ff.lastAuthPass)
+	if ff.lastAuthPass != "new" {
+		t.Fatalf("password not updated: %q", ff.lastAuthPass)
 	}
 
-	// quitar la auth
+	// remove the auth
 	if code, _ := e.do(t, "POST", fmt.Sprintf("/feeds/%d/credentials", feedID), e.user, e.pass,
 		map[string]string{}); code != 200 {
-		t.Fatalf("quitar auth: %d", code)
+		t.Fatalf("remove auth: %d", code)
 	}
 	if code, _ := e.do(t, "GET", fmt.Sprintf("/feeds/update?userId=%s&feedId=%d", e.user, feedID), e.user, e.pass, nil); code != 204 {
-		t.Fatalf("update tras quitar auth: %d", code)
+		t.Fatalf("update after removing auth: %d", code)
 	}
 	if ff.lastAuthUser != "" || ff.lastAuthPass != "" {
-		t.Fatalf("auth no quitada: %q/%q", ff.lastAuthUser, ff.lastAuthPass)
+		t.Fatalf("auth not removed: %q/%q", ff.lastAuthUser, ff.lastAuthPass)
 	}
 
-	// password sin usuario → inválido
+	// password without a user -> invalid
 	if code, _ := e.do(t, "POST", fmt.Sprintf("/feeds/%d/credentials", feedID), e.user, e.pass,
-		map[string]string{"password": "sola"}); code != 422 {
-		t.Fatalf("password sin user esperaba 422: %d", code)
+		map[string]string{"password": "alone"}); code != 422 {
+		t.Fatalf("password without user expected 422: %d", code)
 	}
 }
 
 func TestUserIsolation(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 	e.do(t, "POST", "/feeds", e.user, e.pass, map[string]string{"url": "https://mine.example/f"})
-	_, body := e.do(t, "GET", "/items?type=3&getRead=true", "otro", "otra1234", nil)
+	_, body := e.do(t, "GET", "/items?type=3&getRead=true", "other", "other1234", nil)
 	var itemsResp struct {
 		Items []store.Item
 	}
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 0 {
-		t.Fatalf("aislamiento roto: otro ve %d items", len(itemsResp.Items))
+		t.Fatalf("broken isolation: another user sees %d items", len(itemsResp.Items))
 	}
-	// marcar por id ajeno no debe funcionar (404)
-	if code, _ := e.do(t, "POST", "/items/1/read", "otro", "otra1234", nil); code != 404 {
-		t.Fatalf("marcar item ajeno: %d (esperaba 404)", code)
+	// marking by another user id must not work (404)
+	if code, _ := e.do(t, "POST", "/items/1/read", "other", "other1234", nil); code != 404 {
+		t.Fatalf("mark another user item: %d (expected 404)", code)
 	}
 }
 
@@ -611,11 +611,11 @@ type errEnvelope struct {
 	} `json:"error"`
 }
 
-// i18n: usuario es → mensajes en español; auto → Accept-Language; nada → en.
+// i18n: user es -> Spanish messages, auto -> Accept-Language, nothing -> en.
 func TestErrorI18n(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 
-	// usuario con language=es (nacho se crea con es en newTestEnv)
+	// user with language=es (nacho is created with es in newTestEnv)
 	code, body := e.do(t, "DELETE", "/folders/999", e.user, e.pass, nil)
 	if code != 404 {
 		t.Fatalf("404 esperado: %d", code)
@@ -626,12 +626,12 @@ func TestErrorI18n(t *testing.T) {
 		t.Errorf("code: %q", env.Error.Code)
 	}
 	if env.Error.Message != "carpeta no encontrada" {
-		t.Errorf("mensaje es: %q", env.Error.Message)
+		t.Errorf("es message: %q", env.Error.Message)
 	}
 
-	// auto + Accept-Language en → inglés (DELETE: no existe GET de carpeta suelta)
+	// auto + Accept-Language en -> English (DELETE: there is no GET for a single folder)
 	req, _ := http.NewRequest("DELETE", e.ts.URL+Base+"/folders/999", nil)
-	req.SetBasicAuth("otro", "otra1234")
+	req.SetBasicAuth("other", "other1234")
 	req.Header.Set("Accept-Language", "en-GB,en;q=0.9")
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -641,10 +641,10 @@ func TestErrorI18n(t *testing.T) {
 	resp.Body.Close()
 	decode(t, raw, &env)
 	if env.Error.Message != "folder not found" {
-		t.Errorf("mensaje en vía Accept-Language: %q", env.Error.Message)
+		t.Errorf("message in en via Accept-Language: %q", env.Error.Message)
 	}
 
-	// 401 sin auth negocia por Accept-Language (es)
+	// 401 without auth negotiates by Accept-Language (es)
 	req2, _ := http.NewRequest("GET", e.ts.URL+Base+"/version", nil)
 	req2.Header.Set("Accept-Language", "es-ES,es;q=0.9")
 	resp2, err := e.client.Do(req2)
@@ -658,22 +658,22 @@ func TestErrorI18n(t *testing.T) {
 		t.Errorf("401 i18n: %s", raw2)
 	}
 
-	// /user expone language (extensión propia)
+	// /user exposes language (own extension)
 	_, body = e.do(t, "GET", "/user", e.user, e.pass, nil)
 	if !strings.Contains(string(body), `"language":"es"`) {
 		t.Errorf("/user language: %s", body)
 	}
 }
 
-// TestFeedFilterFlow: endpoints /feeds/{id}/filter (News 28.4.0).
+// TestFeedFilterFlow: /feeds/{id}/filter endpoints (News 28.4.0).
 func TestFeedFilterFlow(t *testing.T) {
 	ff := &fakeFetcher{}
 	e := newTestEnv(t, ff)
 
-	// suscribir un feed
+	// subscribe a feed
 	if code, body := e.do(t, "POST", "/feeds", e.user, e.pass,
 		map[string]string{"url": "https://feed.example/rss"}); code != 200 {
-		t.Fatalf("crear feed: %d %s", code, body)
+		t.Fatalf("create feed: %d %s", code, body)
 	}
 	var feedResp struct {
 		Feeds []struct{ ID int64 }
@@ -682,7 +682,7 @@ func TestFeedFilterFlow(t *testing.T) {
 	decode(t, body, &feedResp)
 	fid := feedResp.Feeds[0].ID
 
-	// GET sin filtro → vacío
+	// GET without a filter -> empty
 	code, body := e.do(t, "GET", fmt.Sprintf("/feeds/%d/filter", fid), e.user, e.pass, nil)
 	if code != 200 {
 		t.Fatalf("get filter: %d", code)
@@ -692,10 +692,10 @@ func TestFeedFilterFlow(t *testing.T) {
 	}
 	decode(t, body, &fr)
 	if fr.Filter.HasFilter() {
-		t.Fatalf("filtro inicial debería estar vacío: %s", body)
+		t.Fatalf("the initial filter should be empty: %s", body)
 	}
 
-	// POST con keywords → re-aplica y devuelve el filtro
+	// POST with keywords -> it re-applies and returns the filter
 	code, body = e.do(t, "POST", fmt.Sprintf("/feeds/%d/filter", fid), e.user, e.pass,
 		map[string]any{"titleKeywords": "sponsored", "bodyKeywords": "tracking"})
 	if code != 200 {
@@ -706,31 +706,31 @@ func TestFeedFilterFlow(t *testing.T) {
 		t.Fatalf("filtro guardado: %s", body)
 	}
 
-	// DELETE → se borra y los items se descongelan
+	// DELETE -> it is deleted and the items are unfrozen
 	code, _ = e.do(t, "DELETE", fmt.Sprintf("/feeds/%d/filter", fid), e.user, e.pass, nil)
 	if code != 204 {
 		t.Fatalf("delete filter: %d", code)
 	}
 	code, body = e.do(t, "GET", fmt.Sprintf("/feeds/%d/filter", fid), e.user, e.pass, nil)
 	if code != 200 {
-		t.Fatalf("get filter tras delete: %d %s", code, body)
+		t.Fatalf("get filter after delete: %d %s", code, body)
 	}
 	decode(t, body, &fr)
 	if fr.Filter.HasFilter() {
-		t.Fatalf("filtro debería haberse borrado: %s", body)
+		t.Fatalf("the filter should have been deleted: %s", body)
 	}
 }
 
-// TestSearchFlow: GET /items/search?query= busca en título/cuerpo/URL.
+// TestSearchFlow: GET /items/search?query= searches in title/body/URL.
 func TestSearchFlow(t *testing.T) {
 	ff := &fakeFetcher{}
 	e := newTestEnv(t, ff)
 	if code, body := e.do(t, "POST", "/feeds", e.user, e.pass,
 		map[string]string{"url": "https://feed.example/rss"}); code != 200 {
-		t.Fatalf("crear feed: %d %s", code, body)
+		t.Fatalf("create feed: %d %s", code, body)
 	}
 
-	// el fake genera titles "Item %d de %s"
+	// the fake generates titles "Item %d of %s"
 	code, body := e.do(t, "GET", "/items/search?query=Item", e.user, e.pass, nil)
 	if code != 200 {
 		t.Fatalf("search: %d", code)
@@ -740,27 +740,27 @@ func TestSearchFlow(t *testing.T) {
 	}
 	decode(t, body, &sr)
 	if len(sr.Items) == 0 {
-		t.Fatalf("búsqueda 'Item' debería devolver resultados: %s", body)
+		t.Fatalf("search 'Item' should return results: %s", body)
 	}
 
-	// query vacía → 422
+	// empty query -> 422
 	if code, _ := e.do(t, "GET", "/items/search?query=", e.user, e.pass, nil); code != 422 {
-		t.Fatalf("query vacía esperaba 422: %d", code)
+		t.Fatalf("empty query expected 422: %d", code)
 	}
-	// sin resultados → lista vacía
-	code, body = e.do(t, "GET", "/items/search?query=zzzznada", e.user, e.pass, nil)
+	// no results -> empty list
+	code, body = e.do(t, "GET", "/items/search?query=zzzznothing", e.user, e.pass, nil)
 	decode(t, body, &sr)
 	if code != 200 || len(sr.Items) != 0 {
-		t.Fatalf("búsqueda sin resultados: %d %s", code, body)
+		t.Fatalf("search without results: %d %s", code, body)
 	}
 }
 
-// TestSettingsAndRetentionFlow: ajustes de usuario y retención por feed.
+// TestSettingsAndRetentionFlow: user settings and per-feed retention.
 func TestSettingsAndRetentionFlow(t *testing.T) {
 	ff := &fakeFetcher{}
 	e := newTestEnv(t, ff)
 
-	// settings por defecto
+	// default settings
 	code, body := e.do(t, "GET", "/api/me/settings", e.user, e.pass, nil)
 	if code != 200 {
 		t.Fatalf("get settings: %d %s", code, body)
@@ -776,7 +776,7 @@ func TestSettingsAndRetentionFlow(t *testing.T) {
 		t.Fatalf("settings default: %s", body)
 	}
 
-	// actualizar tema + intervalo
+	// update theme + interval
 	code, body = e.do(t, "PUT", "/api/me/settings", e.user, e.pass,
 		map[string]any{"theme": "dark", "feedIntervalMin": "30"})
 	if code != 200 {
@@ -784,15 +784,15 @@ func TestSettingsAndRetentionFlow(t *testing.T) {
 	}
 	decode(t, body, &st)
 	if st.Theme != "dark" {
-		t.Fatalf("tema tras update: %s", body)
+		t.Fatalf("theme after update: %s", body)
 	}
-	// intervalo inválido → 422
+	// invalid interval -> 422
 	if code, _ := e.do(t, "PUT", "/api/me/settings", e.user, e.pass,
 		map[string]any{"feedIntervalMin": "1"}); code != 422 {
-		t.Fatalf("intervalo inválido esperaba 422: %d", code)
+		t.Fatalf("invalid interval expected 422: %d", code)
 	}
 
-	// fuente y tamaño del lector
+	// reader font and size
 	code, body = e.do(t, "PUT", "/api/me/settings", e.user, e.pass,
 		map[string]any{"readerFont": "serif", "readerFontSize": "17"})
 	if code != 200 {
@@ -800,21 +800,21 @@ func TestSettingsAndRetentionFlow(t *testing.T) {
 	}
 	decode(t, body, &st)
 	if st.ReaderFont != "serif" || st.ReaderFontSize != "17" {
-		t.Fatalf("fuente tras update: %s", body)
+		t.Fatalf("font after update: %s", body)
 	}
 	if code, _ := e.do(t, "PUT", "/api/me/settings", e.user, e.pass,
 		map[string]any{"readerFont": "comic-sans"}); code != 422 {
-		t.Fatalf("fuente inválida esperaba 422: %d", code)
+		t.Fatalf("invalid font expected 422: %d", code)
 	}
 	if code, _ := e.do(t, "PUT", "/api/me/settings", e.user, e.pass,
 		map[string]any{"readerFontSize": "42"}); code != 422 {
-		t.Fatalf("tamaño inválido esperaba 422: %d", code)
+		t.Fatalf("invalid size expected 422: %d", code)
 	}
 
-	// crear feed y fijar retención
+	// create a feed and set retention
 	if code, body := e.do(t, "POST", "/feeds", e.user, e.pass,
 		map[string]string{"url": "https://feed.example/rss"}); code != 200 {
-		t.Fatalf("crear feed: %d %s", code, body)
+		t.Fatalf("create feed: %d %s", code, body)
 	}
 	var feedResp struct {
 		Feeds []struct{ ID int64 }
@@ -832,7 +832,7 @@ func TestSettingsAndRetentionFlow(t *testing.T) {
 	}
 	decode(t, body, &rr)
 	if rr.RetentionDays != 0 {
-		t.Fatalf("retención default: %d", rr.RetentionDays)
+		t.Fatalf("default retention: %d", rr.RetentionDays)
 	}
 	code, body = e.do(t, "POST", fmt.Sprintf("/feeds/%d/retention", fid), e.user, e.pass,
 		map[string]any{"retentionDays": 30})
@@ -841,16 +841,16 @@ func TestSettingsAndRetentionFlow(t *testing.T) {
 	}
 	decode(t, body, &rr)
 	if rr.RetentionDays != 30 {
-		t.Fatalf("retención tras set: %d", rr.RetentionDays)
+		t.Fatalf("retention after set: %d", rr.RetentionDays)
 	}
-	// inválida → 422
+	// invalid -> 422
 	if code, _ := e.do(t, "POST", fmt.Sprintf("/feeds/%d/retention", fid), e.user, e.pass,
 		map[string]any{"retentionDays": 99999}); code != 422 {
-		t.Fatalf("retención inválida esperaba 422: %d", code)
+		t.Fatalf("invalid retention expected 422: %d", code)
 	}
 }
 
-// TestDiscoverFlow: GET /feeds/discover?url= detecta feeds de un sitio.
+// TestDiscoverFlow: GET /feeds/discover?url= detects the feeds of a site.
 func TestDiscoverFlow(t *testing.T) {
 	ff := &fakeFetcher{}
 	e := newTestEnv(t, ff)
@@ -864,20 +864,20 @@ func TestDiscoverFlow(t *testing.T) {
 	}
 	decode(t, body, &dr)
 	if len(dr.Feeds) == 0 {
-		t.Fatalf("discover debería devolver feeds: %s", body)
+		t.Fatalf("discover should return feeds: %s", body)
 	}
 
-	// url vacía → 422
+	// empty url -> 422
 	if code, _ := e.do(t, "GET", "/feeds/discover?url=", e.user, e.pass, nil); code != 422 {
-		t.Fatalf("discover sin url esperaba 422: %d", code)
+		t.Fatalf("discover without url expected 422: %d", code)
 	}
-	// url no http(s) → 422
+	// url not http(s) -> 422
 	if code, _ := e.do(t, "GET", "/feeds/discover?url=ftp://x", e.user, e.pass, nil); code != 422 {
-		t.Fatalf("discover scheme inválido esperaba 422: %d", code)
+		t.Fatalf("discover invalid scheme expected 422: %d", code)
 	}
-	// sitio que no tiene feeds → 422
+	// site without feeds -> 422
 	ff.failURLs = map[string]bool{"https://nofeeds.example": true}
 	if code, _ := e.do(t, "GET", "/feeds/discover?url=https://nofeeds.example", e.user, e.pass, nil); code != 422 {
-		t.Fatalf("discover sin feeds esperaba 422: %d", code)
+		t.Fatalf("discover without feeds expected 422: %d", code)
 	}
 }

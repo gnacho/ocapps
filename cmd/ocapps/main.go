@@ -1,9 +1,9 @@
-// ocapps: servicio Go unificado (news + notes + photos) para OpenCloud.
+// ocapps: unified Go service (news + notes + photos) for OpenCloud.
 //
-// H5 — wiring unificado (SPEC §4.5, §8): config común (fail-fast) → logger
-// JSON → validador Graph compartido → init por módulo con degradación D3 →
-// mux único con healthz/readyz → supervisor de Run(ctx) con recover →
-// shutdown gracioso (10 s) con Close de módulos.
+// H5 - unified wiring (SPEC §4.5, §8): common config (fail-fast) -> JSON logger
+// -> shared Graph validator -> per module init with D3 degradation -> single mux
+// with healthz/readyz -> supervisor of Run(ctx) with recover -> graceful
+// shutdown (10 s) with Close of the modules.
 package main
 
 import (
@@ -32,7 +32,7 @@ import (
 	"github.com/gnacho/ocapps/internal/photos"
 )
 
-// Versión por ldflags (goreleaser / Dockerfile):
+// Version by ldflags (goreleaser / Dockerfile):
 //
 //	-ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE"
 var (
@@ -41,8 +41,8 @@ var (
 	date    = "unknown"
 )
 
-// shutdownBudget es el tiempo total del apagado gracioso (SPEC §4.5):
-// drenar HTTP + loops de módulos + Close.
+// shutdownBudget is the total time of the graceful shutdown (SPEC §4.5):
+// drain HTTP + module loops + Close.
 const shutdownBudget = 10 * time.Second
 
 func main() {
@@ -53,14 +53,14 @@ func main() {
 }
 
 func run() error {
-	// Errores de la base común = fatal (SPEC §4.5/D3): sin config común
-	// válida o DATA_DIR escribible no hay nada útil que servir.
+	// Errors of the common base = fatal (SPEC §4.5/D3): without a valid common
+	// config or a writable DATA_DIR there is nothing useful to serve.
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	log := oclog.New(cfg.LogLevel)
-	slog.SetDefault(log) // único SetDefault del proceso (Q9)
+	slog.SetDefault(log) // the only SetDefault of the process (Q9)
 
 	a := wire(cfg, log)
 
@@ -69,15 +69,16 @@ func run() error {
 		Handler:           a.mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	// Los streams SSE no terminan solos: hay que cerrarlos al empezar el
-	// apagado o Shutdown esperaría a esos handlers hasta agotar el presupuesto.
+	// SSE streams do not end on their own: they have to be closed when the
+	// shutdown starts, otherwise Shutdown would wait for those handlers until
+	// the budget is exhausted.
 	srv.RegisterOnShutdown(a.closeStreams)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Supervisor: un Run(ctx) por módulo enabled en su goroutine con
-	// recover() (un pánico marca el módulo failed, el proceso sigue, D3).
+	// Supervisor: one Run(ctx) per enabled module in its goroutine with
+	// recover() (a panic marks the module failed, the process goes on, D3).
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
 	var wg sync.WaitGroup
@@ -92,7 +93,7 @@ func run() error {
 	mods, _ := a.healthSummary()
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("ocapps escuchando",
+		log.Info("ocapps listening",
 			"version", version, "commit", commit, "date", date,
 			"addr", cfg.ListenAddr, "data_dir", cfg.DataDir, "auth", cfg.AuthMode,
 			"modules", mods)
@@ -101,7 +102,7 @@ func run() error {
 
 	select {
 	case <-ctx.Done():
-		log.Info("apagando (señal)…")
+		log.Info("shutting down (signal)...")
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -109,9 +110,9 @@ func run() error {
 		return err
 	}
 
-	// Shutdown gracioso con presupuesto total de 10 s: primero HTTP (deja de
-	// aceptar y drena en curso), luego los loops (cancela runCtx y espera) y
-	// por último Close() de los módulos que lo implementen (io.Closer).
+	// Graceful shutdown with a total budget of 10 s: first HTTP (stop accepting
+	// and drain what is in flight), then the loops (cancel runCtx and wait) and
+	// finally Close() of the modules that implement it (io.Closer).
 	deadline := time.Now().Add(shutdownBudget)
 	shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
@@ -124,7 +125,7 @@ func run() error {
 	select {
 	case <-done:
 	case <-time.After(time.Until(deadline)):
-		log.Warn("timeout de shutdown: loops de módulos no drenaron a tiempo")
+		log.Warn("shutdown timeout: module loops did not drain in time")
 	}
 	for _, e := range a.modules {
 		c, ok := e.mod.(io.Closer)
@@ -132,21 +133,21 @@ func run() error {
 			continue
 		}
 		if err := c.Close(); err != nil {
-			log.Warn("close de módulo", "module", e.name, "err", err)
+			log.Warn("module close", "module", e.name, "err", err)
 		}
 	}
 	return nil
 }
 
-// entry es el estado supervisado de un módulo en el wiring: su instancia (o
-// nil si el constructor falló, D3) y el primer error de init/run/pánico.
+// entry is the supervised state of a module in the wiring: its instance (or
+// nil if the constructor failed, D3) and the first init/run/panic error.
 type entry struct {
 	name    string
 	enabled bool
 	mod     commonmodule.Module
 
 	mu  sync.Mutex
-	err error // init failed, Run terminó con error o pánico recuperado
+	err error // init failed, Run ended with an error or a recovered panic
 }
 
 func (e *entry) setErr(err error) {
@@ -157,8 +158,8 @@ func (e *entry) setErr(err error) {
 	e.mu.Unlock()
 }
 
-// healthy: error de init/run si lo hay; si no, el Healthy del módulo. Un
-// módulo disabled nunca degrada el proceso.
+// healthy: init/run error if there is one, otherwise the Healthy of the
+// module. A disabled module never degrades the process.
 func (e *entry) healthy() error {
 	e.mu.Lock()
 	err := e.err
@@ -172,7 +173,7 @@ func (e *entry) healthy() error {
 	return e.mod.Healthy()
 }
 
-// status para /healthz y /readyz: "ok" | "failed: <err>" | "disabled".
+// status for /healthz and /readyz: "ok" | "failed: <err>" | "disabled".
 func (e *entry) status() string {
 	if !e.enabled {
 		return "disabled"
@@ -183,23 +184,23 @@ func (e *entry) status() string {
 	return "ok"
 }
 
-// supervise ejecuta Run del módulo con recover: un pánico o un error de Run
-// (fuera de shutdown) marca el módulo failed sin tumbar el proceso (D3).
+// supervise runs the module Run with recover: a panic or a Run error (outside
+// shutdown) marks the module failed without taking the process down (D3).
 func (e *entry) supervise(ctx context.Context, wg *sync.WaitGroup, log *slog.Logger) {
 	defer wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
-			e.setErr(fmt.Errorf("pánico en Run: %v", r))
-			log.Error("pánico en loop de módulo; módulo failed", "module", e.name, "panic", r)
+			e.setErr(fmt.Errorf("panic in Run: %v", r))
+			log.Error("panic in module loop, module failed", "module", e.name, "panic", r)
 		}
 	}()
 	if err := e.mod.Run(ctx); err != nil && ctx.Err() == nil {
 		e.setErr(err)
-		log.Error("loop de módulo terminó con error; módulo failed", "module", e.name, "err", err)
+		log.Error("module loop ended with an error, module failed", "module", e.name, "err", err)
 	}
 }
 
-// app es el proceso cableado: mux único + módulos supervisados.
+// app is the wired process: single mux + supervised modules.
 type app struct {
 	cfg     *config.Config
 	log     *slog.Logger
@@ -207,14 +208,14 @@ type app struct {
 	modules []*entry
 }
 
-// streamCloser lo implementan los módulos que mantienen streams abiertos
-// (SSE) y necesitan cerrarlos al apagar.
+// streamCloser is implemented by the modules that keep open streams (SSE) and
+// need to close them on shutdown.
 type streamCloser interface {
 	CloseStreams()
 }
 
-// closeStreams cierra los streams de todos los módulos que los tengan. Corre
-// al inicio de http.Server.Shutdown (RegisterOnShutdown).
+// closeStreams closes the streams of every module that has them. It runs at the
+// beginning of http.Server.Shutdown (RegisterOnShutdown).
 func (a *app) closeStreams() {
 	for _, e := range a.modules {
 		if e.mod == nil {
@@ -226,9 +227,9 @@ func (a *app) closeStreams() {
 	}
 }
 
-// failedNamespaces: rutas donde se registra el handler sustituto 503 cuando
-// el constructor del módulo falla (D3, SPEC §4.5). Coinciden con los
-// namespaces del §4.1 que cada módulo registraría en estado sano.
+// failedNamespaces: routes where the 503 substitute handler is registered when
+// the module constructor fails (D3, SPEC §4.5). They match the namespaces of
+// §4.1 that each module would register in a healthy state.
 var failedNamespaces = map[string][]string{
 	"news": {
 		newsapi.Base + "/",
@@ -242,17 +243,17 @@ var failedNamespaces = map[string][]string{
 	"photos": {photos.PublicPrefix + "/"},
 }
 
-// wire construye el proceso: validador Graph compartido, init por módulo
-// (degradación D3), mux único y healthz/readyz. NUNCA devuelve error: los
-// fallos de módulo degradan; los fatales los detectó config.Load antes.
+// wire builds the process: shared Graph validator, per module init (D3
+// degradation), single mux and healthz/readyz. It NEVER returns an error:
+// module failures degrade, the fatal ones were already detected by config.Load.
 func wire(cfg *config.Config, log *slog.Logger) *app {
 	a := &app{cfg: cfg, log: log, mux: http.NewServeMux()}
 
-	// Validador Graph COMPARTIDO (SPEC §6.1/§6.2): una sola caché +
-	// singleflight para todo el proceso. news/notes lo usan con MultiTenant;
-	// photos deriva el suyo con WithPolicy(SingleTenant(meID)). En modo
-	// local (solo news) igualmente se crea: con URL vacía toda validación
-	// falla y las rutas con auth de notes responden 401, como corresponde.
+	// SHARED Graph validator (SPEC §6.1/§6.2): a single cache + singleflight
+	// for the whole process. news/notes use it with MultiTenant, photos derives
+	// its own with WithPolicy(SingleTenant(meID)). In local mode (news only) it
+	// is created anyway: with an empty URL every validation fails and the
+	// authenticated notes routes respond 401, as it should.
 	gv := commonauth.NewGraphValidator(cfg.OpenCloudURL, commonauth.MultiTenant(), log)
 
 	a.modules = []*entry{
@@ -264,7 +265,7 @@ func wire(cfg *config.Config, log *slog.Logger) *app {
 	for _, e := range a.modules {
 		switch {
 		case !e.enabled:
-			// módulo disabled: no registra nada ni degrada readyz
+			// disabled module: it registers nothing and does not degrade readyz
 		case e.mod == nil:
 			for _, ns := range failedNamespaces[e.name] {
 				a.mux.Handle(ns, commonmodule.Unavailable(e.name))
@@ -294,13 +295,13 @@ func (a *app) wireExtensions(log *slog.Logger) {
 
 	conf, err := extensions.LoadConf(confPath)
 	if err != nil {
-		log.Warn("panel de extensiones deshabilitado", "err", err, "conf", confPath)
+		log.Warn("extensions panel disabled", "err", err, "conf", confPath)
 		return
 	}
 	gh := extensions.NewGitHub(nil, os.Getenv("GITHUB_TOKEN"), 10*time.Minute)
 	svc := extensions.NewService(appsDir, helper, true, conf, gh)
 	extensions.Register(a.mux, svc, token)
-	log.Info("panel de extensiones activo", "apps", len(conf), "helper", helper)
+	log.Info("extensions panel active", "apps", len(conf), "helper", helper)
 }
 
 func envOr(key, fallback string) string {
@@ -318,7 +319,7 @@ func (a *app) wireNews(gv *commonauth.GraphValidator) *entry {
 	m, err := news.New(a.cfg, a.log, gv)
 	if err != nil {
 		e.setErr(err)
-		a.log.Error("módulo failed en init; su namespace sirve 503 (D3)", "module", "news", "err", err)
+		a.log.Error("module failed on init, its namespace serves 503 (D3)", "module", "news", "err", err)
 		return e
 	}
 	e.mod = m
@@ -333,7 +334,7 @@ func (a *app) wireNotes(gv *commonauth.GraphValidator) *entry {
 	m, err := notes.New(a.cfg, a.log, gv)
 	if err != nil {
 		e.setErr(err)
-		a.log.Error("módulo failed en init; su namespace sirve 503 (D3)", "module", "notes", "err", err)
+		a.log.Error("module failed on init, its namespace serves 503 (D3)", "module", "notes", "err", err)
 		return e
 	}
 	e.mod = m
@@ -348,15 +349,15 @@ func (a *app) wirePhotos(gv *commonauth.GraphValidator) *entry {
 	m, err := photos.New(a.cfg, a.log, gv)
 	if err != nil {
 		e.setErr(err)
-		a.log.Error("módulo failed en init; su namespace sirve 503 (D3)", "module", "photos", "err", err)
+		a.log.Error("module failed on init, its namespace serves 503 (D3)", "module", "photos", "err", err)
 		return e
 	}
 	e.mod = m
 	return e
 }
 
-// healthSummary: mapa name → "ok"|"failed: <err>"|"disabled" y si todos los
-// módulos ENABLED están ok (criterio de readyz).
+// healthSummary: map name -> "ok"|"failed: <err>"|"disabled" and whether all
+// the ENABLED modules are ok (readyz criterion).
 func (a *app) healthSummary() (map[string]string, bool) {
 	mods := make(map[string]string, len(a.modules))
 	allOK := true
@@ -370,8 +371,8 @@ func (a *app) healthSummary() (map[string]string, bool) {
 	return mods, allOK
 }
 
-// handleHealthz: liveness + estado por módulo (SPEC §4.5). 200 SIEMPRE que
-// el proceso viva, aunque haya módulos failed.
+// handleHealthz: liveness + per module status (SPEC §4.5). 200 ALWAYS as long
+// as the process is alive, even if some modules failed.
 func (a *app) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	mods, _ := a.healthSummary()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -382,8 +383,8 @@ func (a *app) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// handleReadyz: 200 solo si TODOS los módulos enabled están ok; 503 si no
-// (mismo body que healthz).
+// handleReadyz: 200 only if ALL the enabled modules are ok, 503 otherwise (same
+// body as healthz).
 func (a *app) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	mods, ok := a.healthSummary()
 	code := http.StatusOK

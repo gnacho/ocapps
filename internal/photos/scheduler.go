@@ -15,15 +15,16 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
-// scheduler es el planificador de scans multi-owner (H8 §7). Reemplaza al
-// scanLoop global single-tenant:
-//   - Cada request autenticado (Touch en el registry) marca actividad: si el
-//     owner no está escaneándose y su último scan es más viejo que ScanEvery
-//     (o nunca se escaneó) se encola su scan — el índice crece por actividad.
-//   - Un ticker ScanEvery encola los scans de los usuarios sembrados por
-//     config (OCAPPS_PHOTOS_USERS) y de las sesiones Basic duraderas activas.
-//   - La cola tiene dedupe por owner y un semáforo global de 2 scans
-//     concurrentes; cada scan tiene timeout de 2h (como antes).
+// scheduler is the multi-owner scan scheduler (H8 §7). It replaces the global
+// single-tenant scanLoop:
+//   - Every authenticated request (Touch in the registry) marks activity: if
+//     the owner is not being scanned and its last scan is older than ScanEvery
+//     (or it was never scanned) its scan is enqueued - the index grows with
+//     activity.
+//   - A ScanEvery ticker enqueues the scans of the users seeded by config
+//     (OCAPPS_PHOTOS_USERS) and of the active durable Basic sessions.
+//   - The queue dedupes by owner and has a global semaphore of 2 concurrent
+//     scans, each scan has a 2h timeout (as before).
 type scheduler struct {
 	reg    *registry
 	st     *store.Store
@@ -31,10 +32,10 @@ type scheduler struct {
 	exifW  *exif.Worker
 	root   string
 	every  time.Duration
-	tmo    time.Duration // timeout por scan (2h)
-	sweep  time.Duration // periodo de purga de sesiones Bearer >24h
-	maxPar chan struct{} // semáforo global de scans concurrentes
-	hub    *live.Hub     // opcional: aviso de cambios a los clientes conectados
+	tmo    time.Duration // timeout per scan (2h)
+	sweep  time.Duration // purge period of Bearer sessions >24h
+	maxPar chan struct{} // global semaphore of concurrent scans
+	hub    *live.Hub     // optional: change notification to connected clients
 
 	mu       sync.Mutex
 	queued   map[string]bool
@@ -57,12 +58,12 @@ func newScheduler(reg *registry, st *store.Store, exifW *exif.Worker, root strin
 	}
 }
 
-// setHub conecta el scheduler con el canal de avisos: un scan que cambia el
-// índice avisa al owner para que las pestañas abiertas recarguen sin esperar a
-// su siguiente sondeo. Sin hub (tests) simplemente no avisa.
+// setHub connects the scheduler with the notification channel: a scan that
+// changes the index notifies the owner so that the open tabs reload without
+// waiting for their next poll. Without a hub (tests) it simply does not notify.
 func (s *scheduler) setHub(h *live.Hub) { s.hub = h }
 
-// publishIndexChange avisa al owner de que su índice fotográfico ha cambiado.
+// publishIndexChange notifies the owner that its photo index has changed.
 func (s *scheduler) publishIndexChange(owner string) {
 	if s.hub == nil {
 		return
@@ -70,8 +71,9 @@ func (s *scheduler) publishIndexChange(owner string) {
 	s.hub.Publish(owner, live.Event{Topic: photosTopic})
 }
 
-// maybeScan es el hook de actividad (Touch del registry): encola el scan del
-// owner si no hay uno en curso/cola y toca por antigüedad (o es el primero).
+// maybeScan is the activity hook (Touch of the registry): it enqueues the scan
+// of the owner if there is none running or queued and one is due by age (or it
+// is the first one).
 func (s *scheduler) maybeScan(owner string) {
 	s.mu.Lock()
 	due := !s.scanning[owner] && (s.lastScan[owner].IsZero() || time.Since(s.lastScan[owner]) > s.every)
@@ -81,13 +83,13 @@ func (s *scheduler) maybeScan(owner string) {
 	}
 }
 
-// requestScan encola un rescan explícito (POST /api/admin/rescan) solo del
-// owner del request.
+// requestScan enqueues an explicit rescan (POST /api/admin/rescan) of the owner
+// of the request only.
 func (s *scheduler) requestScan(owner string) { s.enqueue(owner) }
 
-// enqueue mete al owner en la cola con dedupe (si ya está encolado o
-// escaneándose, no-op; si la cola está llena, se descarta con log — se
-// reintentará con la próxima actividad o tick).
+// enqueue puts the owner into the queue with dedupe (if it is already queued or
+// being scanned, no-op, if the queue is full it is dropped with a log entry -
+// it will be retried on the next activity or tick).
 func (s *scheduler) enqueue(owner string) {
 	if owner == "" {
 		return
@@ -105,19 +107,20 @@ func (s *scheduler) enqueue(owner string) {
 		s.mu.Lock()
 		delete(s.queued, owner)
 		s.mu.Unlock()
-		s.log.Warn("cola de scans llena: se descarta", "owner", owner)
+		s.log.Warn("scan queue full: dropped", "owner", owner)
 	}
 }
 
-// run es el loop del scheduler: ticker programado (usuarios sembrados +
-// sesiones Basic activas) y purga de sesiones Bearer >24h. Retorna al
-// cancelar ctx.
+// run is the scheduler loop: scheduled ticker (seeded users plus active Basic
+// sessions) and purge of Bearer sessions older than 24h. It returns when ctx is
+// cancelled.
 func (s *scheduler) run(ctx context.Context) {
-	// Segunda línea de defensa de I1 (config inválida en un Module construido
-	// a mano): degrada al default con log, no paniquea en NewTicker(≤0).
+	// Second line of defence of I1 (invalid config in a Module built by
+	// hand): it degrades to the default with a log entry, it does not panic
+	// in NewTicker(<=0).
 	every := s.every
 	if every <= 0 {
-		s.log.Error("OCAPPS_PHOTOS_SCAN_EVERY <= 0 (config inválida); se usa el default",
+		s.log.Error("OCAPPS_PHOTOS_SCAN_EVERY <= 0 (invalid config), using the default",
 			"got", every, "default", config.DefaultScanEvery)
 		every = config.DefaultScanEvery
 	}
@@ -135,14 +138,14 @@ func (s *scheduler) run(ctx context.Context) {
 			}
 		case <-sweeper.C:
 			if n := s.reg.purge(time.Now()); n > 0 {
-				s.log.Info("sesiones Bearer purgadas por inactividad (>24h)", "n", n)
+				s.log.Info("Bearer sessions purged for inactivity (>24h)", "n", n)
 			}
 		case owner := <-s.queue:
 			s.mu.Lock()
 			delete(s.queued, owner)
 			s.mu.Unlock()
 			go func() {
-				s.maxPar <- struct{}{} // semáforo global: 2 scans concurrentes
+				s.maxPar <- struct{}{} // global semaphore: 2 concurrent scans
 				defer func() { <-s.maxPar }()
 				s.scanOne(ctx, owner)
 			}()
@@ -150,10 +153,10 @@ func (s *scheduler) run(ctx context.Context) {
 	}
 }
 
-// scanOne ejecuta el scan + EXIF de un owner con la credencial de su sesión.
-// Ante webdav.ErrUnauthorized: invalida la sesión Bearer y NO cuenta el scan
-// (se reanudará con la próxima actividad del usuario); el índice queda
-// intacto porque el scanner aborta antes del soft-delete (H8 §4).
+// scanOne runs the scan plus EXIF of one owner with the credential of its
+// session. On webdav.ErrUnauthorized: it invalidates the Bearer session and does
+// NOT count the scan (it will resume on the next user activity), the index stays
+// intact because the scanner aborts before the soft-delete (H8 §4).
 func (s *scheduler) scanOne(ctx context.Context, owner string) {
 	s.mu.Lock()
 	if s.scanning[owner] {
@@ -170,7 +173,7 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 
 	sess := s.reg.get(owner)
 	if sess == nil {
-		return // sesión purgada entre el encolado y el inicio
+		return // session purged between enqueueing and starting
 	}
 	sctx, cancel := context.WithTimeout(ctx, s.tmo)
 	defer cancel()
@@ -179,9 +182,9 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 	if err != nil {
 		if errors.Is(err, webdav.ErrUnauthorized) {
 			s.reg.markExpired(owner)
-			s.log.Info("scan pospuesto: token caducado, se reanudará con su próxima actividad", "owner", owner)
+			s.log.Info("scan postponed: expired token, it will resume on the next activity", "owner", owner)
 		} else {
-			s.log.Error("scan: espacio no resoluble", "owner", owner, "err", err)
+			s.log.Error("scan: space not resolvable", "owner", owner, "err", err)
 		}
 		return
 	}
@@ -191,22 +194,22 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 	if err := scanner.ScanSpace(sctx, owner, webdavURL, s.root); err != nil {
 		if errors.Is(err, webdav.ErrUnauthorized) {
 			s.reg.markExpired(owner)
-			s.log.Info("scan pospuesto: token caducado, se reanudará con su próxima actividad", "owner", owner)
-			return // NO cuenta como lastScan: se reintenta con actividad fresca
+			s.log.Info("scan postponed: expired token, it will resume on the next activity", "owner", owner)
+			return // does NOT count as lastScan: it is retried on fresh activity
 		}
 		s.log.Error("scan", "owner", owner, "err", err)
 	}
-	// El scan (o su intento no-auth) cuenta para el ritmo ScanEvery.
+	// The scan (or its non-auth attempt) counts for the ScanEvery rhythm.
 	s.mu.Lock()
 	s.lastScan[owner] = time.Now()
 	s.mu.Unlock()
 
 	if err := s.exifW.Run(sctx, owner, sess.dav); err != nil && errors.Is(err, webdav.ErrUnauthorized) {
 		s.reg.markExpired(owner)
-		s.log.Info("exif pospuesto: token caducado, se reanudará con la próxima actividad", "owner", owner)
+		s.log.Info("exif postponed: expired token, it will resume on the next activity", "owner", owner)
 		return
 	}
-	// El EXIF corrige fechas y GPS de lo recién escaneado: un segundo aviso
-	// para que la pestaña abierta no se quede con la fecha del mtime.
+	// The EXIF fixes dates and GPS of what was just scanned: a second
+	// notification so that the open tab does not keep the mtime date.
 	s.publishIndexChange(owner)
 }

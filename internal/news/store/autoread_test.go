@@ -2,20 +2,20 @@ package store
 
 import "testing"
 
-// TestAutoReadMarksNewItemsRead: los items nuevos cuyo título casa con una
-// regla de auto-marcado se guardan como leídos (unread=0); el resto no.
+// TestAutoReadMarksNewItemsRead: new items whose title matches an
+// auto-mark rule are stored as read (unread=0), the rest are not.
 func TestAutoReadMarksNewItemsRead(t *testing.T) {
 	st, uid := newTestStore(t)
 	f, err := st.CreateFeed(uid, "https://r.example/f", nil, "t", "https://r.example", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.AddAutoRead(uid, f.ID, `(?i)urgente`); err != nil {
+	if _, err := st.AddAutoRead(uid, f.ID, `(?i)urgent`); err != nil {
 		t.Fatal(err)
 	}
 	incoming := []NewItem{
-		{GUID: "a", GUIDHash: "ha", Title: "URGENTE: actualización de seguridad"},
-		{GUID: "b", GUIDHash: "hb", Title: "noticia normal"},
+		{GUID: "a", GUIDHash: "ha", Title: "URGENT: security update"},
+		{GUID: "b", GUIDHash: "hb", Title: "normal story"},
 	}
 	if _, err := st.ReplaceFeedItems(f.ID, uid, "t", "https://r.example", incoming, false); err != nil {
 		t.Fatal(err)
@@ -29,14 +29,14 @@ func TestAutoReadMarksNewItemsRead(t *testing.T) {
 		byGUID[x.GUID] = x.Unread
 	}
 	if byGUID["a"] {
-		t.Error("item 'URGENTE' debería estar marcado como leído por auto-read")
+		t.Error("item 'URGENT' should be marked as read by auto-read")
 	}
 	if !byGUID["b"] {
-		t.Error("item 'noticia normal' no debería estar marcado como leído")
+		t.Error("item 'normal story' should not be marked as read")
 	}
 }
 
-// TestAutoReadRuleScoped: una regla con feed_id concreto no aplica a otro feed.
+// TestAutoReadRuleScoped: a rule with a specific feed_id does not apply to another feed.
 func TestAutoReadRuleScoped(t *testing.T) {
 	st, uid := newTestStore(t)
 	f1, _ := st.CreateFeed(uid, "https://r1.example/f", nil, "t1", "https://r1.example", "", nil)
@@ -50,6 +50,6 @@ func TestAutoReadRuleScoped(t *testing.T) {
 	}
 	got, _ := st.ListItems(ItemFilter{UserID: uid, Type: 0, ID: f2.ID, GetRead: true, BatchSize: -1})
 	if len(got) != 1 || !got[0].Unread {
-		t.Error("la regla de f1 no debería marcar items de f2")
+		t.Error("the f1 rule should not mark f2 items")
 	}
 }

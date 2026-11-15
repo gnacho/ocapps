@@ -9,7 +9,7 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// getFeedScraper: selector CSS de extracción del feed (GET /feeds/{id}/scraper).
+// getFeedScraper: CSS extraction selector of the feed (GET /feeds/{id}/scraper).
 func (s *Server) getFeedScraper(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -22,13 +22,13 @@ func (s *Server) getFeedScraper(w http.ResponseWriter, r *http.Request) {
 	}
 	sel, err := s.store.GetFeedScraperSelector(id)
 	if err != nil {
-		s.logError(w, r, "leer selector del feed", err)
+		s.logError(w, r, "read feed selector", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"scraperSelector": sel})
 }
 
-// setFeedScraper: fija (o quita) el selector CSS (POST /feeds/{id}/scraper).
+// setFeedScraper: sets (or removes) the CSS selector (POST /feeds/{id}/scraper).
 func (s *Server) setFeedScraper(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -54,12 +54,12 @@ func (s *Server) setFeedScraper(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.store.SetFeedScraperSelector(user(r).ID, id, sel); err != nil {
-		s.logError(w, r, "guardar selector del feed", err)
+		s.logError(w, r, "store feed selector", err)
 		return
 	}
 	saved, err := s.store.GetFeedScraperSelector(id)
 	if err != nil {
-		s.logError(w, r, "leer selector guardado", err)
+		s.logError(w, r, "read stored selector", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"scraperSelector": saved})

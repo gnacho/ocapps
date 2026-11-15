@@ -1,17 +1,17 @@
-// Package api — REST consumida por la extensión ocphotos bajo PublicPrefix
-// (SPEC §4.3: el proxy deja de strip-pear /ocphotos-api/). Multi-tenant
-// (H8, SPEC §6.2): cualquier usuario de OpenCloud entra con su Bearer OIDC
-// (validado por el middleware común con política MultiTenant) o con Basic
-// app-password; el *auth.User* resuelto se inyecta en el request context y
-// TODOS los handlers scopean al owner (oc_id) con OwnerFrom. El Bearer
-// estático OCAPPS_PHOTOS_TOKEN está DEPRECATED: solo existe si
-// OCAPPS_PHOTOS_USER está configurado y mapea al owner legacy (el oc_id de
-// ese usuario). Las rutas firmadas de vídeo están exentas (la firma HMAC va
-// en la URL: capability URL, ver videoStream).
+// Package api - REST consumed by the ocphotos extension under PublicPrefix
+// (SPEC §4.3: the proxy no longer strips /ocphotos-api/). Multi-tenant
+// (H8, SPEC §6.2): every OpenCloud user comes in with its OIDC Bearer
+// (validated by the common middleware with the MultiTenant policy) or with a
+// Basic app-password, the resolved *auth.User* is injected into the request
+// context and ALL handlers scope to the owner (oc_id) with OwnerFrom. The
+// static Bearer OCAPPS_PHOTOS_TOKEN is DEPRECATED: it only exists if
+// OCAPPS_PHOTOS_USER is configured and it maps to the legacy owner (the oc_id
+// of that user). The signed video routes are exempt (the HMAC signature goes in
+// the URL: capability URL, see videoStream).
 //
-// Q7 (SPEC §7): los endpoints sin consumidor en la extensión (GET /api/thumb,
-// GET /api/assets/{id}/hls/{file}, GET /api/assets/{id}) se eliminaron en el
-// port; el streaming firmado /api/video/{id} sí se usa y se mantiene.
+// Q7 (SPEC §7): the endpoints without a consumer in the extension (GET
+// /api/thumb, GET /api/assets/{id}/hls/{file}, GET /api/assets/{id}) were removed
+// in the port, the signed streaming /api/video/{id} is used and kept.
 package api
 
 import (
@@ -47,70 +47,73 @@ import (
 	"github.com/gnacho/ocapps/internal/xmp"
 )
 
-// TopicStream es el topic de los eventos del stream: "photos" cuando cambia el
-// índice o los metadatos de un asset, "albums" cuando cambian los álbumes.
+// TopicStream is the topic of the stream events: "photos" when the index or the
+// metadata of an asset changes, "albums" when the albums change.
 const (
 	TopicPhotos = "photos"
 	TopicAlbums = "albums"
 )
 
-// PublicPrefix es el namespace público del módulo photos (SPEC §4.3). Se usa
-// tanto en el registro de rutas como en la firma de URLs de vídeo.
+// PublicPrefix is the public namespace of the photos module (SPEC §4.3). It is
+// used both in the route registration and in the signing of video URLs.
 const PublicPrefix = "/ocphotos-api"
 
-// Config: dependencias de configuración del servidor API.
+// Config: configuration dependencies of the API server.
 type Config struct {
-	Token  string // Bearer estático DEPRECATED (OCAPPS_PHOTOS_TOKEN); "" = desactivado
-	Secret []byte // mediasecret para firmar URLs de vídeo (cred.LoadOrCreateSecret; Q3)
+	Token  string // DEPRECATED static Bearer (OCAPPS_PHOTOS_TOKEN), "" = disabled
+	Secret []byte // mediasecret to sign video URLs (cred.LoadOrCreateSecret, Q3)
 }
 
-// SessionProvider conecta la API con el registry de sesiones en memoria del
-// módulo (H8 §6.2). Lo implementa el módulo photos; la API no conoce el
-// registry para no crear un ciclo de imports.
+// SessionProvider connects the API with the in-memory session registry of the
+// module (H8 §6.2). The photos module implements it, the API does not know the
+// registry to avoid an import cycle.
 type SessionProvider interface {
-	// Touch registra la actividad del owner con la credencial del request
-	// (crea/actualiza su sesión en memoria y dispara scan si toca).
+	// Touch registers the owner activity with the credential of the request
+	// (it creates or updates its in-memory session and triggers a scan when
+	// due).
 	Touch(ctx context.Context, u *auth.User, cred auth.Credential)
-	// DavFor devuelve el cliente DAV de la sesión del owner (nil si no hay).
+	// DavFor returns the DAV client of the owner session (nil if there is none).
 	DavFor(ctx context.Context, owner string) *webdav.Client
-	// SpacePrefix devuelve el path del webDavUrl del espacio personal del
-	// owner (handler de carpetas), resolviéndolo on-demand con la credencial
-	// de su sesión si hace falta. "" si no se puede resolver.
+	// SpacePrefix returns the path of the webDavUrl of the personal space of
+	// the owner (folders handler), resolving it on demand with the credential
+	// of its session when needed. "" if it cannot be resolved.
 	SpacePrefix(ctx context.Context, owner string) string
-	// LegacyOwner resuelve el oc_id del usuario legacy OCAPPS_PHOTOS_USER
-	// (identidad del Bearer estático DEPRECATED). Error si no se puede
-	// resolver (OpenCloud caído, credenciales inválidas).
+	// LegacyOwner resolves the oc_id of the legacy user OCAPPS_PHOTOS_USER
+	// (identity of the DEPRECATED static Bearer). Error if it cannot be
+	// resolved (OpenCloud down, invalid credentials).
 	LegacyOwner(ctx context.Context) (string, error)
-	// RequestScan encola un scan solo del owner del request.
+	// RequestScan enqueues a scan of the owner of the request only.
 	RequestScan(owner string)
 }
 
-// ownerKey es la clave privada del owner en el request context (H8).
+// ownerKey is the private key of the owner in the request context (H8).
 type ownerKey struct{}
 
-// OwnerFrom devuelve el owner (oc_id) autenticado del request, "" si no hay.
+// OwnerFrom returns the authenticated owner (oc_id) of the request, "" if there
+// is none.
 func OwnerFrom(ctx context.Context) string {
 	owner, _ := ctx.Value(ownerKey{}).(string)
 	return owner
 }
 
-// withOwner inyecta el owner en el contexto (lo usa withAuth tras autenticar).
+// withOwner injects the owner into the context (used by withAuth after
+// authenticating).
 func withOwner(ctx context.Context, owner string) context.Context {
 	return context.WithValue(ctx, ownerKey{}, owner)
 }
 
 type Server struct {
 	st        *store.Store
-	exif      *exif.Worker // opcional: cola EXIF bajo demanda
+	exif      *exif.Worker // optional: on-demand EXIF queue
 	exifMu    sync.Mutex
 	exifBusy  map[string]bool
 	thumbs    *thumb.Service
 	geo       *geo.Geocoder
-	validator *auth.GraphValidator // nil = solo token estático
+	validator *auth.GraphValidator // nil = static token only
 	provider  SessionProvider
 	cfg       Config
 	log       *slog.Logger
-	hub       *live.Hub // opcional: sin hub no hay stream (SetHub)
+	hub       *live.Hub // optional: without a hub there is no stream (SetHub)
 }
 
 func New(st *store.Store, th *thumb.Service, gc *geo.Geocoder, v *auth.GraphValidator, sp SessionProvider, cfg Config, log *slog.Logger) *Server {
@@ -118,22 +121,24 @@ func New(st *store.Store, th *thumb.Service, gc *geo.Geocoder, v *auth.GraphVali
 		exifBusy: map[string]bool{}}
 }
 
-// SetExifWorker habilita POST /api/admin/exif. Sin worker la ruta responde 503.
+// SetExifWorker enables POST /api/admin/exif. Without a worker the route
+// responds 503.
 func (s *Server) SetExifWorker(w *exif.Worker) { s.exif = w }
 
-// SetHub habilita GET /api/stream y la publicación de cambios. Sin hub (tests,
-// módulo degradado) el stream responde 503 y las mutaciones no publican nada.
+// SetHub enables GET /api/stream and the publication of changes. Without a hub
+// (tests, degraded module) the stream responds 503 and the mutations publish
+// nothing.
 func (s *Server) SetHub(h *live.Hub) { s.hub = h }
 
-// publish avisa a los streams del owner de que ha cambiado un topic. El id del
-// cliente que hizo el cambio viaja en el evento para que esa pestaña no
-// recargue lo que ya tiene.
+// publish notifies the streams of the owner that a topic has changed. The id of
+// the client that made the change travels in the event so that tab does not
+// reload what it already has.
 func (s *Server) publish(r *http.Request, topics ...string) {
 	s.publishOwner(OwnerFrom(r.Context()), live.ClientID(r), topics...)
 }
 
-// publishOwner publica para un owner concreto (procesos de fondo, p. ej. el
-// EXIF, no tienen request). Sin hub no hace nada.
+// publishOwner publishes for a specific owner (background processes, for
+// example the EXIF one, have no request). Without a hub it does nothing.
 func (s *Server) publishOwner(owner, client string, topics ...string) {
 	if s.hub == nil {
 		return
@@ -143,10 +148,10 @@ func (s *Server) publishOwner(owner, client string, topics ...string) {
 	}
 }
 
-// stream es el canal de invalidaciones (SSE) del owner autenticado.
+// stream is the invalidation channel (SSE) of the authenticated owner.
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if s.hub == nil {
-		http.Error(w, "stream no disponible", http.StatusServiceUnavailable)
+		http.Error(w, "stream not available", http.StatusServiceUnavailable)
 		return
 	}
 	s.hub.Serve(w, r, OwnerFrom(r.Context()))
@@ -184,39 +189,40 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE "+PublicPrefix+"/api/albums/{id}/assets/{assetId}", s.removeFromAlbum)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/admin/rescan", s.rescan)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/admin/exif", s.exifBacklog)
-	// Canal de invalidaciones (SSE): el cliente deja de preguntar cada N
-	// segundos y recarga cuando el servidor le avisa.
+	// Invalidation channel (SSE): the client stops asking every N seconds and
+	// reloads when the server notifies it.
 	mux.HandleFunc("GET "+PublicPrefix+"/api/stream", s.stream)
-	// CORS por fuera de auth: el preflight OPTIONS se responde 204 sin auth
+	// CORS outside auth: the OPTIONS preflight is answered 204 with no auth
 	// (SPEC §4.4).
 	return httpx.CORS(s.withAuth(mux))
 }
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /api/video/ va firmado en la URL (el <video> no puede mandar cabeceras)
+		// /api/video/ is signed in the URL (the <video> element cannot send headers)
 		if strings.HasPrefix(r.URL.Path, PublicPrefix+"/api/video/") {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// 1) token estático propio DEPRECATED (OCAPPS_PHOTOS_TOKEN) — ANTES
-		//    que Graph (§6.2). Solo tiene identidad porque el módulo exige
-		//    OCAPPS_PHOTOS_USER configurado: mapea al oc_id legacy.
+		// 1) own DEPRECATED static token (OCAPPS_PHOTOS_TOKEN) - BEFORE
+		//    Graph (§6.2). It only has an identity because the module
+		//    requires OCAPPS_PHOTOS_USER to be configured: it maps to the
+		//    legacy oc_id.
 		if s.cfg.Token != "" && (r.Header.Get("Authorization") == "Bearer "+s.cfg.Token || r.URL.Query().Get("token") == s.cfg.Token) {
 			owner, err := s.provider.LegacyOwner(r.Context())
 			if err != nil {
-				s.log.Warn("token estático: owner legacy no resoluble", "err", err)
-				httpx.ErrorStatus(w, r, httpx.NewError(http.StatusServiceUnavailable, "owner legacy no disponible", "no se pudo resolver el oc_id del usuario legacy"))
+				s.log.Warn("static token: legacy owner not resolvable", "err", err)
+				httpx.ErrorStatus(w, r, httpx.NewError(http.StatusServiceUnavailable, "legacy owner not available", "could not resolve the oc_id of the legacy user"))
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(withOwner(r.Context(), owner)))
 			return
 		}
-		// 2) credencial del usuario (multi-tenant, H8): Bearer OIDC de la
-		//    sesión web o Basic app-password, validados contra Graph por el
-		//    validador común (caché + singleflight) con política MultiTenant.
-		//    El owner es el oc_id resuelto; Touch marca la actividad (dispara
-		//    el scan del usuario si toca).
+		// 2) user credential (multi-tenant, H8): OIDC Bearer of the web
+		//    session or Basic app-password, validated against Graph by the
+		//    common validator (cache + singleflight) with the MultiTenant
+		//    policy. The owner is the resolved oc_id, Touch marks the
+		//    activity (it triggers the user scan when due).
 		if s.validator != nil {
 			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 				cred := auth.Credential{Bearer: strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))}
@@ -236,14 +242,14 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			}
 		}
 		w.Header().Set("WWW-Authenticate", `Bearer realm="ocphotos"`)
-		httpx.ErrorStatus(w, r, httpx.NewError(http.StatusUnauthorized, "unauthorized", "credenciales inválidas"))
+		httpx.ErrorStatus(w, r, httpx.NewError(http.StatusUnauthorized, "unauthorized", "invalid credentials"))
 	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) { httpx.WriteJSON(w, http.StatusOK, v) }
 
-// storeErr mapea los errores del store a HTTP. Regla IDOR (H8): sql.ErrNoRows
-// (id inexistente O ajeno) → 404 "not found", sin delatar existencia.
+// storeErr maps the store errors to HTTP. IDOR rule (H8): sql.ErrNoRows (id
+// that does not exist OR foreign) -> 404 "not found", without leaking existence.
 func storeErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -252,12 +258,12 @@ func storeErr(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), 500)
 }
 
-// davFor: cliente DAV de la sesión del owner; 503 si aún no hay sesión (el
-// usuario se autenticó pero su sesión no está disponible, caso excepcional).
+// davFor: DAV client of the owner session, 503 if there is no session yet (the
+// user authenticated but its session is not available, an exceptional case).
 func (s *Server) davFor(w http.ResponseWriter, r *http.Request, owner string) *webdav.Client {
 	dav := s.provider.DavFor(r.Context(), owner)
 	if dav == nil {
-		http.Error(w, "sesión del usuario no disponible", http.StatusServiceUnavailable)
+		http.Error(w, "user session not available", http.StatusServiceUnavailable)
 	}
 	return dav
 }
@@ -296,25 +302,25 @@ func (s *Server) assets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"assets": list})
 }
 
-// resolve implementa GET /api/assets/resolve, el destino del flujo "Abrir
-// con" de Files (gnacho/ocphotos #17): el host navega a la ruta de la
-// extensión con driveAliasAndItem (<alias><ruta relativa>, p.ej.
-// "personal$<uuid>/Fotos/a.jpg") y fileId. El path indexado es el href DAV
-// absoluto, "/dav/spaces/" + driveAliasAndItem, así que la resolución es una
-// búsqueda directa por (owner, path) y funciona con los índices existentes
-// (sin rescan). fileId se acepta pero aún no se usa: indexar el oc:id
-// exigiría migración de esquema y rescaneo; queda para cuando el path no
-// baste. No indexado o ajeno → {"asset": null} (200), el estado honesto que
-// la extensión muestra como "Photo not found".
+// resolve implements GET /api/assets/resolve, the destination of the "Open
+// with" flow of Files (gnacho/ocphotos #17): the host navigates to the route of
+// the extension with driveAliasAndItem (<alias><relative path>, for example
+// "personal$<uuid>/Fotos/a.jpg") and fileId. The indexed path is the absolute
+// DAV href, "/dav/spaces/" + driveAliasAndItem, so the resolution is a direct
+// lookup by (owner, path) and works with the existing indexes (no rescan).
+// fileId is accepted but not used yet: indexing the oc:id would require a schema
+// migration and a rescan, it is left for when the path is not enough. Not
+// indexed or foreign -> {"asset": null} (200), the honest state the extension
+// shows as "Photo not found".
 func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	dai := r.URL.Query().Get("driveAliasAndItem")
 	if dai == "" {
-		http.Error(w, "driveAliasAndItem requerido", http.StatusBadRequest)
+		http.Error(w, "driveAliasAndItem required", http.StatusBadRequest)
 		return
 	}
 	unescaped, err := url.PathUnescape(dai)
 	if err != nil {
-		http.Error(w, "driveAliasAndItem inválido", http.StatusBadRequest)
+		http.Error(w, "invalid driveAliasAndItem", http.StatusBadRequest)
 		return
 	}
 	p := unescaped
@@ -336,10 +342,10 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"asset": asset})
 }
 
-// resolveByFileID es el fallback cuando el alias viene en forma
-// <tipo>/<nombre>/<ruta> (OpenCloud 8.0.1): fileId = storageId$spaceId!opaqueId
-// y el path indexado contiene "$<spaceId>/<ruta>", así que se extrae el
-// spaceId y la ruta relativa (YA desescapada) y se busca por ambos.
+// resolveByFileID is the fallback when the alias comes in the form
+// <type>/<name>/<path> (OpenCloud 8.0.1): fileId = storageId$spaceId!opaqueId
+// and the indexed path contains "$<spaceId>/<path>", so the spaceId and the
+// relative path (ALREADY unescaped) are extracted and the lookup uses both.
 // E2E drive.domatix.cloud:
 // personal/uitest/Fotos/IMG_x.jpg + 7d443b01…$7b251a66…!41b22c35…
 func (s *Server) resolveByFileID(r *http.Request, unescaped string) (store.Asset, error) {
@@ -363,9 +369,10 @@ func (s *Server) resolveByFileID(r *http.Request, unescaped string) (store.Asset
 	return s.st.AssetBySpaceItem(r.Context(), OwnerFrom(r.Context()), spaceID, itemPath)
 }
 
-// itemPathFromAlias extrae la ruta relativa del item de un driveAliasAndItem:
-// "personal$uuid/Fotos/x.jpg" -> "Fotos/x.jpg" (1 segmento de alias) y
-// "personal/uitest/Fotos/x.jpg" -> "Fotos/x.jpg" (2 segmentos, sin "$").
+// itemPathFromAlias extracts the relative path of the item from a
+// driveAliasAndItem: "personal$uuid/Fotos/x.jpg" -> "Fotos/x.jpg" (1 alias
+// segment) and "personal/uitest/Fotos/x.jpg" -> "Fotos/x.jpg" (2 segments, no
+// "$").
 func itemPathFromAlias(dai string) string {
 	rest := strings.TrimPrefix(dai, "/")
 	first, rest, found := strings.Cut(rest, "/")
@@ -373,7 +380,7 @@ func itemPathFromAlias(dai string) string {
 		return ""
 	}
 	if !strings.Contains(first, "$") {
-		// forma tipo/nombre: salta también el segmento del nombre
+		// form type/name: skip the name segment too
 		_, rest, found = strings.Cut(rest, "/")
 		if !found {
 			return ""
@@ -417,8 +424,8 @@ func (s *Server) archive(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// duplicates: calcula los hashes perceptuales que falten (acotado) y devuelve
-// los grupos de fotos casi iguales (distancia de Hamming <= 8).
+// duplicates: computes the missing perceptual hashes (bounded) and returns the
+// groups of nearly identical photos (Hamming distance <= 8).
 func (s *Server) duplicates(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	owner := OwnerFrom(ctx)
@@ -452,11 +459,12 @@ func (s *Server) duplicates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"groups": out, "computed": computed, "pending": len(pending) - computed})
 }
 
-// --- Vídeo: URL firmada + streaming progresivo (Range) ---
-// El elemento <video> no puede mandar el Bearer y la CSP del host bloquea blob:,
-// así que se firma la URL (HMAC) y se sirve el original con soporte de Range.
-// El secreto llega por Config.Secret (common/cred.LoadOrCreateSecret): si no se
-// pudo cargar/generar, el módulo arranca failed (Q3 — sin fallback predecible).
+// --- Video: signed URL plus progressive streaming (Range) ---
+// The <video> element cannot send the Bearer and the host CSP blocks blob:, so
+// the URL is signed (HMAC) and the original is served with Range support. The
+// secret comes from Config.Secret (common/cred.LoadOrCreateSecret): if it could
+// not be loaded or generated, the module starts failed (Q3 - no predictable
+// fallback).
 
 func (s *Server) signVideo(id int64, exp int64) string {
 	mac := hmac.New(sha256.New, s.cfg.Secret)
@@ -464,9 +472,9 @@ func (s *Server) signVideo(id int64, exp int64) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// videoURL: firma una URL de streaming para un vídeo (requiere sesión).
-// Verifica ANTES de firmar que el asset es del owner del request (H8): la
-// firma solo se genera tras la comprobación de ownership.
+// videoURL: signs a streaming URL for a video (requires a session). It verifies
+// BEFORE signing that the asset belongs to the owner of the request (H8): the
+// signature is only generated after the ownership check.
 func (s *Server) videoURL(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	a, err := s.st.AssetByID(r.Context(), OwnerFrom(r.Context()), id)
@@ -480,12 +488,12 @@ func (s *Server) videoURL(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// videoStream: sirve el vídeo con soporte de Range (validando la firma).
-// CAPABILITY URL (H8): va sin sesión porque la firma HMAC ES la credencial;
-// esa firma solo pudo generarse en videoURL tras verificar que el asset es
-// del owner que la pidió. Aquí se resuelve el owner desde el id (los ids son
-// globales) para servir con la sesión DAV de ese owner; no se expone nada que
-// la capability no conceda ya.
+// videoStream: serves the video with Range support (validating the signature).
+// CAPABILITY URL (H8): it carries no session because the HMAC signature IS the
+// credential, that signature could only be generated in videoURL after
+// verifying that the asset belongs to the owner that asked for it. Here the
+// owner is resolved from the id (ids are global) to serve with the DAV session
+// of that owner, nothing is exposed that the capability does not grant already.
 func (s *Server) videoStream(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	exp, _ := strconv.ParseInt(r.URL.Query().Get("exp"), 10, 64)
@@ -528,11 +536,12 @@ func (s *Server) videoStream(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, rc)
 }
 
-// computePHash: hash perceptual a partir de la miniatura en caché (no descarga el original).
+// computePHash: perceptual hash from the cached thumbnail (it does not download
+// the original).
 func (s *Server) computePHash(ctx context.Context, owner string, a store.Asset) error {
 	dav := s.provider.DavFor(ctx, owner)
 	if dav == nil {
-		return errors.New("sin sesión DAV del owner")
+		return errors.New("no DAV session for the owner")
 	}
 	file, err := s.thumbs.Get(ctx, dav, a.Path, etagFor(a), 400)
 	if err != nil {
@@ -568,16 +577,16 @@ func (s *Server) thumbHandler(w http.ResponseWriter, r *http.Request) {
 			maxSize = n
 		}
 	}
-	// Política de caché del navegador para miniaturas y pósters: revalidable
-	// (ETag + 304), no immutable. Con "immutable" a 30 días, una corrección
-	// en la GENERACIÓN de miniaturas no llega nunca al cliente: la URL no
-	// cambia y el navegador no pregunta durante 30 días (los Thumbs viejos
-	// quedan mal orientados un mes). Con max-age=86400 + must-revalidate el
-	// navegador revalida a diario y el ETag (derivado de la cache key, con la
-	// misma sal) cambia siempre que la generación cambie: autorreparable.
+	// Browser cache policy for thumbnails and posters: revalidable
+	// (ETag + 304), not immutable. With "immutable" for 30 days, a fix in the
+	// GENERATION of thumbnails never reaches the client: the URL does not
+	// change and the browser does not ask for 30 days (old Thumbs stay badly
+	// oriented for a month). With max-age=86400 + must-revalidate the browser
+	// revalidates daily and the ETag (derived from the cache key, with the same
+	// salt) changes whenever the generation changes: self-healing.
 	const thumbCacheControl = "public, max-age=86400, must-revalidate"
-	// notModified responde 304 con el validador si If-None-Match coincide;
-	// devuelve true cuando ya escribió la respuesta.
+	// notModified responds 304 with the validator if If-None-Match matches,
+	// it returns true when it has already written the response.
 	notModified := func(etag string) bool {
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Cache-Control", thumbCacheControl)
@@ -589,7 +598,7 @@ func (s *Server) thumbHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	originalURL := PublicPrefix + "/api/assets/" + r.PathValue("id") + "/original"
 	if a.MediaType == "video" {
-		// póster del vídeo con ffmpeg; si falla, se sirve el original
+		// video poster with ffmpeg, on failure the original is served
 		etag := thumb.VideoETag(a.Path, etagFor(a), maxSize)
 		if notModified(etag) {
 			return
@@ -616,7 +625,7 @@ func (s *Server) thumbHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// etagFor: clave de caché determinista sin exponer el etag en el JSON de la API.
+// etagFor: deterministic cache key without exposing the etag in the API JSON.
 func etagFor(a store.Asset) string {
 	return strconv.FormatInt(a.TakenAt, 10) + "-" + strconv.FormatInt(a.Size, 10)
 }
@@ -648,7 +657,7 @@ func (s *Server) original(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) onThisDay(w http.ResponseWriter, r *http.Request) {
-	// rango de días alrededor de hoy (±3 por defecto, como Memories)
+	// range of days around today (+-3 by default, like Memories)
 	days := 3
 	if v := r.URL.Query().Get("days"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 30 {
@@ -664,8 +673,8 @@ func (s *Server) onThisDay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"assets": list, "days": days})
 }
 
-// highlights: contenido para la sección "On this day". Intenta, en orden:
-// mismo día (años anteriores), mismo mes (años anteriores), las más antiguas.
+// highlights: content for the "On this day" section. It tries, in order: the
+// same day (previous years), the same month (previous years), the oldest ones.
 func (s *Server) highlights(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	ctx := r.Context()
@@ -704,10 +713,10 @@ func (s *Server) geoHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"assets": list})
 }
 
-// --- Lugares ---
+// --- Places ---
 
-// places: clusters de fotos con GPS, con nombre (geocodificación inversa cacheada).
-// Geocodifica como mucho 3 sitios nuevos por petición (límite de Nominatim).
+// places: clusters of photos with GPS, with a name (cached reverse geocoding).
+// It geocodes at most 3 new places per request (Nominatim limit).
 func (s *Server) places(w http.ResponseWriter, r *http.Request) {
 	owner := OwnerFrom(r.Context())
 	clusters, err := s.st.PlaceClusters(r.Context(), owner, 2)
@@ -731,7 +740,7 @@ func (s *Server) places(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"places": clusters})
 }
 
-// --- Etiquetas ---
+// --- Tags ---
 
 func (s *Server) listTags(w http.ResponseWriter, r *http.Request) {
 	tags, err := s.st.ListTags(r.Context(), OwnerFrom(r.Context()))
@@ -791,48 +800,48 @@ func (s *Server) removeTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// writeXMP proyecta las etiquetas y el favorito del asset a un sidecar .xmp
-// junto a la foto, para que sobrevivan fuera del índice (reindexado, cambio de
-// ruta o pérdida de la BD). El índice sigue siendo la fuente de verdad: el
-// sidecar es estado derivado y su escritura es best effort, así que un fallo
-// solo se registra y nunca tumba la operación principal.
+// writeXMP projects the tags and the favourite flag of the asset into a .xmp
+// sidecar next to the photo, so that they survive outside the index (reindexing,
+// path change or loss of the database). The index is still the source of truth:
+// the sidecar is derived state and its write is best effort, so a failure is
+// only logged and never brings down the main operation.
 func (s *Server) writeXMP(ctx context.Context, owner string, id int64) {
 	a, err := s.st.AssetByID(ctx, owner, id)
 	if err != nil {
-		s.log.Warn("xmp: asset no encontrado", "owner", owner, "id", id, "err", err)
+		s.log.Warn("xmp: asset not found", "owner", owner, "id", id, "err", err)
 		return
 	}
 	tags, err := s.st.AssetTags(ctx, owner, id)
 	if err != nil {
-		s.log.Warn("xmp: no se pudieron leer las etiquetas", "owner", owner, "id", id, "err", err)
+		s.log.Warn("xmp: could not read the tags", "owner", owner, "id", id, "err", err)
 		return
 	}
 	dav := s.provider.DavFor(ctx, owner)
 	if dav == nil {
-		s.log.Warn("xmp: sin sesión DAV para el owner", "owner", owner)
+		s.log.Warn("xmp: no DAV session for the owner", "owner", owner)
 		return
 	}
 	href := xmp.SidecarPath(a.Path)
-	// Contexto propio: la respuesta HTTP puede terminar antes que la escritura.
+	// Own context: the HTTP response may finish before the write.
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if err := dav.Put(cctx, href, "application/rdf+xml", xmp.Build(xmp.Meta{Tags: tags, Favorite: a.IsFavorite})); err != nil {
-		s.log.Warn("xmp: no se pudo escribir el sidecar", "owner", owner, "path", href, "err", err)
+		s.log.Warn("xmp: could not write the sidecar", "owner", owner, "path", href, "err", err)
 	}
 }
 
-// --- Carpetas ---
+// --- Folders ---
 
-// folders: subcarpetas y fotos de una carpeta (derivado del índice del owner).
-// path = ruta relativa dentro del espacio ("" = raíz). El prefijo del espacio
-// sale de la sesión del usuario (webDavUrl cacheada en el registry, H8); si
-// aún no está resuelto se responde con vacío coherente (no 500).
+// folders: subfolders and photos of a folder (derived from the owner index).
+// path = relative path inside the space ("" = root). The prefix of the space
+// comes from the user session (webDavUrl cached in the registry, H8), if it is
+// not resolved yet a coherent empty answer is returned (not a 500).
 func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 	owner := OwnerFrom(r.Context())
 	prefix := s.provider.SpacePrefix(r.Context(), owner)
 	rel := strings.Trim(r.URL.Query().Get("path"), "/")
 	if prefix == "" {
-		// usuario sin espacio resuelto aún: respuesta vacía coherente
+		// user without a resolved space yet: coherent empty answer
 		writeJSON(w, map[string]any{"path": rel, "folders": []store.FolderEntry{}, "assets": []store.Asset{}})
 		return
 	}
@@ -857,7 +866,7 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"path": rel, "folders": folders, "assets": assets})
 }
 
-// --- Álbumes ---
+// --- Albums ---
 
 func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
 	albums, err := s.st.ListAlbums(r.Context(), OwnerFrom(r.Context()))
@@ -950,19 +959,19 @@ func (s *Server) removeFromAlbum(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// exifBacklog procesa la cola de EXIF pendiente del owner en segundo plano.
-// Hace falta porque el worker normal solo corre DESPUES de un scan completo: en
-// bibliotecas grandes los scans se encadenan y la cola no avanza nunca.
+// exifBacklog processes the pending EXIF queue of the owner in the background.
+// It is needed because the normal worker only runs AFTER a full scan: in large
+// libraries the scans chain up and the queue never advances.
 func (s *Server) exifBacklog(w http.ResponseWriter, r *http.Request) {
 	owner := OwnerFrom(r.Context())
 	if s.exif == nil {
-		http.Error(w, "exif no disponible", http.StatusServiceUnavailable)
+		http.Error(w, "exif not available", http.StatusServiceUnavailable)
 		return
 	}
 	s.exifMu.Lock()
 	if s.exifBusy[owner] {
 		s.exifMu.Unlock()
-		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "exif ya en curso"})
+		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "exif already running"})
 		return
 	}
 	if s.exifBusy == nil {
@@ -976,7 +985,7 @@ func (s *Server) exifBacklog(w http.ResponseWriter, r *http.Request) {
 		s.exifMu.Lock()
 		delete(s.exifBusy, owner)
 		s.exifMu.Unlock()
-		http.Error(w, "sesión del usuario no disponible", http.StatusServiceUnavailable)
+		http.Error(w, "user session not available", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -991,14 +1000,15 @@ func (s *Server) exifBacklog(w http.ResponseWriter, r *http.Request) {
 		if err := s.exif.Run(ctx, owner, dav); err != nil {
 			s.log.Warn("exif backlog", "owner", owner, "err", err)
 		}
-		// Las fechas y el GPS cambian: que las pestañas abiertas recarguen.
+		// The dates and the GPS change: let the open tabs reload.
 		s.publishOwner(owner, "", TopicPhotos)
 	}()
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "exif encolado"})
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "exif queued"})
 }
 
-// rescan: encola un scan SOLO del owner del request (H8: ya no hay scan global).
+// rescan: enqueues a scan OF THE OWNER of the request only (H8: there is no
+// global scan any more).
 func (s *Server) rescan(w http.ResponseWriter, r *http.Request) {
 	s.provider.RequestScan(OwnerFrom(r.Context()))
-	writeJSON(w, map[string]any{"status": "rescan encolado"})
+	writeJSON(w, map[string]any{"status": "rescan queued"})
 }

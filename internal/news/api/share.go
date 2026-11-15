@@ -10,7 +10,7 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// createShare: habilita la URL pública de un artículo (POST /items/{id}/share).
+// createShare: enables the public URL of an article (POST /items/{id}/share).
 func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("itemId"))
 	if err != nil || id <= 0 {
@@ -29,14 +29,14 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := s.store.CreateShare(u.ID, id)
 	if err != nil {
-		s.logError(w, r, "crear compartición", err)
+		s.logError(w, r, "create share", err)
 		return
 	}
 	url := Base + "/share/" + token
 	writeJSON(w, http.StatusOK, map[string]any{"share": store.Share{Token: token, ItemID: id, URL: url}})
 }
 
-// deleteShare: deshabilita la URL pública de un artículo (DELETE /items/{id}/share).
+// deleteShare: disables the public URL of an article (DELETE /items/{id}/share).
 func (s *Server) deleteShare(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("itemId"))
 	if err != nil || id <= 0 {
@@ -44,21 +44,21 @@ func (s *Server) deleteShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeleteShare(user(r).ID, id); err != nil {
-		s.logError(w, r, "borrar compartición", err)
+		s.logError(w, r, "delete share", err)
 		return
 	}
 	writeEmpty(w)
 }
 
-// shareRouter: ruta PÚBLICA (sin auth) de la vista de artículo compartido.
-// La seguridad la aporta el token aleatorio; la vista es de solo lectura.
+// shareRouter: PUBLIC route (no auth) of the shared article view.
+// The security comes from the random token, the view is read-only.
 func (s *Server) shareRouter() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /share/{token}", s.sharePage)
 	return mux
 }
 
-// sharePage: HTML mínimo de solo lectura para una URL pública compartida.
+// sharePage: minimal read-only HTML for a public shared URL.
 func (s *Server) sharePage(w http.ResponseWriter, r *http.Request) {
 	it, feed, err := s.store.ItemByShareToken(r.PathValue("token"))
 	if errors.Is(err, store.ErrNotFound) {
@@ -66,7 +66,7 @@ func (s *Server) sharePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.logError(w, r, "leer item compartido", err)
+		s.logError(w, r, "read shared item", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -88,7 +88,7 @@ func (s *Server) sharePage(w http.ResponseWriter, r *http.Request) {
 		author = " · " + author
 	}
 	page := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>%s</title>
 <style>body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;margin:0;background:#f5f5f5;color:#1a1a1a}
 main{max-width:760px;margin:0 auto;padding:32px 20px;background:#fff;min-height:100vh;box-sizing:border-box}

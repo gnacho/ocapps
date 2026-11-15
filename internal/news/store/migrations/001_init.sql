@@ -1,6 +1,6 @@
--- ocnews schema inicial (F0)
--- Multiusuario: feeds/folders/items cuelgan de user_id.
--- items.guid_hash = md5(guid); unicidad por (feed_id, guid_hash).
+-- ocnews initial schema (F0)
+-- Multi-user: feeds/folders/items hang off user_id.
+-- items.guid_hash = md5(guid), uniqueness by (feed_id, guid_hash).
 
 CREATE TABLE users (
   id            INTEGER PRIMARY KEY,

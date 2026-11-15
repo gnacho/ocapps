@@ -19,8 +19,8 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/thumb"
 )
 
-// newThumbTestServer: como newTestServer pero con el servicio de miniaturas
-// apuntando a una caché temporal y el DAV falso indicado.
+// newThumbTestServer: like newTestServer but with the thumbnail service pointing
+// to a temporary cache and the given fake DAV.
 func newThumbTestServer(t *testing.T, dav *webdav.Client) (*Server, *store.Store, *fakeProvider) {
 	t.Helper()
 	th, err := thumb.New(t.TempDir())
@@ -39,7 +39,7 @@ func newThumbTestServer(t *testing.T, dav *webdav.Client) (*Server, *store.Store
 	return s, st, fp
 }
 
-// assetDe: el asset del owner legacy por id (para derivar el etag esperado).
+// assetOf: the asset of the legacy owner by id (to derive the expected etag).
 func assetDe(t *testing.T, st *store.Store, id int64) store.Asset {
 	t.Helper()
 	a, err := st.AssetByID(context.Background(), "legacy-owner", id)
@@ -49,22 +49,22 @@ func assetDe(t *testing.T, st *store.Store, id int64) store.Asset {
 	return a
 }
 
-// TestThumbETagRevalidacion: la miniatura lleva ETag derivado de la cache key
-// (con la sal de generación) y Cache-Control revalidable; un If-None-Match
-// que coincide responde 304 sin cuerpo. Así el navegador refresca las
-// miniaturas cuando el backend cambia la generación (cache-key salt) en
-// vez de quedarse con las viejas hasta 30 días (immutable).
-func TestThumbETagRevalidacion(t *testing.T) {
-	// JPEG pequeño para el DAV falso
+// TestThumbETagRevalidation: the thumbnail carries an ETag derived from the
+// cache key (with the generation salt) and a revalidable Cache-Control, a
+// matching If-None-Match responds 304 with no body. That way the browser
+// refreshes the thumbnails when the backend changes the generation (cache-key
+// salt) instead of keeping the old ones for up to 30 days (immutable).
+func TestThumbETagRevalidation(t *testing.T) {
+	// small JPEG for the fake DAV
 	src := image.NewRGBA(image.Rect(0, 0, 8, 6))
 	src.Set(3, 2, color.RGBA{R: 200, A: 255})
-	var foto bytes.Buffer
-	if err := jpeg.Encode(&foto, src, nil); err != nil {
+	var photo bytes.Buffer
+	if err := jpeg.Encode(&photo, src, nil); err != nil {
 		t.Fatal(err)
 	}
 	davSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write(foto.Bytes())
+		_, _ = w.Write(photo.Bytes())
 	}))
 	defer davSrv.Close()
 
@@ -79,54 +79,54 @@ func TestThumbETagRevalidacion(t *testing.T) {
 	}
 	url := PublicPrefix + "/api/assets/" + strconv.FormatInt(id, 10) + "/thumb?w=400"
 
-	// primera petición: 200 con ETag y política revalidable
+	// first request: 200 with ETag and a revalidable policy
 	rr := do(t, h, http.MethodGet, url, bearer)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("thumb -> %d, quiero 200", rr.Code)
+		t.Fatalf("thumb -> %d, want 200", rr.Code)
 	}
 	etag := rr.Header().Get("ETag")
 	if etag == "" {
-		t.Fatal("thumb sin ETag")
+		t.Fatal("thumb without ETag")
 	}
 	cc := rr.Header().Get("Cache-Control")
 	if !strings.Contains(cc, "must-revalidate") || strings.Contains(cc, "immutable") {
-		t.Fatalf("Cache-Control = %q, quiero revalidable sin immutable", cc)
+		t.Fatalf("Cache-Control = %q, want revalidable without immutable", cc)
 	}
-	// el ETag deriva de la cache key: cambia si cambia la generación
+	// the ETag derives from the cache key: it changes if the generation changes
 	if want := thumb.ETag("/dav/x/a.jpg", etagFor(assetDe(t, st, id)), 400); etag != want {
-		t.Fatalf("ETag = %s, quiero %s (derivado de la cache key)", etag, want)
+		t.Fatalf("ETag = %s, want %s (derived from the cache key)", etag, want)
 	}
 
-	// revalidación: If-None-Match coincidente -> 304 sin cuerpo
+	// revalidation: matching If-None-Match -> 304 with no body
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	req.Header.Set("Authorization", bearer)
 	req.Header.Set("If-None-Match", etag)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotModified {
-		t.Fatalf("revalidación -> %d, quiero 304", rr.Code)
+		t.Fatalf("revalidation -> %d, want 304", rr.Code)
 	}
 	if rr.Body.Len() != 0 {
-		t.Fatalf("304 con cuerpo de %d bytes", rr.Body.Len())
+		t.Fatalf("304 with a body of %d bytes", rr.Body.Len())
 	}
 	if rr.Header().Get("Cache-Control") != cc {
-		t.Fatalf("304 sin Cache-Control: %q", rr.Header().Get("Cache-Control"))
+		t.Fatalf("304 without Cache-Control: %q", rr.Header().Get("Cache-Control"))
 	}
 
-	// If-None-Match distinto -> 200 de nuevo
+	// different If-None-Match -> 200 again
 	req = httptest.NewRequest(http.MethodGet, url, nil)
 	req.Header.Set("Authorization", bearer)
 	req.Header.Set("If-None-Match", `"otro"`)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("If-None-Match distinto -> %d, quiero 200", rr.Code)
+		t.Fatalf("different If-None-Match -> %d, want 200", rr.Code)
 	}
 }
 
-// TestVideoPoster304: el póster de vídeo también responde 304 por ETag, y lo
-// hace ANTES de generar (sin ffmpeg en el entorno de test, sin el chequeo el
-// handler caería al 302 del original).
+// TestVideoPoster304: the video poster also responds 304 by ETag, and it does so
+// BEFORE generating (with no ffmpeg in the test environment, without the check
+// the handler would fall back to the 302 of the original).
 func TestVideoPoster304(t *testing.T) {
 	davSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "video/mp4")
@@ -152,6 +152,6 @@ func TestVideoPoster304(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotModified {
-		t.Fatalf("póster revalidado -> %d, quiero 304 (sin pasar por ffmpeg)", rr.Code)
+		t.Fatalf("poster revalidated -> %d, want 304 (without going through ffmpeg)", rr.Code)
 	}
 }

@@ -20,8 +20,8 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// testCipher: cipher con feedsecret efímero en dir temporal (common/cred;
-// sustituye al antiguo cred.Load de ocnews).
+// testCipher: cipher with an ephemeral feedsecret in a temp dir (common/cred,
+// it replaces the old cred.Load of ocnews).
 func testCipher(t *testing.T) *cred.Cipher {
 	t.Helper()
 	key, err := cred.LoadOrCreateSecret(filepath.Join(t.TempDir(), "feedsecret"))
@@ -41,10 +41,10 @@ const rssBody = `<?xml version="1.0"?><rss version="2.0"><channel>
 
 func itemXML(guid string) string {
 	return `<item><title>` + guid + `</title><link>https://x.example/` + guid +
-		`</link><guid isPermaLink="false">` + guid + `</guid><description>cuerpo ` + guid + `</description></item>`
+		`</link><guid isPermaLink="false">` + guid + `</guid><description>body ` + guid + `</description></item>`
 }
 
-// feedServer sirve un RSS cuyos items crecen al pulsar el botón add.
+// feedServer serves an RSS whose items grow when the add button is pressed.
 func feedServer(t *testing.T) (*httptest.Server, *int32, *int32) {
 	t.Helper()
 	var hits, extra int32
@@ -60,8 +60,8 @@ func feedServer(t *testing.T) (*httptest.Server, *int32, *int32) {
 	return ts, &hits, &extra
 }
 
-// TestSchedulerPicksUpNewItems: feed suscrito con 2 items; el scheduler
-// (tick 100ms) descubre un 3º añadido al feed sin reiniciar el backend.
+// TestSchedulerPicksUpNewItems: feed subscribed with 2 items, the scheduler
+// (100ms tick) discovers a 3rd one added to the feed without restarting the backend.
 func TestSchedulerPicksUpNewItems(t *testing.T) {
 	ts, hits, extra := feedServer(t)
 	dir := t.TempDir()
@@ -74,7 +74,7 @@ func TestSchedulerPicksUpNewItems(t *testing.T) {
 	hash, _ := auth.HashPassword("x")
 	uid, _ := st.CreateUser("u", hash, "u", "user")
 
-	// suscripción con fetch inicial vía API de store (2 items)
+	// subscription with an initial fetch through the store API (2 items)
 	f, items, err := feed.NewHTTPFetcherAllowLocal(5*time.Second).Fetch(context.Background(), ts.URL, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -83,8 +83,8 @@ func TestSchedulerPicksUpNewItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// CreateFeed agenda a +600s (ya fetcheado en la suscripción): forzar
-	// vencimiento para que el ciclo del scheduler lo recoja YA.
+	// CreateFeed schedules at +600s (already fetched on subscription): force
+	// expiry so that the scheduler cycle picks it up NOW.
 	st.SetNextUpdate(created.ID, time.Now().Unix()-1)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -101,10 +101,10 @@ func TestSchedulerPicksUpNewItems(t *testing.T) {
 		<-done
 	}()
 
-	// el scheduler refresca en el primer ciclo; esperamos ≥2 hits
+	// the scheduler refreshes in the first cycle, we wait for >=2 hits
 	waitFor(t, 5*time.Second, func() bool { return atomic.LoadInt32(hits) >= 2 })
 
-	// aparece un item nuevo en el feed origen
+	// a new item shows up in the source feed
 	atomic.AddInt32(extra, 1)
 
 	waitFor(t, 8*time.Second, func() bool {
@@ -113,7 +113,7 @@ func TestSchedulerPicksUpNewItems(t *testing.T) {
 	})
 	n, _ := st.CountItems(store.ItemFilter{UserID: uid, Type: 3, BatchSize: -1})
 	if n != 3 {
-		t.Fatalf("items tras descubrimiento: %d (esperaba 3)", n)
+		t.Fatalf("items after discovery: %d (expected 3)", n)
 	}
 }
 
@@ -126,5 +126,5 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("condición no alcanzada en " + timeout.String())
+	t.Fatal("condition not reached in " + timeout.String())
 }

@@ -24,12 +24,12 @@ func newTestStore(t *testing.T) (*Store, string) {
 func TestSaveOpenRoundtrip(t *testing.T) {
 	s, _ := newTestStore(t)
 
-	apiPath, err := s.Save(7, "nota.txt", strings.NewReader("hola mundo"))
+	apiPath, err := s.Save(7, "note.txt", strings.NewReader("hello world"))
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if apiPath != ".attachments.7/nota.txt" {
-		t.Fatalf("apiPath = %q, want %q", apiPath, ".attachments.7/nota.txt")
+	if apiPath != ".attachments.7/note.txt" {
+		t.Fatalf("apiPath = %q, want %q", apiPath, ".attachments.7/note.txt")
 	}
 
 	rc, size, ct, err := s.Open(7, apiPath)
@@ -42,11 +42,11 @@ func TestSaveOpenRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if string(body) != "hola mundo" {
-		t.Fatalf("body = %q, want %q", body, "hola mundo")
+	if string(body) != "hello world" {
+		t.Fatalf("body = %q, want %q", body, "hello world")
 	}
-	if size != int64(len("hola mundo")) {
-		t.Fatalf("size = %d, want %d", size, len("hola mundo"))
+	if size != int64(len("hello world")) {
+		t.Fatalf("size = %d, want %d", size, len("hello world"))
 	}
 	if !strings.HasPrefix(ct, "text/plain") {
 		t.Fatalf("content type = %q, want text/plain", ct)
@@ -57,7 +57,7 @@ func TestSaveDetectsImageContentType(t *testing.T) {
 	s, _ := newTestStore(t)
 
 	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 64)...)
-	apiPath, err := s.Save(1, "foto.png", bytes.NewReader(png))
+	apiPath, err := s.Save(1, "photo.png", bytes.NewReader(png))
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}

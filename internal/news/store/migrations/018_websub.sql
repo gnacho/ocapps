@@ -1,5 +1,5 @@
--- WebSub (PubSubHubbub) (#44): suscripción a hubs para recibir items en
--- tiempo real. Un feed con rel=hub puede empujar contenido al callback.
+-- WebSub (PubSubHubbub) (#44): subscription to hubs to receive items in
+-- real time. A feed with rel=hub can push content to the callback.
 
 CREATE TABLE IF NOT EXISTS websub (
   feed_id     INTEGER PRIMARY KEY REFERENCES feeds(id) ON DELETE CASCADE,

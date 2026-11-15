@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// GetFeedFilter devuelve el filtro de keywords del feed (vacío si no existe).
+// GetFeedFilter returns the keyword filter of the feed (empty if it does not exist).
 func (s *Store) GetFeedFilter(feedID int64) (*FeedFilter, error) {
 	f := &FeedFilter{FeedID: feedID}
 	err := s.db.QueryRow(
@@ -20,8 +20,8 @@ func (s *Store) GetFeedFilter(feedID int64) (*FeedFilter, error) {
 	return f, nil
 }
 
-// SaveFeedFilter inserta o actualiza el filtro del feed. Si no tiene keywords,
-// lo borra (comportamiento News: filtro vacío = sin filtro).
+// SaveFeedFilter inserts or updates the feed filter. If it has no keywords,
+// it deletes it (News behaviour: empty filter = no filter).
 func (s *Store) SaveFeedFilter(f FeedFilter) error {
 	if !f.HasFilter() {
 		_, err := s.db.Exec(`DELETE FROM feed_filter WHERE feed_id = ?`, f.FeedID)
@@ -38,16 +38,16 @@ func (s *Store) SaveFeedFilter(f FeedFilter) error {
 	return err
 }
 
-// DeleteFeedFilter elimina el filtro del feed.
+// DeleteFeedFilter deletes the feed filter.
 func (s *Store) DeleteFeedFilter(feedID int64) error {
 	_, err := s.db.Exec(`DELETE FROM feed_filter WHERE feed_id = ?`, feedID)
 	return err
 }
 
-// ReapplyFeedFilter re-evalúa el filtro (keywords + reglas regex) sobre los
-// items ya guardados del feed: fija filtered=1 para los que casen y
-// filtered=0 para los que no. Sin nada configurado, descongela todos los
-// items del feed. Devuelve el número de items marcados como filtered.
+// ReapplyFeedFilter re-evaluates the filter (keywords + regex rules) over the
+// items already stored for the feed: it sets filtered=1 for those that match and
+// filtered=0 for those that do not. With nothing configured, it unfreezes all
+// the items of the feed. It returns the number of items flagged as filtered.
 func (s *Store) ReapplyFeedFilter(feedID int64, f FeedFilter) (int64, error) {
 	userID, err := s.FeedUserID(feedID)
 	if err != nil {
@@ -105,8 +105,8 @@ func (s *Store) ReapplyFeedFilter(feedID int64, f FeedFilter) (int64, error) {
 	return marked, nil
 }
 
-// ReapplyGlobalRules re-evalúa las reglas globales del usuario sobre todos
-// sus items (tras cambiar las globales). Devuelve el número de items marcados.
+// ReapplyGlobalRules re-evaluates the user global rules over all
+// their items (after changing the global ones). It returns the number of flagged items.
 func (s *Store) ReapplyGlobalRules(userID int64) (int64, error) {
 	fn, err := s.itemFilter(userID, 0, &FeedFilter{})
 	if err != nil {
@@ -160,10 +160,10 @@ func (s *Store) ReapplyGlobalRules(userID int64) (int64, error) {
 	return marked, nil
 }
 
-// ApplyFilterToItems marca los items que casan con el filtro del feed o las
-// reglas globales/feed, en memoria. Debe llamarse ANTES de abrir una
-// transacción (el Store usa una única conexión: consultar el filtro dentro de
-// una tx causaría deadlock).
+// ApplyFilterToItems flags the items that match the feed filter or the
+// global/feed rules, in memory. It must be called BEFORE opening a
+// transaction (the Store uses a single connection: querying the filter inside
+// a tx would cause a deadlock).
 func (s *Store) ApplyFilterToItems(feedID int64, items []NewItem) error {
 	userID, err := s.FeedUserID(feedID)
 	if err != nil {
@@ -190,7 +190,7 @@ func (s *Store) ApplyFilterToItems(feedID int64, items []NewItem) error {
 	return nil
 }
 
-// containsAnyFold: true si text contiene alguna keyword de la lista CSV (fold).
+// containsAnyFold: true if text contains any keyword of the CSV list (fold).
 func containsAnyFold(text, csv string) bool {
 	tl := strings.ToLower(text)
 	for _, kw := range strings.Split(csv, ",") {
@@ -202,7 +202,7 @@ func containsAnyFold(text, csv string) bool {
 	return false
 }
 
-// plain quita las etiquetas HTML del cuerpo para matchear sobre texto plano.
+// plain strips the HTML tags from the body to match on plain text.
 func plain(html string) string {
 	var b strings.Builder
 	inTag := false

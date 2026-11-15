@@ -1,4 +1,4 @@
-// Package index — scanner WebDAV incremental sobre OpenCloud.
+// Package index - incremental WebDAV scanner over OpenCloud.
 package index
 
 import (
@@ -17,29 +17,29 @@ import (
 )
 
 type Scanner struct {
-	dav   *webdav.Client // cliente DE UN USUARIO (sesión del owner, H8)
-	opts  webdav.Options // clasificación de medios por extensión (SPEC §2.1)
+	dav   *webdav.Client // client OF ONE USER (owner session, H8)
+	opts  webdav.Options // media classification by extension (SPEC §2.1)
 	store *store.Store
 	log   *slog.Logger
 
-	// OnIndexChange, si no es nil, se llama al terminar un scan que ha
-	// cambiado el índice (altas, bajas o metadatos XMP aplicados). El módulo
-	// lo usa para avisar a los clientes conectados; nil = no avisar.
+	// OnIndexChange, if not nil, is called when a scan that has changed the
+	// index finishes (additions, removals or applied XMP metadata). The module
+	// uses it to notify connected clients, nil = do not notify.
 	OnIndexChange func(owner string)
 }
 
-// NewScanner crea el scanner de UN owner: dav es el cliente de su sesión
-// (Bearer de la web o Basic de app-token, H8). El módulo construye un
-// Scanner por scan con la sesión del owner a escanear.
+// NewScanner creates the scanner for ONE owner: dav is the client of its
+// session (web Bearer or app-token Basic, H8). The module builds one Scanner
+// per scan with the session of the owner to scan.
 func NewScanner(c *webdav.Client, opts webdav.Options, st *store.Store, log *slog.Logger) *Scanner {
 	return &Scanner{dav: c, opts: opts, store: st, log: log}
 }
 
-// resolveHref convierte una referencia de carpeta en href absoluto del
-// servidor para Propfind: un href absoluto (devuelto por un listado anterior)
-// se usa tal cual; una ruta relativa ("Fotos", "" = raíz del espacio) se
-// resuelve contra el path del webDavUrl del espacio. Equivale a la resolución
-// que hacía el antiguo dav.ListFolder.
+// resolveHref turns a folder reference into an absolute server href for
+// Propfind: an absolute href (returned by a previous listing) is used as is, a
+// relative path ("Fotos", "" = space root) is resolved against the path of the
+// webDavUrl of the space. It is equivalent to the resolution the old
+// dav.ListFolder did.
 func resolveHref(webdavURL, folderRef string) (string, error) {
 	if strings.HasPrefix(folderRef, "/") {
 		return folderRef, nil
@@ -53,16 +53,16 @@ func resolveHref(webdavURL, folderRef string) (string, error) {
 			continue
 		}
 		if seg == ".." {
-			return "", fmt.Errorf("path traversal rechazado: %q", folderRef)
+			return "", fmt.Errorf("path traversal rejected: %q", folderRef)
 		}
 		base += "/" + url.PathEscape(seg)
 	}
 	return base + "/", nil
 }
 
-// scanPrefix es el prefijo de los paths que cubre un scan (raíz incluida):
-// acota el soft-delete para que no pueda borrar assets de fuera de la carpeta
-// recorrida (issue #36). Con root vacío cubre el espacio entero.
+// scanPrefix is the prefix of the paths a scan covers (root included): it
+// bounds the soft-delete so that it cannot delete assets outside the folder
+// walked (issue #36). With an empty root it covers the whole space.
 func scanPrefix(webdavURL, root string) string {
 	u, err := url.Parse(webdavURL)
 	if err != nil {
@@ -76,23 +76,24 @@ func scanPrefix(webdavURL, root string) string {
 	return base + "/" + root + "/"
 }
 
-// minFailGuard es el número mínimo de PROPFINDs para que el guard de
-// cordura (>50% fallidos) se active: con menos fallos aislados se completa
-// el scan igual que antes.
+// minFailGuard is the minimum number of PROPFINDs for the sanity guard (>50%
+// failed) to kick in: with fewer isolated failures the scan completes as
+// before.
 const minFailGuard = 10
 
-// ScanSpace recorre el espacio DE UN OWNER desde root (p. ej. "Fotos"; "" =
-// todo el espacio). Incremental por etag: upsert solo de lo cambiado;
-// soft-delete (acotado al owner) de lo desaparecido.
-// 70k fotos ≈ unos pocos miles de PROPFINDs: varios minutos el primer scan,
-// segundos los incrementales (mismo número de peticiones, pero upserts ≈ 0).
+// ScanSpace walks the space OF ONE OWNER from root (for example "Fotos", "" =
+// the whole space). Incremental by etag: upsert only of what changed,
+// soft-delete (scoped to the owner) of what disappeared.
+// 70k photos is roughly a few thousand PROPFINDs: several minutes for the
+// first scan, seconds for the incremental ones (same number of requests, but
+// upserts roughly 0).
 //
-// Protecciones del índice (H8):
-//   - Si cualquier PROPFIND devuelve webdav.ErrUnauthorized el scan ABORTA
-//     propagando el error SIN ejecutar SoftDeleteExcept: con un token
-//     caducado el scan "completaría" con 0 vistos y borraría todo el índice.
-//   - Guard de cordura: si fallan >50% de los PROPFINDs (y hubo ≥10), aborta
-//     igualmente sin soft-delete.
+// Index protections (H8):
+//   - If any PROPFIND returns webdav.ErrUnauthorized the scan ABORTS
+//     propagating the error WITHOUT running SoftDeleteExcept: with an expired
+//     token the scan would "complete" with 0 seen and delete the whole index.
+//   - Sanity guard: if more than 50% of the PROPFINDs fail (and there were at
+//     least 10), it aborts as well with no soft-delete.
 func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) error {
 	start := time.Now()
 	queue := []string{root}
@@ -110,27 +111,28 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 
 		href, err := resolveHref(webdavURL, cur)
 		if err != nil {
-			s.log.Warn("carpeta inválida, se omite", "owner", owner, "path", cur, "err", err)
+			s.log.Warn("invalid folder, skipped", "owner", owner, "path", cur, "err", err)
 			continue
 		}
 		attempts++
 		entries, err := s.dav.Propfind(ctx, href, 1)
 		if err != nil {
 			if errors.Is(err, webdav.ErrUnauthorized) {
-				// credencial caducada: abortar YA y dejar el índice intacto
-				return fmt.Errorf("scan de %q abortado (sin soft-delete): %w", owner, err)
+				// expired credential: abort NOW and leave the index untouched
+				return fmt.Errorf("scan of %q aborted (no soft-delete): %w", owner, err)
 			}
 			failures++
-			s.log.Warn("propfind falló, se omite", "owner", owner, "path", cur, "err", err)
+			s.log.Warn("propfind failed, skipped", "owner", owner, "path", cur, "err", err)
 			continue
 		}
-		// Los sidecars .xmp vienen en el mismo listado que las fotos, así que
-		// saber cuáles hay no cuesta ninguna petición extra. Se descargan por
-		// separado, y solo cuando su etag cambió desde el último scan.
+		// The .xmp sidecars come in the same listing as the photos, so
+		// knowing which ones exist costs no extra request. They are
+		// downloaded separately, and only when their etag changed since the
+		// last scan.
 		sidecars := make(map[string]webdav.Entry)
 		for _, e := range entries {
 			if e.IsDir {
-				queue = append(queue, e.Href) // href absoluto; resolveHref lo usa tal cual
+				queue = append(queue, e.Href) // absolute href, resolveHref uses it as is
 				continue
 			}
 			if strings.HasSuffix(strings.ToLower(e.Href), ".xmp") {
@@ -171,7 +173,7 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 	}
 
 	if attempts >= minFailGuard && failures > attempts/2 {
-		return fmt.Errorf("scan de %q abortado (sin soft-delete): %d/%d PROPFINDs fallidos",
+		return fmt.Errorf("scan of %q aborted (no soft-delete): %d/%d PROPFINDs failed",
 			owner, failures, attempts)
 	}
 
@@ -179,10 +181,10 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 	if err != nil {
 		return err
 	}
-	s.log.Info("scan completado",
-		"owner", owner, "escaneados", scanned, "cambiados", changed, "eliminados", removed,
+	s.log.Info("scan completed",
+		"owner", owner, "scanned", scanned, "changed", changed, "removed", removed,
 		"xmp", xmpApplied,
-		"duracion", time.Since(start).Round(time.Second))
+		"duration", time.Since(start).Round(time.Second))
 	if changed > 0 || removed > 0 || xmpApplied > 0 {
 		if s.OnIndexChange != nil {
 			s.OnIndexChange(owner)
@@ -191,15 +193,15 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 	return nil
 }
 
-// applyXMP proyecta sobre el índice el sidecar XMP de un asset, si cambió desde
-// el último scan. Se aplica de forma conservadora para no destruir metadatos
-// locales con un sidecar ajeno: el favorito solo se toca cuando el paquete trae
-// xmp:Rating, y las etiquetas solo se reemplazan cuando trae al menos una.
-// Devuelve true si ha cambiado algo en el índice.
+// applyXMP projects the XMP sidecar of an asset onto the index, if it changed
+// since the last scan. It is applied conservatively so as not to destroy local
+// metadata with a foreign sidecar: the favourite flag is only touched when the
+// package carries xmp:Rating, and the tags are only replaced when it carries at
+// least one. It returns true if anything changed in the index.
 func (s *Scanner) applyXMP(ctx context.Context, owner string, id int64, sidecar webdav.Entry) bool {
 	prev, err := s.store.SidecarETag(ctx, owner, id)
 	if err != nil {
-		s.log.Warn("xmp: no se pudo leer el etag aplicado", "owner", owner, "id", id, "err", err)
+		s.log.Warn("xmp: could not read the applied etag", "owner", owner, "id", id, "err", err)
 		return false
 	}
 	if prev != "" && prev == sidecar.ETag {
@@ -207,7 +209,7 @@ func (s *Scanner) applyXMP(ctx context.Context, owner string, id int64, sidecar 
 	}
 	data, found, err := s.dav.GetSmall(ctx, sidecar.Href)
 	if err != nil {
-		s.log.Warn("xmp: no se pudo leer el sidecar", "owner", owner, "href", sidecar.Href, "err", err)
+		s.log.Warn("xmp: could not read the sidecar", "owner", owner, "href", sidecar.Href, "err", err)
 		return false
 	}
 	if !found {
@@ -216,13 +218,13 @@ func (s *Scanner) applyXMP(ctx context.Context, owner string, id int64, sidecar 
 	meta := xmp.Extract(data)
 	a, err := s.store.AssetByID(ctx, owner, id)
 	if err != nil {
-		s.log.Warn("xmp: no se pudo leer el asset", "owner", owner, "id", id, "err", err)
+		s.log.Warn("xmp: could not read the asset", "owner", owner, "id", id, "err", err)
 		return false
 	}
 	applied := false
 	if meta.HasRating && a.IsFavorite != meta.Favorite {
 		if err := s.store.SetFavorite(ctx, owner, id, meta.Favorite); err != nil {
-			s.log.Warn("xmp: no se pudo aplicar el favorito", "owner", owner, "id", id, "err", err)
+			s.log.Warn("xmp: could not apply the favourite flag", "owner", owner, "id", id, "err", err)
 			return applied
 		}
 		applied = true
@@ -230,25 +232,25 @@ func (s *Scanner) applyXMP(ctx context.Context, owner string, id int64, sidecar 
 	if len(meta.Tags) > 0 {
 		cur, err := s.store.AssetTags(ctx, owner, id)
 		if err != nil {
-			s.log.Warn("xmp: no se pudieron leer las etiquetas", "owner", owner, "id", id, "err", err)
+			s.log.Warn("xmp: could not read the tags", "owner", owner, "id", id, "err", err)
 			return applied
 		}
 		if !sameTags(cur, meta.Tags) {
 			if err := s.store.SetTags(ctx, owner, id, meta.Tags); err != nil {
-				s.log.Warn("xmp: no se pudieron aplicar las etiquetas", "owner", owner, "id", id, "err", err)
+				s.log.Warn("xmp: could not apply the tags", "owner", owner, "id", id, "err", err)
 				return applied
 			}
 			applied = true
 		}
 	}
 	if err := s.store.SetSidecarETag(ctx, owner, id, sidecar.ETag); err != nil {
-		s.log.Warn("xmp: no se pudo guardar el etag del sidecar", "owner", owner, "id", id, "err", err)
+		s.log.Warn("xmp: could not store the sidecar etag", "owner", owner, "id", id, "err", err)
 	}
 	return applied
 }
 
-// sameTags compara dos conjuntos de etiquetas sin importar el orden (el índice
-// las devuelve ordenadas y el sidecar las trae en su orden de escritura).
+// sameTags compares two sets of tags regardless of order (the index returns
+// them sorted and the sidecar brings them in its writing order).
 func sameTags(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

@@ -10,17 +10,17 @@ func TestRewriteImages(t *testing.T) {
 	in := `<p>hola</p><img src="https://cdn.example/pic.webp?resize=406%2C232&amp;ssl=1" alt="x"><img src="/local.png">`
 	out := e.srv.rewriteImages(in)
 	if !strings.Contains(out, `/img?u=https%3A%2F%2Fcdn.example%2Fpic.webp`) {
-		t.Fatalf("src externo no reescrito con QueryEscape: %s", out)
+		t.Fatalf("external src not rewritten with QueryEscape: %s", out)
 	}
 	if !strings.Contains(out, "&amp;t=") {
-		t.Fatalf("falta el parámetro firmado: %s", out)
+		t.Fatalf("missing the signed parameter: %s", out)
 	}
 	if !strings.Contains(out, `src="/local.png"`) {
-		t.Fatalf("src relativo no debe tocarse: %s", out)
+		t.Fatalf("relative src must not be touched: %s", out)
 	}
-	// round-trip: la u firmada debe coincidir con lo que q.Get() recuperará
+	// round-trip: the signed u must match what q.Get() will recover
 	sig := e.srv.imgs.Sign("https://cdn.example/pic.webp?resize=406%2C232&ssl=1")
 	if !strings.Contains(out, "&amp;t="+sig) {
-		t.Fatalf("la firma debe calcularse sobre la URL original exacta: %s", out)
+		t.Fatalf("the signature must be computed over the exact original URL: %s", out)
 	}
 }

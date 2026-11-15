@@ -8,32 +8,32 @@ func TestNegotiate(t *testing.T) {
 		want         Lang
 	}{
 		{"es", "", ES},
-		{"en", "es-ES,es;q=0.9", EN}, // preferencia explícita manda
+		{"en", "es-ES,es;q=0.9", EN}, // explicit preference wins
 		{"auto", "es-ES,es;q=0.9,en;q=0.8", ES},
 		{"auto", "en-GB,en;q=0.9", EN},
-		{"auto", "fr-FR,de;q=0.9", EN}, // sin match → default
+		{"auto", "fr-FR,de;q=0.9", EN}, // no match -> default
 		{"auto", "", EN},
 		{"", "es", ES},
 		{"auto", "es-ES", ES},
 	}
 	for _, c := range cases {
 		if got := Negotiate(c.user, c.accept); got != c.want {
-			t.Errorf("Negotiate(%q,%q)=%q, esperaba %q", c.user, c.accept, got, c.want)
+			t.Errorf("Negotiate(%q,%q)=%q, expected %q", c.user, c.accept, got, c.want)
 		}
 	}
 }
 
 func TestT(t *testing.T) {
 	if T(ES, "folder_not_found") != "carpeta no encontrada" {
-		t.Error("mensaje ES mal")
+		t.Error("wrong ES message")
 	}
 	if T(EN, "folder_not_found") != "folder not found" {
-		t.Error("mensaje EN mal")
+		t.Error("wrong EN message")
 	}
 	if T(Lang("fr"), "folder_not_found") != "folder not found" {
-		t.Error("idioma desconocido debe caer en EN")
+		t.Error("unknown language must fall back to EN")
 	}
-	if T(ES, "clave_inexistente") != "error interno" {
-		t.Error("clave desconocida debe caer en internal_error")
+	if T(ES, "missing_key") != "error interno" {
+		t.Error("unknown key must fall back to internal_error")
 	}
 }

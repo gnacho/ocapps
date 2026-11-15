@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// SavedSearch: búsqueda persistida del usuario (feed virtual).
+// SavedSearch: persisted user search (virtual feed).
 type SavedSearch struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
@@ -13,7 +13,7 @@ type SavedSearch struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
-// ListSavedSearches devuelve las búsquedas guardadas del usuario.
+// ListSavedSearches returns the user saved searches.
 func (s *Store) ListSavedSearches(userID int64) ([]SavedSearch, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, query, created_at FROM saved_searches WHERE user_id = ? ORDER BY id`,
@@ -33,7 +33,7 @@ func (s *Store) ListSavedSearches(userID int64) ([]SavedSearch, error) {
 	return out, rows.Err()
 }
 
-// GetSavedSearch devuelve una búsqueda guardada del usuario.
+// GetSavedSearch returns a user saved search.
 func (s *Store) GetSavedSearch(userID, searchID int64) (*SavedSearch, error) {
 	var ss SavedSearch
 	err := s.db.QueryRow(
@@ -48,7 +48,7 @@ func (s *Store) GetSavedSearch(userID, searchID int64) (*SavedSearch, error) {
 	return &ss, nil
 }
 
-// CreateSavedSearch guarda una búsqueda nueva del usuario.
+// CreateSavedSearch stores a new user search.
 func (s *Store) CreateSavedSearch(userID int64, name, query string) (*SavedSearch, error) {
 	res, err := s.db.Exec(
 		`INSERT INTO saved_searches (user_id, name, query) VALUES (?, ?, ?)`,
@@ -63,7 +63,7 @@ func (s *Store) CreateSavedSearch(userID int64, name, query string) (*SavedSearc
 	return s.GetSavedSearch(userID, id)
 }
 
-// DeleteSavedSearch borra la búsqueda guardada (ErrNotFound si no existe).
+// DeleteSavedSearch deletes the saved search (ErrNotFound if it does not exist).
 func (s *Store) DeleteSavedSearch(userID, searchID int64) error {
 	res, err := s.db.Exec(`DELETE FROM saved_searches WHERE user_id = ? AND id = ?`, userID, searchID)
 	if err != nil {

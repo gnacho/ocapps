@@ -1,11 +1,11 @@
-// Package webdav: cliente WebDAV/Graph de OpenCloud generalizado (port de
-// ocphotos internal/dav, SPEC §2.1). Patrón validado por PhotoSort: Graph
-// para descubrir espacios, PROPFIND para recorrer, GET/Range para contenido.
-// Auth: usuario + app-token (Basic, New) o access token OIDC (Bearer,
-// NewBearer — multi-tenant de photos, H8 §6.2).
+// Package webdav: generalized OpenCloud WebDAV/Graph client (port of ocphotos
+// internal/dav, SPEC §2.1). Pattern validated by PhotoSort: Graph to discover
+// spaces, PROPFIND to walk, GET/Range for content.
+// Auth: user + app-token (Basic, New) or OIDC access token (Bearer, NewBearer -
+// photos multi-tenant, H8 §6.2).
 //
-// Las listas de extensiones image/video NO viven en el cliente: salen a
-// Options (las consume el scanner de photos, §2.1).
+// The image/video extension lists do NOT live in the client: they come out in
+// Options (consumed by the photos scanner, §2.1).
 package webdav
 
 import (
@@ -23,14 +23,14 @@ import (
 	"time"
 )
 
-// ErrUnauthorized: el servidor rechazó la credencial (401/403). Va envuelto
-// con %w en el error de la operación; el scanner/worker de photos lo
-// distinguen con errors.Is para abortar sin tocar el índice (H8).
-var ErrUnauthorized = errors.New("webdav: credencial rechazada (401/403)")
+// ErrUnauthorized: the server rejected the credential (401/403). It is wrapped
+// with %w in the operation error, the photos scanner/worker tell it apart with
+// errors.Is to abort without touching the index (H8).
+var ErrUnauthorized = errors.New("webdav: credential rejected (401/403)")
 
-// sharedHTTP es el *http.Client de todos los Client: en multi-tenant se
-// crea un Client por sesión de usuario y compartir el transporte evita
-// fugas de pools de conexiones (H8).
+// sharedHTTP is the *http.Client of every Client: in multi-tenant mode one
+// Client is created per user session and sharing the transport avoids leaking
+// connection pools (H8).
 var sharedHTTP = &http.Client{Timeout: 120 * time.Second}
 
 const propfindBody = `<?xml version="1.0"?>
@@ -41,14 +41,14 @@ const propfindBody = `<?xml version="1.0"?>
   </d:prop>
 </d:propfind>`
 
-// Options: clasificación de medios por extensión (minúsculas, con punto).
-// La consume el scanner de photos; el cliente es agnóstico.
+// Options: media classification by extension (lowercase, with a dot).
+// It is consumed by the photos scanner, the client is agnostic.
 type Options struct {
 	ImageExts []string
 	VideoExts []string
 }
 
-// DefaultOptions devuelve las extensiones históricas de ocphotos.
+// DefaultOptions returns the historical ocphotos extensions.
 func DefaultOptions() Options {
 	return Options{
 		ImageExts: []string{".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".tiff", ".dng"},
@@ -68,8 +68,8 @@ func (o Options) sets() (img, vid map[string]bool) {
 	return img, vid
 }
 
-// IsImage/IsVideo/IsMedia clasifican un nombre de fichero o href por su
-// extensión (case-insensitive).
+// IsImage/IsVideo/IsMedia classify a file name or href by its extension
+// (case-insensitive).
 func (o Options) IsImage(name string) bool {
 	img, _ := o.sets()
 	return img[strings.ToLower(path.Ext(name))]
@@ -84,7 +84,7 @@ func (o Options) IsMedia(name string) bool {
 	return o.IsImage(name) || o.IsVideo(name)
 }
 
-// Entry es un recurso DAV devuelto por Propfind.
+// Entry is a DAV resource returned by Propfind.
 type Entry struct {
 	Href         string
 	IsDir        bool
@@ -94,7 +94,7 @@ type Entry struct {
 	ContentType  string
 }
 
-// Drive es un espacio Graph del usuario.
+// Drive is a Graph space of the user.
 type Drive struct {
 	ID        string
 	Name      string
@@ -105,13 +105,13 @@ type Drive struct {
 type Client struct {
 	base string
 	http *http.Client
-	// authorize fija la credencial de la petición (Basic o Bearer). Nunca se
-	// persiste: vive solo en memoria mientras viva el Client (H8 §6.2).
+	// authorize sets the request credential (Basic or Bearer). It is never
+	// persisted: it only lives in memory as long as the Client lives (H8 §6.2).
 	authorize func(req *http.Request)
 }
 
-// New crea el cliente contra la raíz del servidor OpenCloud con auth Basic
-// (usuario + app-token de OpenCloud).
+// New creates the client against the OpenCloud server root with Basic auth
+// (user + OpenCloud app-token).
 func New(baseURL, user, appToken string) *Client {
 	return &Client{
 		base: strings.TrimRight(baseURL, "/"),
@@ -122,9 +122,9 @@ func New(baseURL, user, appToken string) *Client {
 	}
 }
 
-// NewBearer crea el cliente con auth Bearer (access token OIDC de la sesión
-// web de OpenCloud). Es el cliente por usuario del photos multi-tenant (H8):
-// el token solo vive en memoria y caduca con la sesión.
+// NewBearer creates the client with Bearer auth (OIDC access token of the
+// OpenCloud web session). It is the per user client of the multi-tenant photos
+// module (H8): the token only lives in memory and expires with the session.
 func NewBearer(baseURL, token string) *Client {
 	return &Client{
 		base: strings.TrimRight(baseURL, "/"),
@@ -135,8 +135,8 @@ func NewBearer(baseURL, token string) *Client {
 	}
 }
 
-// statusErr envuelve ErrUnauthorized ante un 401/403 para que el llamador
-// (scanner/worker de photos) pueda abortar sin soft-deletes (H8).
+// statusErr wraps ErrUnauthorized on a 401/403 so that the caller
+// (photos scanner/worker) can abort without soft-deletes (H8).
 func statusErr(op, what, status string, code int) error {
 	if code == http.StatusUnauthorized || code == http.StatusForbidden {
 		return fmt.Errorf("%s %s: %s: %w", op, what, status, ErrUnauthorized)
@@ -144,7 +144,7 @@ func statusErr(op, what, status string, code int) error {
 	return fmt.Errorf("%s %s: %s", op, what, status)
 }
 
-// FileURL resuelve un href DAV (ruta absoluta del servidor) a URL completa.
+// FileURL resolves a DAV href (absolute server path) to a full URL.
 func (c *Client) FileURL(href string) string {
 	if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
 		return href
@@ -152,10 +152,10 @@ func (c *Client) FileURL(href string) string {
 	return c.base + escapeHref(href)
 }
 
-// escapeHref escapa los caracteres que rompen una URL pero respeta lo que ya
-// viene percent-encoded de PROPFIND. Sin esto, un fichero llamado
-// "Bug #14_1.png" corta la URL en el '#' (el resto se interpreta como
-// fragmento) y el servidor responde 404: ni miniatura ni EXIF.
+// escapeHref escapes the characters that break a URL but respects what already
+// comes percent-encoded from PROPFIND. Without this, a file named
+// "Bug #14_1.png" cuts the URL at the '#' (the rest is parsed as a fragment)
+// and the server responds 404: neither thumbnail nor EXIF.
 func escapeHref(href string) string {
 	var b strings.Builder
 	b.Grow(len(href) + 8)
@@ -169,7 +169,7 @@ func escapeHref(href string) string {
 		case ' ':
 			b.WriteString("%20")
 		case '%':
-			// '%' ya válido (dos dígitos hex detrás) se deja tal cual
+			// an already valid '%' (two hex digits behind) is left as is
 			if i+2 < len(href) && isHex(href[i+1]) && isHex(href[i+2]) {
 				b.WriteByte(ch)
 			} else {
@@ -186,8 +186,8 @@ func isHex(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
-// MeID devuelve el id del usuario de la credencial del cliente (Basic o
-// Bearer). Photos lo usa para resolver el owner multi-tenant (H8).
+// MeID returns the user id of the client credential (Basic or Bearer). Photos
+// uses it to resolve the multi-tenant owner (H8).
 func (c *Client) MeID(ctx context.Context) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/graph/v1.0/me", nil)
 	c.authorize(req)
@@ -208,8 +208,8 @@ func (c *Client) MeID(ctx context.Context) (string, error) {
 	return out.ID, nil
 }
 
-// ListDrives llama a GET /graph/v1.0/me/drives y devuelve los espacios del
-// usuario.
+// ListDrives calls GET /graph/v1.0/me/drives and returns the spaces of the
+// user.
 func (c *Client) ListDrives(ctx context.Context) ([]Drive, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/graph/v1.0/me/drives", nil)
 	c.authorize(req)
@@ -241,9 +241,9 @@ func (c *Client) ListDrives(ctx context.Context) ([]Drive, error) {
 	return drives, nil
 }
 
-// SpaceFileURL construye la URL interna de un fichero a partir del webDavUrl
-// del espacio y de su ruta relativa ("/Fotos/IMG.heic"), usando la base
-// configurada (permite usar 127.0.0.1 en vez de la URL pública).
+// SpaceFileURL builds the internal URL of a file from the webDavUrl of the
+// space and its relative path ("/Fotos/IMG.heic"), using the configured base
+// (it allows using 127.0.0.1 instead of the public URL).
 func (c *Client) SpaceFileURL(webdavURL, relPath string) string {
 	u, err := url.Parse(webdavURL)
 	if err != nil || u.Path == "" {
@@ -277,16 +277,16 @@ type multistatus struct {
 	} `xml:"response"`
 }
 
-// Propfind hace PROPFIND sobre href con la profundidad pedida (0 = solo el
-// recurso, 1 = un nivel). href es una ruta absoluta del servidor
-// ("/dav/spaces/...") o una URL completa; se excluye la entrada del propio
-// recurso en depth 1 (comportamiento heredado de ListFolder).
+// Propfind runs PROPFIND on href with the requested depth (0 = the resource
+// only, 1 = one level). href is an absolute server path ("/dav/spaces/...") or
+// a full URL, the entry of the resource itself is excluded in depth 1
+// (behavior inherited from ListFolder).
 func (c *Client) Propfind(ctx context.Context, href string, depth int) ([]Entry, error) {
 	if depth < 0 || depth > 1 {
-		return nil, fmt.Errorf("depth no soportado: %d (solo 0 o 1)", depth)
+		return nil, fmt.Errorf("unsupported depth: %d (only 0 or 1)", depth)
 	}
 	if strings.Contains(href, "..") {
-		return nil, fmt.Errorf("path traversal rechazado: %q", href)
+		return nil, fmt.Errorf("path traversal rejected: %q", href)
 	}
 	u := c.FileURL(href)
 
@@ -301,7 +301,7 @@ func (c *Client) Propfind(ctx context.Context, href string, depth int) ([]Entry,
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("recurso no encontrado: %s", href)
+		return nil, fmt.Errorf("resource not found: %s", href)
 	}
 	if resp.StatusCode >= 300 {
 		return nil, statusErr("propfind", href, resp.Status, resp.StatusCode)
@@ -318,7 +318,7 @@ func (c *Client) Propfind(ctx context.Context, href string, depth int) ([]Entry,
 	selfPath, _ := url.Parse(u)
 	entries := make([]Entry, 0, len(ms.Responses))
 	for _, r := range ms.Responses {
-		// excluye la entrada del propio recurso
+		// exclude the entry of the resource itself
 		if selfPath != nil && r.Href == selfPath.Path {
 			continue
 		}
@@ -339,11 +339,12 @@ func (c *Client) Propfind(ctx context.Context, href string, depth int) ([]Entry,
 	return entries, nil
 }
 
-// GetRange descarga n bytes a partir del offset off (p. ej. la cabecera EXIF
-// sin bajar el fichero entero). off=0, n=64Ki descarga los primeros 64 KiB.
+// GetRange downloads n bytes starting at offset off (e.g. the EXIF header
+// without downloading the whole file). off=0, n=64Ki downloads the first
+// 64 KiB.
 func (c *Client) GetRange(ctx context.Context, href string, off, n int64) ([]byte, error) {
 	if off < 0 || n <= 0 {
-		return nil, fmt.Errorf("rango inválido: off=%d n=%d", off, n)
+		return nil, fmt.Errorf("invalid range: off=%d n=%d", off, n)
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.FileURL(href), nil)
 	c.authorize(req)
@@ -359,8 +360,8 @@ func (c *Client) GetRange(ctx context.Context, href string, off, n int64) ([]byt
 	return io.ReadAll(resp.Body)
 }
 
-// DownloadRange hace un GET pasando la cabecera Range (streaming de vídeo).
-// Devuelve el body, las cabeceras y el código de estado (200 o 206).
+// DownloadRange does a GET passing the Range header (video streaming).
+// It returns the body, the headers and the status code (200 or 206).
 func (c *Client) DownloadRange(ctx context.Context, href, rangeHeader string) (io.ReadCloser, http.Header, int, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.FileURL(href), nil)
 	c.authorize(req)
@@ -378,7 +379,7 @@ func (c *Client) DownloadRange(ctx context.Context, href, rangeHeader string) (i
 	return resp.Body, resp.Header, resp.StatusCode, nil
 }
 
-// Download abre un stream del fichero completo (caller cierra el body).
+// Download opens a stream of the whole file (the caller closes the body).
 func (c *Client) Download(ctx context.Context, href string) (io.ReadCloser, string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.FileURL(href), nil)
 	c.authorize(req)
@@ -394,8 +395,8 @@ func (c *Client) Download(ctx context.Context, href string) (io.ReadCloser, stri
 	return resp.Body, ct, nil
 }
 
-// Put escribe un fichero pequeño en WebDAV (sidecars XMP). Sustituye el
-// contenido si ya existe.
+// Put writes a small file to WebDAV (XMP sidecars). It replaces the content if
+// it already exists.
 func (c *Client) Put(ctx context.Context, href, contentType string, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.FileURL(href), bytes.NewReader(body))
 	if err != nil {
@@ -416,8 +417,8 @@ func (c *Client) Put(ctx context.Context, href, contentType string, body []byte)
 	return nil
 }
 
-// GetSmall lee un fichero pequeño completo. Un 404 devuelve found=false sin
-// error: es la respuesta normal cuando el sidecar aún no existe.
+// GetSmall reads a small file completely. A 404 returns found=false without an
+// error: it is the normal response when the sidecar does not exist yet.
 func (c *Client) GetSmall(ctx context.Context, href string) (data []byte, found bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.FileURL(href), nil)
 	if err != nil {

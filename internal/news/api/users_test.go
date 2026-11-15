@@ -9,7 +9,7 @@ import (
 func TestUsersEndpoints(t *testing.T) {
 	e := newTestEnv(t, &fakeFetcher{})
 
-	// me + update de perfil
+	// me + profile update
 	code, body := e.do(t, "GET", "/api/me", e.user, e.pass, nil)
 	if code != 200 || !strings.Contains(string(body), `"role":"admin"`) {
 		t.Fatalf("me: %d %s", code, body)
@@ -19,93 +19,93 @@ func TestUsersEndpoints(t *testing.T) {
 	if code != 200 || !strings.Contains(string(body), `"language":"en"`) {
 		t.Fatalf("update me: %d %s", code, body)
 	}
-	// idioma inválido → 422 con code estable
+	// invalid language -> 422 with a stable code
 	code, body = e.do(t, "PUT", "/api/me", e.user, e.pass, map[string]string{"language": "fr"})
 	if code != 422 || !strings.Contains(string(body), `"code":"invalid_language"`) {
-		t.Fatalf("language inválido: %d %s", code, body)
+		t.Fatalf("invalid language: %d %s", code, body)
 	}
-	// restaurar es para no afectar a TestErrorI18n (BD por test, pero por si acaso)
+	// restore es so as not to affect TestErrorI18n (DB per test, but just in case)
 	e.do(t, "PUT", "/api/me", e.user, e.pass, map[string]string{"language": "es"})
 
-	// cambio de contraseña: actual mal → 422; bien → 204 y login con la nueva
+	// password change: wrong current -> 422, right -> 204 and login with the new one
 	code, _ = e.do(t, "PUT", "/api/me/password", e.user, e.pass,
-		map[string]string{"currentPassword": "malapass", "newPassword": "nueva1234"})
+		map[string]string{"currentPassword": "badpass", "newPassword": "newpass1234"})
 	if code != 422 {
 		t.Fatalf("password actual mal: %d", code)
 	}
 	if code, _ = e.do(t, "PUT", "/api/me/password", e.user, e.pass,
-		map[string]string{"currentPassword": "pass1234", "newPassword": "nueva1234"}); code != 204 {
+		map[string]string{"currentPassword": "pass1234", "newPassword": "newpass1234"}); code != 204 {
 		t.Fatalf("cambio password: %d", code)
 	}
 	if code, _ = e.do(t, "GET", "/api/me", e.user, "pass1234", nil); code != 401 {
-		t.Fatalf("password vieja debe fallar: %d", code)
+		t.Fatalf("old password must fail: %d", code)
 	}
-	if code, _ = e.do(t, "GET", "/api/me", e.user, "nueva1234", nil); code != 200 {
-		t.Fatalf("password nueva debe valer: %d", code)
+	if code, _ = e.do(t, "GET", "/api/me", e.user, "newpass1234", nil); code != 200 {
+		t.Fatalf("new password must be valid: %d", code)
 	}
-	// corta → 422
-	if code, _ = e.do(t, "PUT", "/api/me/password", e.user, "nueva1234",
-		map[string]string{"currentPassword": "nueva1234", "newPassword": "corta"}); code != 422 {
+	// short -> 422
+	if code, _ = e.do(t, "PUT", "/api/me/password", e.user, "newpass1234",
+		map[string]string{"currentPassword": "newpass1234", "newPassword": "short"}); code != 422 {
 		t.Fatalf("password corta: %d", code)
 	}
 
-	// admin crea usuario; duplicado → 409; username inválido → 422
-	code, body = e.do(t, "POST", "/api/users", e.user, "nueva1234",
+	// admin creates a user, duplicate -> 409, invalid username -> 422
+	code, body = e.do(t, "POST", "/api/users", e.user, "newpass1234",
 		map[string]string{"username": "maria", "password": "maria1234", "displayName": "María", "role": "user"})
 	if code != 201 || !strings.Contains(string(body), `"username":"maria"`) {
-		t.Fatalf("crear usuario: %d %s", code, body)
+		t.Fatalf("create user: %d %s", code, body)
 	}
-	if code, _ = e.do(t, "POST", "/api/users", e.user, "nueva1234",
+	if code, _ = e.do(t, "POST", "/api/users", e.user, "newpass1234",
 		map[string]string{"username": "maria", "password": "maria1234"}); code != 409 {
-		t.Fatalf("duplicado: %d", code)
+		t.Fatalf("duplicate: %d", code)
 	}
-	if code, _ = e.do(t, "POST", "/api/users", e.user, "nueva1234",
+	if code, _ = e.do(t, "POST", "/api/users", e.user, "newpass1234",
 		map[string]string{"username": "M", "password": "maria1234"}); code != 422 {
-		t.Fatalf("username inválido: %d", code)
+		t.Fatalf("invalid username: %d", code)
 	}
 
-	// no-admin → 401
-	if code, _ = e.do(t, "GET", "/api/users", "otro", "otra1234", nil); code != 401 {
-		t.Fatalf("users por no-admin: %d", code)
+	// non-admin -> 401
+	if code, _ = e.do(t, "GET", "/api/users", "other", "other1234", nil); code != 401 {
+		t.Fatalf("users by non-admin: %d", code)
 	}
-	// maria no puede gestionar usuarios pero puede usar su perfil
+	// maria cannot manage users but she can use her profile
 	if code, _ = e.do(t, "GET", "/api/me", "maria", "maria1234", nil); code != 200 {
-		t.Fatalf("me de maria: %d", code)
+		t.Fatalf("maria me: %d", code)
 	}
 
 	// list
-	code, body = e.do(t, "GET", "/api/users", e.user, "nueva1234", nil)
+	code, body = e.do(t, "GET", "/api/users", e.user, "newpass1234", nil)
 	if code != 200 || !strings.Contains(string(body), "maria") || !strings.Contains(string(body), "nacho") {
 		t.Fatalf("list users: %d %s", code, body)
 	}
 
-	// update rol de maria a admin y de vuelta; último admin protegido
-	var mariaID int64 = 3 // nacho=1, otro=2, maria=3 en BD nueva por test
-	code, _ = e.do(t, "PUT", fmt.Sprintf("/api/users/%d", mariaID), e.user, "nueva1234",
+	// update maria role to admin and back, last admin protected
+	var mariaID int64 = 3 // nacho=1, other=2, maria=3 in a fresh DB per test
+	code, _ = e.do(t, "PUT", fmt.Sprintf("/api/users/%d", mariaID), e.user, "newpass1234",
 		map[string]string{"role": "admin"})
 	if code != 200 {
 		t.Fatalf("promover maria: %d", code)
 	}
-	code, body = e.do(t, "PUT", fmt.Sprintf("/api/users/%d", mariaID), e.user, "nueva1234",
+	code, body = e.do(t, "PUT", fmt.Sprintf("/api/users/%d", mariaID), e.user, "newpass1234",
 		map[string]string{"role": "user"})
 	if code != 200 {
-		t.Fatalf("degradar maria (hay 2 admins): %d %s", code, body)
+		t.Fatalf("demote maria (there are 2 admins): %d %s", code, body)
 	}
-	// ahora solo queda nacho como admin → degradarse a sí mismo → 409
-	code, _ = e.do(t, "PUT", "/api/users/1", e.user, "nueva1234", map[string]string{"role": "user"})
+	// now only nacho is left as admin -> demote himself -> 409
+	code, _ = e.do(t, "PUT", "/api/users/1", e.user, "newpass1234", map[string]string{"role": "user"})
 	if code != 409 {
-		t.Fatalf("degradar último admin: %d", code)
+		t.Fatalf("demote last admin: %d", code)
 	}
-	// borrarse a sí mismo → 409
-	if code, _ = e.do(t, "DELETE", "/api/users/1", e.user, "nueva1234", nil); code != 409 {
+	// delete himself -> 409
+	if code, _ = e.do(t, "DELETE", "/api/users/1", e.user, "newpass1234", nil); code != 409 {
 		t.Fatalf("self delete: %d", code)
 	}
-	// borrar a maria → 204 y su contenido desaparece
-	if code, _ = e.do(t, "DELETE", fmt.Sprintf("/api/users/%d", mariaID), e.user, "nueva1234", nil); code != 204 {
+	// delete maria -> 204 and her content disappears
+	if code, _ = e.do(t, "DELETE", fmt.Sprintf("/api/users/%d", mariaID), e.user, "newpass1234", nil); code != 204 {
 		t.Fatalf("delete maria: %d", code)
 	}
 	if code, _ = e.do(t, "GET", "/api/me", "maria", "maria1234", nil); code != 401 {
-		t.Fatalf("maria eliminada no debe autenticar: %d", code)
+		t.Fatalf("deleted maria must not authenticate: %d", code)
 	}
 }
 
@@ -119,6 +119,6 @@ func TestRefreshEndpoint(t *testing.T) {
 		t.Fatalf("refresh: %d %s", code, body)
 	}
 	if ff.fetches != before+1 {
-		t.Fatalf("esperaba 1 fetch nuevo, tengo %d", ff.fetches-before)
+		t.Fatalf("expected 1 new fetch, I have %d", ff.fetches-before)
 	}
 }

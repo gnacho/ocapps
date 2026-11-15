@@ -1,8 +1,8 @@
-// Package store: store de dominio del módulo news sobre el *sql.DB común
-// (SPEC §2.1/§5). La apertura (pragmas unificados) y el runner de
-// migraciones viven en internal/common/store; aquí solo quedan el embed de
-// las 18 migraciones de news y las operaciones de dominio. La BD viva llega
-// con user_version=18 → Migrate es no-op (SPEC §5.3).
+// Package store: domain store of the news module on top of the shared *sql.DB
+// (SPEC §2.1/§5). Opening (unified pragmas) and the migrations runner
+// live in internal/common/store, here only the embed of
+// the 18 news migrations and the domain operations remain. The live DB comes
+// with user_version=18 -> Migrate is a no-op (SPEC §5.3).
 package store
 
 import (
@@ -21,9 +21,9 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open abre la SQLite con los pragmas unificados (common/store.Open:
-// busy_timeout 10 s, WAL, synchronous NORMAL, foreign_keys ON) y aplica las
-// migraciones pendientes con el runner común. Un solo escritor por fichero.
+// Open opens SQLite with the unified pragmas (common/store.Open:
+// busy_timeout 10 s, WAL, synchronous NORMAL, foreign_keys ON) and applies the
+// pending migrations with the common runner. A single writer per file.
 func Open(path string) (*Store, error) {
 	db, err := commonstore.Open(path)
 	if err != nil {
@@ -39,7 +39,7 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// Ping verifica que la BD sigue viva (health del módulo, SPEC §4.5).
+// Ping checks that the DB is still alive (module health, SPEC §4.5).
 func (s *Store) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }

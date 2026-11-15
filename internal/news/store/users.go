@@ -17,12 +17,12 @@ func (s *Store) CreateUser(username, passwordHash, displayName, role string) (in
 		`INSERT INTO users (username, password_hash, display_name, role, language, created_at) VALUES (?, ?, ?, ?, 'auto', ?)`,
 		username, passwordHash, displayName, role, now())
 	if err != nil {
-		return 0, fmt.Errorf("crear usuario: %w", err)
+		return 0, fmt.Errorf("create user: %w", err)
 	}
 	return res.LastInsertId()
 }
 
-// CreateUserWithOCID crea un shadow user con identidad OpenCloud canónica.
+// CreateUserWithOCID creates a shadow user with canonical OpenCloud identity.
 func (s *Store) CreateUserWithOCID(username, ocID, passwordHash, displayName, role string) (int64, error) {
 	res, err := s.db.Exec(
 		`INSERT INTO users (username, password_hash, display_name, role, language, oc_id, created_at) VALUES (?, ?, ?, ?, 'auto', ?, ?)`,
@@ -31,14 +31,14 @@ func (s *Store) CreateUserWithOCID(username, ocID, passwordHash, displayName, ro
 		if isUniqueViolation(err) {
 			return 0, ErrConflict
 		}
-		return 0, fmt.Errorf("crear usuario: %w", err)
+		return 0, fmt.Errorf("create user: %w", err)
 	}
 	return res.LastInsertId()
 }
 
-// isUniqueViolation detecta un error de constraint UNIQUE (código 2067) de
-// SQLite, p.ej. un shadow user con un oc_id ya existente por una carrera entre
-// dos requests del mismo usuario OpenCloud.
+// isUniqueViolation detects a UNIQUE constraint error (code 2067) from
+// SQLite, e.g. a shadow user with an oc_id that already exists due to a race between
+// two requests of the same OpenCloud user.
 func isUniqueViolation(err error) bool {
 	var se *sqlite.Error
 	if errors.As(err, &se) {
@@ -47,8 +47,8 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
-// SetUserOCID vincula el oc_id a un usuario existente (p.ej. shadow Basic
-// creado antes del primer login Bearer).
+// SetUserOCID links the oc_id to an existing user (e.g. a Basic shadow
+// created before the first Bearer login).
 func (s *Store) SetUserOCID(userID int64, ocID string) error {
 	_, err := s.db.Exec(`UPDATE users SET oc_id = ? WHERE id = ?`, ocID, userID)
 	return err
@@ -69,14 +69,14 @@ func (s *Store) GetUserByOCID(ocID string) (*User, error) {
 	return u, nil
 }
 
-// SetUserLanguage fija el idioma preferido del usuario (auto|es|en).
+// SetUserLanguage sets the preferred language of the user (auto|es|en).
 func (s *Store) SetUserLanguage(userID int64, language string) error {
 	_, err := s.db.Exec(`UPDATE users SET language = ? WHERE id = ?`, language, userID)
 	return err
 }
 
-// BootstrapUser crea el primer usuario admin si la tabla está vacía.
-// Devuelve true si se creó.
+// BootstrapUser creates the first admin user if the table is empty.
+// It returns true if it was created.
 func (s *Store) BootstrapUser(username, passwordHash string) (bool, error) {
 	var count int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
@@ -104,33 +104,33 @@ func (s *Store) GetUserByUsername(username string) (*User, error) {
 	return u, nil
 }
 
-// BootstrapCount devuelve el número de usuarios (para validar arranque sin credenciales).
+// BootstrapCount returns the number of users (to validate booting without credentials).
 func (s *Store) BootstrapCount(count *int) error {
 	return s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(count)
 }
 
-// TouchLogin actualiza last_login_at con throttle: solo si la última marca
-// es anterior a 60s (evita una escritura por petición en cada GET de la API).
+// TouchLogin updates last_login_at with throttle: only if the last mark
+// is older than 60s (it avoids one write per request on every API GET).
 func (s *Store) TouchLogin(userID int64) {
 	s.db.Exec(`UPDATE users SET last_login_at = ? WHERE id = ? AND last_login_at < ? - 60`,
 		now(), userID, now())
 }
 
-// CountUsers devuelve el número de usuarios totales.
+// CountUsers returns the total number of users.
 func (s *Store) CountUsers() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
 }
 
-// CountAdmins devuelve el número de usuarios con rol admin.
+// CountAdmins returns the number of users with the admin role.
 func (s *Store) CountAdmins() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'admin'`).Scan(&n)
 	return n, err
 }
 
-// ListUsers devuelve todos los usuarios (sin hashes) para admin.
+// ListUsers returns all the users (without hashes) for admin.
 func (s *Store) ListUsers() ([]User, error) {
 	rows, err := s.db.Query(
 		`SELECT id, username, '', display_name, role, language, oc_id, created_at, last_login_at FROM users ORDER BY username`)
@@ -164,20 +164,20 @@ func (s *Store) GetUserByID(id int64) (*User, error) {
 	return u, nil
 }
 
-// UpdateProfile actualiza display_name y language del propio usuario.
+// UpdateProfile updates display_name and language of the user themselves.
 func (s *Store) UpdateProfile(userID int64, displayName, language string) error {
 	_, err := s.db.Exec(`UPDATE users SET display_name = ?, language = ? WHERE id = ?`,
 		displayName, language, userID)
 	return err
 }
 
-// UpdatePassword sustituye el hash de contraseña tras validar la actual.
+// UpdatePassword replaces the password hash after validating the current one.
 func (s *Store) UpdatePassword(userID int64, passwordHash string) error {
 	_, err := s.db.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, userID)
 	return err
 }
 
-// UpdateUserFields (admin): role y language de cualquier usuario.
+// UpdateUserFields (admin): role and language of any user.
 func (s *Store) UpdateUserFields(userID int64, role, language *string) error {
 	if role != nil {
 		if _, err := s.db.Exec(`UPDATE users SET role = ? WHERE id = ?`, *role, userID); err != nil {
@@ -192,8 +192,8 @@ func (s *Store) UpdateUserFields(userID int64, role, language *string) error {
 	return nil
 }
 
-// DeleteUser borra un usuario; los FK ON DELETE CASCADE limpian sus datos.
-// Guard: no borrar el último admin (devuelve ErrConflict).
+// DeleteUser deletes a user, the ON DELETE CASCADE FKs clean their data.
+// Guard: do not delete the last admin (it returns ErrConflict).
 func (s *Store) DeleteUser(userID int64) error {
 	var target User
 	err := s.db.QueryRow(`SELECT role FROM users WHERE id = ?`, userID).Scan(&target.Role)

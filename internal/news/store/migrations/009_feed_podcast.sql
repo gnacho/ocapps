@@ -1,4 +1,4 @@
--- Detección de podcasts: un feed con items que traen enclosures de audio/vídeo
--- se marca is_podcast=1 para listarlo en la vista Podcasts de la extensión.
+-- Podcast detection: a feed with items that bring audio/video enclosures
+-- is flagged is_podcast=1 to list it in the Podcasts view of the extension.
 
 ALTER TABLE feeds ADD COLUMN is_podcast INTEGER NOT NULL DEFAULT 0;

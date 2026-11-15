@@ -1,6 +1,6 @@
-// Package websub: cliente de WebSub (PubSubHubbub) para recibir items de los
-// feeds publicados por hubs (WordPress, Blogger, Medium…) en tiempo real.
-// Suscripción: POST form-urlencoded al hub con hub.mode/hub.topic/hub.callback.
+// Package websub: WebSub (PubSubHubbub) client to receive items from feeds
+// published by hubs (WordPress, Blogger, Medium...) in real time.
+// Subscription: form-urlencoded POST to the hub with hub.mode/hub.topic/hub.callback.
 package websub
 
 import (
@@ -23,17 +23,17 @@ func New() *Client {
 	return &Client{http: netguard.Client(15 * time.Second)}
 }
 
-// NewAllowLocal es como New pero permite loopback. SOLO tests.
+// NewAllowLocal is like New but allows loopback. TESTS only.
 func NewAllowLocal() *Client {
 	return &Client{http: netguard.ClientAllowLocal(15 * time.Second)}
 }
 
-// Subscribe pide al hub la suscripción (o renovación) de un topic.
-// secret permite firmar los deliveries (X-Hub-Signature).
+// Subscribe asks the hub to subscribe to (or renew) a topic.
+// secret allows signing the deliveries (X-Hub-Signature).
 func (c *Client) Subscribe(ctx context.Context, hub, topic, callback, secret string) error {
 	u, err := url.Parse(hub)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("hub inválido: %q", hub)
+		return fmt.Errorf("invalid hub: %q", hub)
 	}
 	form := url.Values{}
 	form.Set("hub.mode", "subscribe")
@@ -49,12 +49,12 @@ func (c *Client) Subscribe(ctx context.Context, hub, topic, callback, secret str
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("suscribir al hub %s: %w", hub, err)
+		return fmt.Errorf("subscribe to hub %s: %w", hub, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("hub %s respondió HTTP %d", hub, resp.StatusCode)
+		return fmt.Errorf("hub %s responded HTTP %d", hub, resp.StatusCode)
 	}
 	return nil
 }

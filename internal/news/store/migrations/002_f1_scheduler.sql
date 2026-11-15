@@ -1,4 +1,4 @@
--- F1: favicon por hash de URL + racha sin items nuevos (scheduler adaptativo)
+-- F1: favicon by URL hash + streak without new items (adaptive scheduler)
 
 ALTER TABLE feeds ADD COLUMN url_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE feeds ADD COLUMN no_new_streak INTEGER NOT NULL DEFAULT 0;

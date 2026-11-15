@@ -15,8 +15,8 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// testCipher: cipher con feedsecret efímero en dir temporal (common/cred;
-// sustituye al antiguo cred.Load de ocnews).
+// testCipher: cipher with an ephemeral feedsecret in a temp dir (common/cred,
+// it replaces the old cred.Load of ocnews).
 func testCipher(t *testing.T) *cred.Cipher {
 	t.Helper()
 	key, err := cred.LoadOrCreateSecret(filepath.Join(t.TempDir(), "feedsecret"))
@@ -101,11 +101,11 @@ func TestRefreshNewItemsResetsStreak(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.NoNewStreak != 0 {
-		t.Errorf("racha debe resetear: %d", got.NoNewStreak)
+		t.Errorf("streak must reset: %d", got.NoNewStreak)
 	}
-	// con novedades → gap base (1m ±20%): entre 48s y 72s
+	// with novelty -> base gap (1m ±20%): between 48s and 72s
 	if g := gapUntil(got.NextUpdateTime); g < 48*time.Second || g > 72*time.Second {
-		t.Errorf("gap con novedades: %v", g)
+		t.Errorf("gap with novelty: %v", g)
 	}
 }
 
@@ -115,22 +115,22 @@ func TestRefreshNoNewItemsDoubles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Refresh(context.Background(), f) // trae items, agenda base
-	ff.items = 0                       // siguiente fetch sin novedades
+	r.Refresh(context.Background(), f) // brings items, schedules base
+	ff.items = 0                       // next fetch without novelty
 
 	got, _ := st.GetFeed(uid, f.ID)
 	res := r.Refresh(context.Background(), got)
 	if res.Inserted != 0 {
-		t.Fatalf("esperaba 0 nuevos: %+v", res)
+		t.Fatalf("expected 0 new: %+v", res)
 	}
 	after, _ := st.GetFeed(uid, f.ID)
 	if after.NoNewStreak != 1 {
-		t.Errorf("racha debe ser 1: %d", after.NoNewStreak)
+		t.Errorf("streak must be 1: %d", after.NoNewStreak)
 	}
-	// sin novedades (racha 1) → 2m ±20%: entre 96s y 144s.
-	// Margen inferior 95s: gapUntil mide tras operaciones (resta latencia real).
+	// without novelty (streak 1) -> 2m ±20%: between 96s and 144s.
+	// Lower margin 95s: gapUntil measures after operations (it subtracts real latency).
 	if g := gapUntil(after.NextUpdateTime); g < 95*time.Second || g > 145*time.Second {
-		t.Errorf("gap sin novedades: %v", g)
+		t.Errorf("gap without novelty: %v", g)
 	}
 }
 
@@ -143,16 +143,16 @@ func TestRefreshErrorBackoff(t *testing.T) {
 	ff.fail = true
 	res := r.Refresh(context.Background(), f)
 	if res.Err == nil {
-		t.Fatal("esperaba error")
+		t.Fatal("expected an error")
 	}
 	got, _ := st.GetFeed(uid, f.ID)
 	if got.UpdateErrorCount != 1 || got.LastUpdateError == nil {
-		t.Fatalf("error no registrado: %+v", got)
+		t.Fatalf("error not recorded: %+v", got)
 	}
-	// 1er error → 2m ±20% (interval 1m << 1). Margen inferior 95s por la
-	// latencia de medición de gapUntil (time.Until tras las operaciones).
+	// 1st error -> 2m ±20% (interval 1m << 1). Lower margin 95s because of the
+	// gapUntil measurement latency (time.Until after the operations).
 	if g := gapUntil(got.NextUpdateTime); g < 95*time.Second || g > 145*time.Second {
-		t.Errorf("gap backoff 1er error: %v", g)
+		t.Errorf("backoff gap 1st error: %v", g)
 	}
 }
 
@@ -173,10 +173,10 @@ func TestRefreshSanitizesBody(t *testing.T) {
 	}
 	body := items[0].Body
 	if strings.Contains(body, "<script") || strings.Contains(body, "onerror") {
-		t.Errorf("body sin sanitizar: %s", body)
+		t.Errorf("unsanitized body: %s", body)
 	}
 	if !strings.Contains(body, "hola") {
-		t.Errorf("contenido legible perdido: %s", body)
+		t.Errorf("readable content lost: %s", body)
 	}
 }
 

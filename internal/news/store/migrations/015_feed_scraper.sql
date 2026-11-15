@@ -1,5 +1,5 @@
--- Extracción completa con selector CSS por feed (#39): cuando el sitio se
--- resiste a readability, el selector del feed se usa como objetivo antes de
--- rendirse.
+-- Full extraction with a per-feed CSS selector (#39): when the site
+-- resists readability, the feed selector is used as the target before
+-- giving up.
 
 ALTER TABLE feeds ADD COLUMN scraper_selector TEXT NOT NULL DEFAULT '';

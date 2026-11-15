@@ -22,7 +22,7 @@ func (s *Server) listFeeds(w http.ResponseWriter, r *http.Request) {
 	u := user(r)
 	feeds, err := s.store.ListFeeds(u.ID)
 	if err != nil {
-		s.logError(w, r, "listar feeds", err)
+		s.logError(w, r, "list feeds", err)
 		return
 	}
 	for i := range feeds {
@@ -33,14 +33,14 @@ func (s *Server) listFeeds(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, feedsResponse{feeds, starred, newest})
 }
 
-// createFeed suscribe un feed nuevo: valida, fetchea (F0: en la propia
-// petición con timeout) y persiste feed+items. Acepta JSON (spec) y
-// form-urlencoded/query (news-android manda @Field form).
+// createFeed subscribes a new feed: it validates, fetches (F0: in the request
+// itself with a timeout) and persists feed+items. It accepts JSON (spec) and
+// form-urlencoded/query (news-android sends @Field form).
 func (s *Server) createFeed(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		URL      string `json:"url"`
 		FolderID *int64 `json:"folderId"`
-		Username string `json:"username"` // Basic auth del feed (spec News + news-android)
+		Username string `json:"username"` // feed Basic auth (News spec + news-android)
 		Password string `json:"password"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -89,17 +89,17 @@ func (s *Server) createFeed(w http.ResponseWriter, r *http.Request) {
 			errorStatus(w, r, http.StatusUnprocessableEntity, "feed_auth_required")
 			return
 		}
-		// spec: 422 si el feed no se puede leer
-		s.log.Warn("fetch de feed nuevo falló", "url", body.URL, "err", err)
+		// spec: 422 if the feed cannot be read
+		s.log.Warn("new feed fetch failed", "url", body.URL, "err", err)
 		errorStatus(w, r, http.StatusUnprocessableEntity, "feed_unreadable")
 		return
 	}
-	f.URL = body.URL // la URL de suscripción manda sobre la declarada en el XML
+	f.URL = body.URL // the subscription URL wins over the one declared in the XML
 	if body.FolderID != nil && *body.FolderID > 0 {
 		f.FolderID = body.FolderID
 	}
 	fullContent := feed.HasFullContent(items)
-	feed.SanitizeItems(items) // los items de la suscripción también se limpian
+	feed.SanitizeItems(items) // the subscription items are cleaned too
 
 	created, err := s.store.CreateFeedFull(user(r).ID, body.URL, f.FolderID, f.Title, f.Link, f.FaviconLink, items, fullContent)
 	if errors.Is(err, store.ErrConflict) {
@@ -107,17 +107,17 @@ func (s *Server) createFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.logError(w, r, "crear feed", err)
+		s.logError(w, r, "create feed", err)
 		return
 	}
 	if body.Username != "" {
 		enc, err := s.cred.Encrypt(body.Password)
 		if err != nil {
-			s.logError(w, r, "cifrar credenciales", err)
+			s.logError(w, r, "encrypt credentials", err)
 			return
 		}
 		if err := s.store.SetFeedCredentials(user(r).ID, created.ID, body.Username, &enc); err != nil {
-			s.logError(w, r, "guardar credenciales", err)
+			s.logError(w, r, "store credentials", err)
 			return
 		}
 		created.AuthUser = body.Username
@@ -137,7 +137,7 @@ func (s *Server) deleteFeed(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteFeed(user(r).ID, id); errors.Is(err, store.ErrNotFound) {
 		errorStatus(w, r, http.StatusNotFound, "feed_not_found")
 	} else if err != nil {
-		s.logError(w, r, "borrar feed", err)
+		s.logError(w, r, "delete feed", err)
 	} else {
 		writeEmpty(w)
 	}
@@ -203,14 +203,14 @@ func (s *Server) markFeedRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.store.MarkAllRead(user(r).ID, maxID, "feed", id); err != nil {
-		s.logError(w, r, "marcar feed leído", err)
+		s.logError(w, r, "mark feed read", err)
 		return
 	}
 	writeEmpty(w)
 }
 
-// updateFeed: updater API oficial (GET /feeds/update?userId=&feedId=).
-// Requiere rol admin; refetchea el feed indicado.
+// updateFeed: official updater API (GET /feeds/update?userId=&feedId=).
+// It requires the admin role, it refetches the given feed.
 func (s *Server) updateFeed(w http.ResponseWriter, r *http.Request) {
 	if user(r).Role != "admin" {
 		errorStatus(w, r, http.StatusUnauthorized, "admin_required")
@@ -234,14 +234,14 @@ func (s *Server) updateFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res := s.refresher.Refresh(r.Context(), f); res.Err != nil {
-		s.logError(w, r, "actualizar feed", res.Err)
+		s.logError(w, r, "update feed", res.Err)
 		return
 	}
 	writeEmpty(w)
 }
 
-// discoverFeed: autodetección de feeds en un sitio (GET /feeds/discover?url=).
-// Ruta propia de la extensión (la spec v1.3 no la define).
+// discoverFeed: feed autodiscovery on a site (GET /feeds/discover?url=).
+// Extension own route (the v1.3 spec does not define it).
 func (s *Server) discoverFeed(w http.ResponseWriter, r *http.Request) {
 	u := r.URL.Query().Get("url")
 	if u == "" {
@@ -257,14 +257,14 @@ func (s *Server) discoverFeed(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	feeds, err := s.fetcher.Discover(ctx, u)
 	if err != nil {
-		s.log.Warn("discover falló", "url", u, "err", err)
+		s.log.Warn("discover failed", "url", u, "err", err)
 		errorStatus(w, r, http.StatusUnprocessableEntity, "no_feeds_found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"feeds": feeds})
 }
 
-// normFolderID normaliza folderId 0 → nil (raíz).
+// normFolderID normalizes folderId 0 -> nil (root).
 func normFolderID(id *int64) *int64 {
 	if id != nil && *id == 0 {
 		return nil
@@ -272,7 +272,7 @@ func normFolderID(id *int64) *int64 {
 	return id
 }
 
-// getFeedRetention devuelve el override de retención del feed (0 = global).
+// getFeedRetention returns the retention override of the feed (0 = global).
 func (s *Server) getFeedRetention(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -285,13 +285,13 @@ func (s *Server) getFeedRetention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.logError(w, r, "leer feed", err)
+		s.logError(w, r, "read feed", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"feedId": id, "retentionDays": f.RetentionDays})
 }
 
-// setFeedRetention fija el override de retención (POST /feeds/{id}/retention).
+// setFeedRetention sets the retention override (POST /feeds/{id}/retention).
 func (s *Server) setFeedRetention(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -313,16 +313,16 @@ func (s *Server) setFeedRetention(w http.ResponseWriter, r *http.Request) {
 		errorStatus(w, r, http.StatusNotFound, "feed_not_found")
 		return
 	} else if err != nil {
-		s.logError(w, r, "fijar retención", err)
+		s.logError(w, r, "set retention", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"feedId": id, "retentionDays": body.RetentionDays})
 }
 
-// setFeedCredentials fija o quita la auth Basic del feed
-// (POST /feeds/{id}/credentials). Ambos campos vacíos = quitar; password
-// vacío con username = conservar la contraseña actual. La contraseña se
-// guarda cifrada (internal/cred) y NUNCA se devuelve por la API.
+// setFeedCredentials sets or removes the feed Basic auth
+// (POST /feeds/{id}/credentials). Both fields empty = remove, empty
+// password with a username = keep the current password. The password is
+// stored encrypted (internal/cred) and NEVER returned by the API.
 func (s *Server) setFeedCredentials(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "feedId")
 	if !ok {
@@ -346,7 +346,7 @@ func (s *Server) setFeedCredentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			s.logError(w, r, "quitar credenciales", err)
+			s.logError(w, r, "remove credentials", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"feedId": id, "authUser": ""})
@@ -360,7 +360,7 @@ func (s *Server) setFeedCredentials(w http.ResponseWriter, r *http.Request) {
 	if body.Password != "" {
 		enc, err := s.cred.Encrypt(body.Password)
 		if err != nil {
-			s.logError(w, r, "cifrar credenciales", err)
+			s.logError(w, r, "encrypt credentials", err)
 			return
 		}
 		passEnc = &enc
@@ -369,7 +369,7 @@ func (s *Server) setFeedCredentials(w http.ResponseWriter, r *http.Request) {
 		errorStatus(w, r, http.StatusNotFound, "feed_not_found")
 		return
 	} else if err != nil {
-		s.logError(w, r, "guardar credenciales", err)
+		s.logError(w, r, "store credentials", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"feedId": id, "authUser": body.Username})

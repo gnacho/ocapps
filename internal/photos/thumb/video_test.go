@@ -14,18 +14,18 @@ import (
 	"github.com/gnacho/ocapps/internal/common/webdav"
 )
 
-// TestVideoPoster genera un vídeo de prueba con ffmpeg, lo sirve por HTTP y
-// comprueba que VideoPoster extrae un fotograma escalado como JPEG.
+// TestVideoPoster generates a test video with ffmpeg, serves it over HTTP and
+// checks that VideoPoster extracts a scaled frame as JPEG.
 func TestVideoPoster(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg no instalado")
+		t.Skip("ffmpeg not installed")
 	}
 	dir := t.TempDir()
 	vid := filepath.Join(dir, "v.mp4")
 	cmd := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
 		"-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", vid)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("generar vídeo: %v (%s)", err, out)
+		t.Fatalf("generate video: %v (%s)", err, out)
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,13 +49,13 @@ func TestVideoPoster(t *testing.T) {
 	defer f.Close()
 	img, _, err := image.Decode(f)
 	if err != nil {
-		t.Fatalf("el póster no es una imagen: %v", err)
+		t.Fatalf("poster is not an image: %v", err)
 	}
 	if b := img.Bounds(); b.Dx() > 200 {
-		t.Fatalf("no se escaló: %dx%d", b.Dx(), b.Dy())
+		t.Fatalf("not scaled: %dx%d", b.Dx(), b.Dy())
 	}
-	// segunda llamada: cacheado
+	// second call: cached
 	if out2, err := svc.VideoPoster(context.Background(), dav, "/v.mp4", "e1", 200); err != nil || out2 != out {
-		t.Fatalf("caché del póster: %v %v", out2, err)
+		t.Fatalf("poster cache: %v %v", out2, err)
 	}
 }

@@ -22,10 +22,10 @@ import (
 	"github.com/rwcarlsen/goexif/exif"
 )
 
-// --- construcción de TIFF EXIF en memoria (sin fixtures binarios) ---
+// --- in-memory EXIF TIFF construction (no binary fixtures) ---
 
-// tifTag es una entrada de un IFD; con ifd >= 0 el valor es un pointer al
-// sub-IFD i-ésimo (el builder resuelve el offset absoluto).
+// tifTag is an IFD entry, with ifd >= 0 the value is a pointer to the i-th
+// sub-IFD (the builder resolves the absolute offset).
 type tifTag struct {
 	tag  uint16
 	typ  uint16
@@ -35,13 +35,13 @@ type tifTag struct {
 
 var tifElemSize = map[uint16]int{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}
 
-// buildTiff serializa IFDs en un TIFF EXIF little-endian (II*, 42). ifds[0]
-// es el IFD0; las entradas quedan ordenadas por tag y los valores que no
-// caben en los 4 bytes del IFD van a un área tras la tabla, alineada a 2.
-// Sin datos de imagen: solo la estructura de directorios que lee goexif.
+// buildTiff serialises IFDs into a little-endian EXIF TIFF (II*, 42). ifds[0]
+// is IFD0, the entries end up sorted by tag and the values that do not fit in
+// the 4 bytes of the IFD go to an area after the table, aligned to 2.
+// No image data: only the directory structure that goexif reads.
 func buildTiff(ifds ...[]tifTag) []byte {
 	offs := make([]int, len(ifds))
-	pos := 8 // tras la cabecera II*42 + offset del IFD0
+	pos := 8 // after the II*42 header plus the IFD0 offset
 	sizes := make([]int, len(ifds))
 	for i, tags := range ifds {
 		vals := 0
@@ -67,13 +67,13 @@ func buildTiff(ifds ...[]tifTag) []byte {
 		sorted := append([]tifTag(nil), tags...)
 		sort.Slice(sorted, func(a, b int) bool { return sorted[a].tag < sorted[b].tag })
 		must(binary.Write(out, binary.LittleEndian, uint16(len(sorted))))
-		// área de valores de este IFD, justo tras su tabla
+		// value area of this IFD, right after its table
 		valAt := offs[i] + 2 + len(sorted)*12 + 4
 		vals := &bytes.Buffer{}
 		for _, t := range sorted {
 			typ, data := t.typ, t.data
 			if t.ifd >= 0 {
-				// pointer a sub-IFD: LONG con count 1
+				// pointer to a sub-IFD: LONG with count 1
 				typ, data = 4, make([]byte, 4)
 				binary.LittleEndian.PutUint32(data, uint32(offs[t.ifd]))
 			}
@@ -81,7 +81,7 @@ func buildTiff(ifds ...[]tifTag) []byte {
 			must(binary.Write(out, binary.LittleEndian, typ))
 			must(binary.Write(out, binary.LittleEndian, uint32(len(data)/tifElemSize[typ])))
 			if len(data) <= 4 {
-				// en línea: los bytes van al principio del campo
+				// inline: the bytes go at the start of the field
 				var f [4]byte
 				copy(f[:], data)
 				out.Write(f[:])
@@ -93,7 +93,7 @@ func buildTiff(ifds ...[]tifTag) []byte {
 				vals.WriteByte(0)
 			}
 		}
-		must(binary.Write(out, binary.LittleEndian, uint32(0))) // sin IFD siguiente
+		must(binary.Write(out, binary.LittleEndian, uint32(0))) // no next IFD
 		out.Write(vals.Bytes())
 	}
 	return out.Bytes()
@@ -101,7 +101,7 @@ func buildTiff(ifds ...[]tifTag) []byte {
 
 func ascii(s string) []byte { return append([]byte(s), 0) }
 
-// ascii20 serializa un DateTime EXIF ("YYYY:MM:DD HH:MM:SS\0", 20 bytes).
+// ascii20 serialises an EXIF DateTime ("YYYY:MM:DD HH:MM:SS\0", 20 bytes).
 func ascii20(s string) []byte {
 	b := make([]byte, 20)
 	copy(b, s)
@@ -125,7 +125,7 @@ func rat3(a, b, c uint32) []byte {
 	return append(rat(a, 1), append(rat(b, 1), rat(c, 1)...)...)
 }
 
-// tiffFixture son los campos que rellena el worker en el EXIF sintético.
+// tiffFixture holds the fields the worker fills in the synthetic EXIF.
 type tiffFixture struct {
 	Make, Model            string
 	Orientation            int
@@ -176,8 +176,8 @@ var exifFix = tiffFixture{
 	LonDeg: 122, LonMin: 25, LonSec: 12, LonRef: "W", // -122.42
 }
 
-// app1Exif envuelve el TIFF en un segmento JPEG APP1 ("Exif\0\0" + payload;
-// la longitud del segmento va en big-endian, como manda el JPEG).
+// app1Exif wraps the TIFF in a JPEG APP1 segment ("Exif\0\0" plus payload,
+// the segment length goes in big-endian, as JPEG mandates).
 func app1Exif(tiff []byte) []byte {
 	body := append([]byte("Exif\x00\x00"), tiff...)
 	seg := []byte{0xFF, 0xE1, 0, 0}
@@ -185,7 +185,7 @@ func app1Exif(tiff []byte) []byte {
 	return append(seg, body...)
 }
 
-// resOfAsset reconstruye el ExifResult desde la fila del store.
+// resOfAsset rebuilds the ExifResult from the store row.
 func resOfAsset(a store.Asset) store.ExifResult {
 	res := store.ExifResult{
 		Camera: a.Camera, ISO: a.ISO,
@@ -202,46 +202,46 @@ func resOfAsset(a store.Asset) store.ExifResult {
 func assertFields(t *testing.T, res store.ExifResult) {
 	t.Helper()
 	if res.Camera != "Go TestCam" {
-		t.Errorf("Camera = %q, quiero %q", res.Camera, "Go TestCam")
+		t.Errorf("Camera = %q, want %q", res.Camera, "Go TestCam")
 	}
 	if res.ISO != 200 {
-		t.Errorf("ISO = %d, quiero 200", res.ISO)
+		t.Errorf("ISO = %d, want 200", res.ISO)
 	}
 	if res.Aperture != "f/1.4" {
-		t.Errorf("Aperture = %q, quiero f/1.4", res.Aperture)
+		t.Errorf("Aperture = %q, want f/1.4", res.Aperture)
 	}
 	if res.Shutter != "1/125" {
-		t.Errorf("Shutter = %q, quiero 1/125", res.Shutter)
+		t.Errorf("Shutter = %q, want 1/125", res.Shutter)
 	}
 	if res.Focal != "24 mm" {
-		t.Errorf("Focal = %q, quiero 24 mm", res.Focal)
+		t.Errorf("Focal = %q, want 24 mm", res.Focal)
 	}
 	if res.Lat == nil || res.Lon == nil {
-		t.Fatalf("GPS ausente: lat=%v lon=%v", res.Lat, res.Lon)
+		t.Fatalf("GPS missing: lat=%v lon=%v", res.Lat, res.Lon)
 	}
 	if math.Abs(*res.Lat-37.775) > 1e-9 || math.Abs(*res.Lon+122.42) > 1e-9 {
-		t.Errorf("GPS = %v,%v, quiero 37.775,-122.42", *res.Lat, *res.Lon)
+		t.Errorf("GPS = %v,%v, want 37.775,-122.42", *res.Lat, *res.Lon)
 	}
 	if res.TakenAt == nil || res.TakenAt.Format("2006-01-02 15:04:05") != "2024-05-06 07:08:09" {
-		t.Errorf("TakenAt = %v, quiero 2024-05-06 07:08:09", res.TakenAt)
+		t.Errorf("TakenAt = %v, want 2024-05-06 07:08:09", res.TakenAt)
 	}
 }
 
 // --- tests ---
 
-// TestParseExifFields comprueba la extracción de campos (compartida por los
-// caminos JPEG y HEIC) sobre un TIFF EXIF sintético.
+// TestParseExifFields checks the field extraction (shared by the JPEG and HEIC
+// paths) on a synthetic EXIF TIFF.
 func TestParseExifFields(t *testing.T) {
 	x, err := exif.Decode(bytes.NewReader(buildExifTiff(exifFix)))
 	if err != nil {
-		t.Fatalf("exif.Decode(TIFF crudo): %v", err)
+		t.Fatalf("exif.Decode(raw TIFF): %v", err)
 	}
 	res := store.ExifResult{}
 	parseExif(x, &res)
 	assertFields(t, res)
 }
 
-// HEIC de prueba con el EXIF incrustado como item del contenedor.
+// test HEIC with the EXIF embedded as a container item.
 func buildHEIC(t *testing.T) []byte {
 	t.Helper()
 	src := image.NewRGBA(image.Rect(0, 0, 320, 200))
@@ -257,9 +257,9 @@ func buildHEIC(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// davServer sirve los bytes por HTTP con soporte de Range (limitado: la
-// elección de contenido la hace el callback con el rango pedido); count
-// acumula las peticiones, para verificar el reescalado.
+// davServer serves the bytes over HTTP with Range support (limited: the
+// content choice is made by the callback with the requested range), count
+// accumulates the requests, to verify the escalation.
 func davServer(t *testing.T, serve func(end int64) []byte) (*webdav.Client, *int) {
 	t.Helper()
 	count := 0
@@ -282,7 +282,7 @@ func davServer(t *testing.T, serve func(end int64) []byte) (*webdav.Client, *int
 	return webdav.New(srv.URL, "u", "t"), &count
 }
 
-// storeWithAsset abre un store de prueba con un asset sin EXIF apuntando a href.
+// storeWithAsset opens a test store with an asset without EXIF pointing to href.
 func storeWithAsset(t *testing.T, href string, size int64) (*store.Store, int64) {
 	t.Helper()
 	st, err := store.Open(t.TempDir() + "/test.db")
@@ -296,8 +296,8 @@ func storeWithAsset(t *testing.T, href string, size int64) (*store.Store, int64)
 	return st, id
 }
 
-// TestProcessOneHEIC lanza el camino completo del worker contra un HEIC con
-// EXIF: el item Exif del contenedor acaba en el resultado (GPS, cámara, ISO).
+// TestProcessOneHEIC runs the full worker path against a HEIC with EXIF: the
+// Exif item of the container ends up in the result (GPS, camera, ISO).
 func TestProcessOneHEIC(t *testing.T) {
 	data := buildHEIC(t)
 	dav, _ := davServer(t, func(end int64) []byte { return data })
@@ -314,10 +314,10 @@ func TestProcessOneHEIC(t *testing.T) {
 	assertFields(t, resOfAsset(a))
 }
 
-// TestProcessOneJPEG repite lo mismo por el camino JPEG: el APP1 con EXIF no
-// ha cambiado de comportamiento.
+// TestProcessOneJPEG does the same through the JPEG path: the APP1 with EXIF
+// has not changed its behaviour.
 func TestProcessOneJPEG(t *testing.T) {
-	// JPEG mínimo con el APP1 EXIF incrustado tras el SOI
+	// minimal JPEG with the APP1 EXIF embedded after the SOI
 	data := append([]byte{0xFF, 0xD8}, app1Exif(buildExifTiff(exifFix))...)
 	data = append(data, 0xFF, 0xD9)
 	dav, _ := davServer(t, func(end int64) []byte { return data })
@@ -332,17 +332,17 @@ func TestProcessOneJPEG(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.Camera != "Go TestCam" || a.ISO != 200 {
-		t.Errorf("EXIF JPEG: camera=%q iso=%d, quiero Go TestCam/200", a.Camera, a.ISO)
+		t.Errorf("JPEG EXIF: camera=%q iso=%d, want Go TestCam/200", a.Camera, a.ISO)
 	}
 }
 
-// TestHEICExifEscalation: un prefijo truncado (el item Exif del contenedor
-// fuera de los primeros 256 KB) dispara el reescalado de rangos y el EXIF
-// acaba en el resultado.
+// TestHEICExifEscalation: a truncated prefix (the Exif item of the container
+// beyond the first 256 KB) triggers the range escalation and the EXIF ends up
+// in the result.
 func TestHEICExifEscalation(t *testing.T) {
 	data := buildHEIC(t)
-	// los dos primeros rangos (256 KB y 1 MB) devuelven un ftyp truncado —
-	// el parseo falla pero NO con ErrNoExif—; el de 4 MB, el fichero completo
+	// the first two ranges (256 KB and 1 MB) return a truncated ftyp, the
+	// parsing fails but NOT with ErrNoExif, the 4 MB one returns the full file
 	dav, count := davServer(t, func(end int64) []byte {
 		if end < 1<<20 {
 			return data[:8]
@@ -356,18 +356,18 @@ func TestHEICExifEscalation(t *testing.T) {
 		t.Fatalf("processOne: %v", err)
 	}
 	if *count < 3 {
-		t.Errorf("no hubo reescalado completo: %d peticiones", *count)
+		t.Errorf("no full escalation: %d requests", *count)
 	}
 	a, err := st.AssetByID(context.Background(), "u", id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a.Lat == nil || a.Lon == nil {
-		t.Error("GPS ausente tras el reescalado")
+		t.Error("GPS missing after the escalation")
 	}
 }
 
-// TestProcessOneNoExif: un PNG sigue acabando en exif_done con dimensiones.
+// TestProcessOneNoExif: a PNG still ends up with exif_done set and dimensions.
 func TestProcessOneNoExif(t *testing.T) {
 	var buf bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 32, 16))
@@ -392,15 +392,15 @@ func TestProcessOneNoExif(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !a.ExifDone || a.Width != 32 || a.Height != 16 {
-		t.Errorf("PNG: done=%v dims=%dx%d, quiero true 32x16", a.ExifDone, a.Width, a.Height)
+		t.Errorf("PNG: done=%v dims=%dx%d, want true 32x16", a.ExifDone, a.Width, a.Height)
 	}
 	if a.Camera != "" || a.Lat != nil {
-		t.Errorf("PNG: no debe llevar EXIF: camera=%q lat=%v", a.Camera, a.Lat)
+		t.Errorf("PNG: must carry no EXIF: camera=%q lat=%v", a.Camera, a.Lat)
 	}
 }
 
-// must: helper para fixture bytes; un fallo de escritura en memoria es un bug
-// del test, no del código bajo prueba.
+// must: helper for fixture bytes, a write failure in memory is a bug of the
+// test, not of the code under test.
 func must(err error) {
 	if err != nil {
 		panic(err)

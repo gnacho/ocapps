@@ -37,7 +37,7 @@ func scanFeed(row interface{ Scan(...any) error }) (*Feed, error) {
 	return f, nil
 }
 
-// ListFeeds devuelve todos los feeds del usuario con su unreadCount.
+// ListFeeds returns all the user feeds with their unreadCount.
 func (s *Store) ListFeeds(userID int64) ([]Feed, error) {
 	rows, err := s.db.Query(feedSelect+` WHERE f.user_id = ? ORDER BY f.title`, userID)
 	if err != nil {
@@ -66,7 +66,7 @@ func (s *Store) GetFeed(userID, feedID int64) (*Feed, error) {
 	return f, nil
 }
 
-// FeedExistsByURL comprueba si el usuario ya sigue esa URL.
+// FeedExistsByURL checks whether the user already follows that URL.
 func (s *Store) FeedExistsByURL(userID int64, url string) (bool, error) {
 	var one int
 	err := s.db.QueryRow(`SELECT 1 FROM feeds WHERE user_id = ? AND url = ?`, userID, url).Scan(&one)
@@ -76,13 +76,13 @@ func (s *Store) FeedExistsByURL(userID int64, url string) (bool, error) {
 	return err == nil, err
 }
 
-// CreateFeed inserta el feed (ya validado y fetcheado) y sus items.
-// Devuelve ErrConflict si la URL ya existe.
+// CreateFeed inserts the feed (already validated and fetched) and its items.
+// It returns ErrConflict if the URL already exists.
 func (s *Store) CreateFeed(userID int64, url string, folderID *int64, title, link, favicon string, items []NewItem) (*Feed, error) {
 	return s.createFeed(userID, url, folderID, title, link, favicon, items, false)
 }
 
-// CreateFeedFull como CreateFeed fijando la detección de contenido completo.
+// CreateFeedFull like CreateFeed setting the full content detection.
 func (s *Store) CreateFeedFull(userID int64, url string, folderID *int64, title, link, favicon string, items []NewItem, fullContent bool) (*Feed, error) {
 	return s.createFeed(userID, url, folderID, title, link, favicon, items, fullContent)
 }
@@ -106,8 +106,8 @@ func (s *Store) createFeed(userID int64, url string, folderID *int64, title, lin
 	if err != nil {
 		return nil, err
 	}
-	// Un feed recién creado no tiene filtro (tabla feed_filter vacía para él),
-	// así que no hace falta aplicar keywords aquí.
+	// A newly created feed has no filter (feed_filter table empty for it),
+	// so there is no need to apply keywords here.
 	var newest int64
 	for _, it := range items {
 		r, err := tx.Exec(itemInsertSQL(), feedID, userID, it.GUID, it.GUIDHash, it.URL, it.Title,
@@ -126,14 +126,14 @@ func (s *Store) createFeed(userID int64, url string, folderID *int64, title, lin
 	return s.GetFeed(userID, feedID)
 }
 
-// ReplaceFeedItems: refresco completo de un feed. Inserta items nuevos
-// (INSERT OR IGNORE por guid_hash) y devuelve cuántos eran nuevos;
-// no_new_streak alimenta el intervalo adaptativo del scheduler.
-// fullContent: si esta tanda ya trae artículos completos (sticky: MAX).
-// Los items desaparecidos del feed NO se borran (igual que News).
+// ReplaceFeedItems: full refresh of a feed. It inserts new items
+// (INSERT OR IGNORE by guid_hash) and returns how many were new,
+// no_new_streak feeds the adaptive interval of the scheduler.
+// fullContent: if this batch already brings full articles (sticky: MAX).
+// Items that disappeared from the feed are NOT deleted (same as News).
 func (s *Store) ReplaceFeedItems(feedID, userID int64, title, link string, items []NewItem, fullContent bool) (int64, error) {
-	// Aplicar el filtro ANTES de abrir la tx: el Store usa una única conexión y
-	// consultar el filtro dentro de la tx causaría deadlock (MaxOpenConns=1).
+	// Apply the filter BEFORE opening the tx: the Store uses a single connection and
+	// querying the filter inside the tx would cause a deadlock (MaxOpenConns=1).
 	if err := s.ApplyFilterToItems(feedID, items); err != nil {
 		return 0, err
 	}
@@ -160,7 +160,7 @@ func (s *Store) ReplaceFeedItems(feedID, userID int64, title, link string, items
 		}
 		if n, _ := r.RowsAffected(); n > 0 {
 			inserted += n
-			// auto-mark-read (#40): reglas del usuario que casan con el título
+			// auto-mark-read (#40): user rules that match the title
 			if id, _ := r.LastInsertId(); id > 0 && autoReadMatches(auto, it.Title) {
 				if _, err := tx.Exec(`UPDATE items SET unread = 0, last_modified = ? WHERE id = ?`, now(), id); err != nil {
 					return 0, err
@@ -170,7 +170,7 @@ func (s *Store) ReplaceFeedItems(feedID, userID int64, title, link string, items
 	}
 	streak := 0
 	if inserted == 0 {
-		streak = 1 // señal: sumar 1 a la racha existente (ver UPDATE)
+		streak = 1 // signal: add 1 to the existing streak (see UPDATE)
 	}
 	if _, err := tx.Exec(
 		`UPDATE feeds SET no_new_streak = CASE WHEN ? = 1 THEN no_new_streak + 1 ELSE 0 END,
@@ -181,8 +181,8 @@ func (s *Store) ReplaceFeedItems(feedID, userID int64, title, link string, items
 	return inserted, tx.Commit()
 }
 
-// hasMediaEnclosure: true si algún item de la tanda trae un enclosure de
-// audio o vídeo (indica que el feed es un podcast).
+// hasMediaEnclosure: true if any item of the batch brings an audio or
+// video enclosure (it indicates that the feed is a podcast).
 func hasMediaEnclosure(items []NewItem) bool {
 	for _, it := range items {
 		if it.EnclosureMime != nil {
@@ -195,8 +195,8 @@ func hasMediaEnclosure(items []NewItem) bool {
 	return false
 }
 
-// autoReadMatches: true si algún patrón compilado de auto-read casa con el
-// título del item (reglas ya filtradas por feed en autoReadForFeed).
+// autoReadMatches: true if any compiled auto-read pattern matches the
+// item title (rules already filtered by feed in autoReadForFeed).
 func autoReadMatches(rules []compiledAutoRead, title string) bool {
 	for _, r := range rules {
 		if r.pattern.MatchString(title) {
@@ -217,7 +217,7 @@ func (s *Store) RecordFeedError(feedID int64, msg string) {
 	s.db.Exec(`UPDATE feeds SET update_error_count = update_error_count + 1, last_update_error = ? WHERE id = ?`, msg, feedID)
 }
 
-// ListDueFeeds devuelve los feeds con next_update vencido (para el scheduler).
+// ListDueFeeds returns the feeds with next_update in the past (for the scheduler).
 func (s *Store) ListDueFeeds(now int64, limit int) ([]Feed, error) {
 	q := feedSelect + ` WHERE f.next_update <= ? ORDER BY f.next_update`
 	if limit > 0 {
@@ -239,13 +239,13 @@ func (s *Store) ListDueFeeds(now int64, limit int) ([]Feed, error) {
 	return out, rows.Err()
 }
 
-// SetNextUpdate fija la próxima hora de refresco del feed.
+// SetNextUpdate sets the next refresh time of the feed.
 func (s *Store) SetNextUpdate(feedID, nextUpdate int64) error {
 	_, err := s.db.Exec(`UPDATE feeds SET next_update = ? WHERE id = ?`, nextUpdate, feedID)
 	return err
 }
 
-// FeedRow: feed mínimo para el refresher (sin contadores agregados).
+// FeedRow: minimal feed for the refresher (without aggregated counters).
 type FeedRow struct {
 	ID     int64
 	UserID int64
@@ -254,7 +254,7 @@ type FeedRow struct {
 	Title  string
 }
 
-// FeedByURLHash busca un feed por el hash md5 de su URL (endpoint /favicon).
+// FeedByURLHash looks up a feed by the md5 hash of its URL (/favicon endpoint).
 func (s *Store) FeedByURLHash(hash string) (*FeedRow, error) {
 	row := &FeedRow{}
 	err := s.db.QueryRow(`SELECT id, user_id, url, link, title FROM feeds WHERE url_hash = ? LIMIT 1`, hash).
@@ -268,9 +268,9 @@ func (s *Store) FeedByURLHash(hash string) (*FeedRow, error) {
 	return row, nil
 }
 
-// CreateFeedDeferred inserta un feed sin fetch inicial (import OPML):
-// título provisional = URL y next_update=0 para que el scheduler lo
-// refresque en el próximo ciclo.
+// CreateFeedDeferred inserts a feed without an initial fetch (OPML import):
+// provisional title = URL and next_update=0 so that the scheduler
+// refreshes it in the next cycle.
 func (s *Store) CreateFeedDeferred(userID int64, url string, folderID *int64) (*Feed, error) {
 	res, err := s.db.Exec(
 		`INSERT INTO feeds (user_id, folder_id, url, url_hash, link, title, favicon, added, next_update)
@@ -286,7 +286,7 @@ func (s *Store) CreateFeedDeferred(userID int64, url string, folderID *int64) (*
 	return s.GetFeed(userID, id)
 }
 
-// UpdaterFeed: fila para la ruta admin /feeds/all de la spec.
+// UpdaterFeed: row for the admin /feeds/all route of the spec.
 type UpdaterFeed struct {
 	ID     int64  `json:"id"`
 	UserID string `json:"userId"`
@@ -321,7 +321,7 @@ func (s *Store) DeleteFeed(userID, feedID int64) error {
 	return nil
 }
 
-// MoveFeed mueve el feed a otra carpeta (folderID nil = raíz).
+// MoveFeed moves the feed to another folder (folderID nil = root).
 func (s *Store) MoveFeed(userID, feedID int64, folderID *int64) error {
 	if folderID != nil {
 		var one int
@@ -354,9 +354,9 @@ func (s *Store) RenameFeed(userID, feedID int64, title string) error {
 	return nil
 }
 
-// SetFeedCredentials fija la auth Basic del feed. passEnc es la contraseña
-// YA cifrada (internal/cred); passEnc = nil conserva la actual (edición que
-// solo cambia el usuario). user vacío + passEnc apuntando a "" quita la auth.
+// SetFeedCredentials sets the feed Basic auth. passEnc is the password
+// ALREADY encrypted (internal/cred), passEnc = nil keeps the current one (edit that
+// only changes the user). Empty user + passEnc pointing to "" removes the auth.
 func (s *Store) SetFeedCredentials(userID, feedID int64, user string, passEnc *string) error {
 	var res sql.Result
 	var err error
@@ -374,8 +374,8 @@ func (s *Store) SetFeedCredentials(userID, feedID int64, user string, passEnc *s
 	return nil
 }
 
-// GetFeedScraperSelector devuelve el selector CSS de extracción del feed
-// ("" = usar readability genérico).
+// GetFeedScraperSelector returns the CSS extraction selector of the feed
+// ("" = use generic readability).
 func (s *Store) GetFeedScraperSelector(feedID int64) (string, error) {
 	var sel string
 	err := s.db.QueryRow(`SELECT COALESCE(scraper_selector, '') FROM feeds WHERE id = ?`, feedID).Scan(&sel)
@@ -388,7 +388,7 @@ func (s *Store) GetFeedScraperSelector(feedID int64) (string, error) {
 	return sel, nil
 }
 
-// SetFeedScraperSelector fija el selector CSS del feed ("" = quitar).
+// SetFeedScraperSelector sets the CSS selector of the feed ("" = remove).
 func (s *Store) SetFeedScraperSelector(userID, feedID int64, selector string) error {
 	res, err := s.db.Exec(`UPDATE feeds SET scraper_selector = ? WHERE user_id = ? AND id = ?`,
 		selector, userID, feedID)

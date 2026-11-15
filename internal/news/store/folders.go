@@ -27,8 +27,8 @@ func (s *Store) ListFolders(userID int64) ([]Folder, error) {
 	return out, rows.Err()
 }
 
-// CreateFolder devuelve ErrConflict si ya existe una carpeta con ese nombre.
-// parentID != nil crea una subcarpeta (debe pertenecer al usuario).
+// CreateFolder returns ErrConflict if a folder with that name already exists.
+// parentID != nil creates a subfolder (it must belong to the user).
 func (s *Store) CreateFolder(userID int64, name string, parentID *int64) (*Folder, error) {
 	if name == "" {
 		return nil, ErrConflict
@@ -59,7 +59,7 @@ func (s *Store) DeleteFolder(userID, folderID int64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	// las subcarpetas de la carpeta borrada suben a la raíz
+	// the subfolders of the deleted folder move up to the root
 	if _, err := tx.Exec(`UPDATE folders SET parent_id = NULL WHERE parent_id = ? AND user_id = ?`, folderID, userID); err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (s *Store) DeleteFolder(userID, folderID int64) error {
 	return tx.Commit()
 }
 
-// RenameFolder devuelve ErrConflict si el nuevo nombre ya existe.
+// RenameFolder returns ErrConflict if the new name already exists.
 func (s *Store) RenameFolder(userID, folderID int64, name string) error {
 	if name == "" {
 		return ErrConflict

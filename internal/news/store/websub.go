@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// WebSubSub: suscripción WebSub de un feed a su hub.
+// WebSubSub: WebSub subscription of a feed to its hub.
 type WebSubSub struct {
 	FeedID     int64
 	Hub        string
@@ -17,8 +17,8 @@ type WebSubSub struct {
 	Status     string
 }
 
-// UpsertWebSub registra (o actualiza) el hub y topic de un feed, conservando
-// secret/callback/lease existentes (una re-suscripción no los regenera).
+// UpsertWebSub records (or updates) the hub and topic of a feed, keeping
+// the existing secret/callback/lease (a re-subscription does not regenerate them).
 func (s *Store) UpsertWebSub(feedID int64, hub, topic string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO websub (feed_id, hub, topic) VALUES (?, ?, ?)
@@ -27,7 +27,7 @@ func (s *Store) UpsertWebSub(feedID int64, hub, topic string) error {
 	return err
 }
 
-// GetWebSub devuelve la suscripción de un feed (ErrNotFound si no hay).
+// GetWebSub returns the subscription of a feed (ErrNotFound if there is none).
 func (s *Store) GetWebSub(feedID int64) (*WebSubSub, error) {
 	var w WebSubSub
 	err := s.db.QueryRow(
@@ -42,26 +42,26 @@ func (s *Store) GetWebSub(feedID int64) (*WebSubSub, error) {
 	return &w, nil
 }
 
-// SaveWebSubSecret fija el secret y el callback de la suscripción.
+// SaveWebSubSecret sets the secret and the callback of the subscription.
 func (s *Store) SaveWebSubSecret(feedID int64, secret, callback string) error {
 	_, err := s.db.Exec(`UPDATE websub SET secret = ?, callback = ? WHERE feed_id = ?`, secret, callback, feedID)
 	return err
 }
 
-// SaveWebSubLease fija el lease_until de la suscripción.
+// SaveWebSubLease sets the lease_until of the subscription.
 func (s *Store) SaveWebSubLease(feedID, leaseUntil int64) error {
 	_, err := s.db.Exec(`UPDATE websub SET lease_until = ? WHERE feed_id = ?`, leaseUntil, feedID)
 	return err
 }
 
-// SaveWebSubStatus fija el estado de la suscripción (pending|active|error).
+// SaveWebSubStatus sets the subscription status (pending|active|error).
 func (s *Store) SaveWebSubStatus(feedID int64, status string) error {
 	_, err := s.db.Exec(`UPDATE websub SET status = ? WHERE feed_id = ?`, status, feedID)
 	return err
 }
 
-// WebSubDue devuelve suscripciones que necesitan (re)suscribirse: las que
-// nunca tuvieron lease o cuyo lease expira dentro del horizonte.
+// WebSubDue returns subscriptions that need to be (re)subscribed: those that
+// never had a lease or whose lease expires within the horizon.
 func (s *Store) WebSubDue(now int64, horizon time.Duration) ([]WebSubSub, error) {
 	cutoff := now + int64(horizon/time.Second)
 	rows, err := s.db.Query(
@@ -82,13 +82,13 @@ func (s *Store) WebSubDue(now int64, horizon time.Duration) ([]WebSubSub, error)
 	return out, rows.Err()
 }
 
-// DeleteWebSub borra la suscripción del feed.
+// DeleteWebSub deletes the feed subscription.
 func (s *Store) DeleteWebSub(feedID int64) error {
 	_, err := s.db.Exec(`DELETE FROM websub WHERE feed_id = ?`, feedID)
 	return err
 }
 
-// GetFeedByID devuelve un feed por id (sin scoping de usuario; uso interno).
+// GetFeedByID returns a feed by id (without user scoping, internal use).
 func (s *Store) GetFeedByID(feedID int64) (*Feed, error) {
 	f, err := scanFeed(s.db.QueryRow(feedSelect+` WHERE f.id = ?`, feedID))
 	if errors.Is(err, sql.ErrNoRows) {

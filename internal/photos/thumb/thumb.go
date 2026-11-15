@@ -1,8 +1,8 @@
-// Package thumb — generación y caché en disco de miniaturas.
-// Decodifica JPEG/PNG/GIF/WebP y HEIC/HEIF (decodificador HEVC en Go puro,
-// sin CGo ni libvips: gen2brain/h265 registra el formato en image.Decode).
-// Formatos sin decodificador (RAW) devuelven ErrUnsupported: la API sirve
-// entonces el original o un placeholder.
+// Package thumb - thumbnail generation and on-disk cache.
+// Decodes JPEG/PNG/GIF/WebP and HEIC/HEIF (pure Go HEVC decoder,
+// no CGo and no libvips: gen2brain/h265 registers the format in image.Decode).
+// Formats without a decoder (RAW) return ErrUnsupported: the API then serves
+// the original or a placeholder.
 package thumb
 
 import (
@@ -20,22 +20,22 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	_ "github.com/gen2brain/h265/heic" // registra image.Decode para HEIC/HEIF
+	_ "github.com/gen2brain/h265/heic" // registers image.Decode for HEIC/HEIF
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
 
-var ErrUnsupported = errors.New("formato sin decodificador nativo")
+var ErrUnsupported = errors.New("format without a native decoder")
 
-// Service genera y cachea miniaturas. Es multi-owner (H8): NO guarda el
-// cliente DAV — llega por parámetro con la credencial del owner de cada
-// request. La caché en disco ES compartida entre usuarios sin riesgo de
-// colisión: la cache key es sha1(href|etag|maxSize) y el href contiene el
-// space-UUID del espacio personal del usuario
-// (/dav/spaces/<uuid>$<owner>/...), así que dos usuarios NUNCA generan la
-// misma clave para ficheros distintos (y para el mismo fichero físico del
-// mismo espacio la miniatura es idéntica).
+// Service generates and caches thumbnails. It is multi-owner (H8): it does
+// NOT keep the DAV client - it arrives as a parameter with the credential of
+// the owner of each request. The on-disk cache IS shared between users with no
+// risk of collision: the cache key is sha1(href|etag|maxSize) and the href
+// contains the space UUID of the user's personal space
+// (/dav/spaces/<uuid>$<owner>/...), so two users NEVER generate the same key
+// for different files (and for the same physical file of the same space the
+// thumbnail is identical).
 type Service struct {
 	cacheDir string
 }
@@ -52,8 +52,8 @@ func cacheKey(href, etag string, maxSize int) string {
 	return hex.EncodeToString(h[:]) + ".jpg"
 }
 
-// VideoPoster extrae un fotograma del vídeo con ffmpeg y lo cachea como JPEG.
-// Descarga el vídeo a un temporal (ffmpeg necesita poder buscar en el fichero).
+// VideoPoster extracts a frame from the video with ffmpeg and caches it as JPEG.
+// Downloads the video to a temporary file (ffmpeg needs to seek inside the file).
 func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, etag string, maxSize int) (string, error) {
 	key := "v" + cacheKey(href, etag, maxSize)
 	out := filepath.Join(s.cacheDir, key[:2], key)
@@ -83,8 +83,8 @@ func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, eta
 	f.Close()
 	defer os.Remove(tmpIn)
 
-	tmpOut := out + ".tmp.jpg" // ffmpeg infiere el formato por la extensión
-	// primer intento en el segundo 1; si el vídeo es más corto, desde el principio
+	tmpOut := out + ".tmp.jpg" // ffmpeg infers the format from the extension
+	// first attempt at second 1, if the video is shorter, from the beginning
 	for _, ss := range []string{"1", "0"} {
 		cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-ss", ss, "-i", tmpIn,
 			"-frames:v", "1", "-vf", fmt.Sprintf("scale=%d:-1", maxSize), tmpOut)
@@ -95,12 +95,12 @@ func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, eta
 		}
 		os.Remove(tmpOut)
 	}
-	return "", errors.New("ffmpeg no pudo extraer un fotograma")
+	return "", errors.New("ffmpeg could not extract a frame")
 }
 
-// Get devuelve la ruta del thumbnail en caché, generándolo si hace falta.
-// maxSize es el lado largo. Se sirve como JPEG progresivo calidad 80.
-// dav es el cliente de la sesión del owner del asset (H8).
+// Get returns the path of the cached thumbnail, generating it when needed.
+// maxSize is the long side. It is served as a quality 80 progressive JPEG.
+// dav is the client of the session of the asset owner (H8).
 func (s *Service) Get(ctx context.Context, dav *webdav.Client, href, etag string, maxSize int) (string, error) {
 	key := cacheKey(href, etag, maxSize)
 	out := filepath.Join(s.cacheDir, key[:2], key)
@@ -114,7 +114,7 @@ func (s *Service) Get(ctx context.Context, dav *webdav.Client, href, etag string
 	}
 	defer rc.Close()
 
-	// límite defensivo: 60 MB por foto
+	// defensive limit: 60 MB per photo
 	img, _, err := image.Decode(io.LimitReader(rc, 60<<20))
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrUnsupported, err)

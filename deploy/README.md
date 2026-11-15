@@ -112,7 +112,8 @@ After restarting `opencloud`, the panel is reachable at
 - **ffmpeg is the ONLY system dependency at runtime** (SPEC Q4): video posters
   in the photos module (HLS was removed in Q7). Without ffmpeg the service still
   starts and photos logs it as degraded (`ffmpeg not found: video posters
-  degraded`), but install it: `apt install ffmpeg` / `apk add ffmpeg`.
+  degraded (the original will be served)`), but install it:
+  `apt install ffmpeg` / `apk add ffmpeg`.
 - **Go only to compile** (>= 1.26, see `go.mod`). It is not needed on the
   production host if you use the release artifact or the Docker image.
 - For the migration: root access on the host where the three old services run.
@@ -564,4 +565,4 @@ systemctl daemon-reload
   per-module detail:
   `{"version":"...","modules":{"news":"ok","notes":"ok","photos":"failed: ..."}}`.
 - JSON logs in journald: `journalctl -u opencloud-apps -f` (look for `"module
-  failed"` and the `legacy env in use` warnings).
+  failed"` and the `legacy env var in use` warnings).

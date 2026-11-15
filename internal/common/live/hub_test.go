@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// TestPublishSoloAlOwner: los eventos no se cruzan entre usuarios (multi-tenant).
-func TestPublishSoloAlOwner(t *testing.T) {
+// TestPublishOnlyToOwner: events do not cross between users (multi-tenant).
+func TestPublishOnlyToOwner(t *testing.T) {
 	h := NewHub()
 	chA, unsubA, ok := h.Subscribe("owner-a")
 	if !ok {
@@ -29,21 +29,21 @@ func TestPublishSoloAlOwner(t *testing.T) {
 	select {
 	case ev := <-chA:
 		if ev.Topic != "photos" || ev.Client != "c1" {
-			t.Fatalf("evento inesperado: %+v", ev)
+			t.Fatalf("unexpected event: %+v", ev)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("owner-a no recibió su evento")
+		t.Fatal("owner-a did not receive its event")
 	}
 	select {
 	case ev := <-chB:
-		t.Fatalf("owner-b no debería recibir eventos de owner-a: %+v", ev)
+		t.Fatalf("owner-b must not receive events from owner-a: %+v", ev)
 	case <-time.After(50 * time.Millisecond):
 	}
 }
 
-// TestPublishSinOwner: sin owner o sin topic no se publica nada (no hay
-// streams "globales" que puedan filtrar cambios de otros).
-func TestPublishSinOwner(t *testing.T) {
+// TestPublishWithoutOwner: without an owner or without a topic nothing is
+// published (there are no "global" streams that could leak changes of others).
+func TestPublishWithoutOwner(t *testing.T) {
 	h := NewHub()
 	ch, unsub, _ := h.Subscribe("")
 	defer unsub()
@@ -51,13 +51,13 @@ func TestPublishSinOwner(t *testing.T) {
 	h.Publish("owner-a", Event{})
 	select {
 	case ev := <-ch:
-		t.Fatalf("evento inesperado: %+v", ev)
+		t.Fatalf("unexpected event: %+v", ev)
 	case <-time.After(50 * time.Millisecond):
 	}
 }
 
-// TestServeCabecerasYEventos: el stream sale con las cabeceras que necesitan
-// los proxies, manda el evento publicado y termina con Close.
+// TestServeCabecerasYEventos: the stream goes out with the headers the proxies
+// need, sends the published event and ends with Close.
 func TestServeCabecerasYEventos(t *testing.T) {
 	h := NewHub()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +83,7 @@ func TestServeCabecerasYEventos(t *testing.T) {
 		t.Fatalf("Cache-Control = %q", v)
 	}
 
-	// Espera a que el handler esté suscrito antes de publicar.
+	// Wait for the handler to be subscribed before publishing.
 	deadline := time.Now().Add(2 * time.Second)
 	for h.Subscribers("owner-a") == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
@@ -108,7 +108,7 @@ func TestServeCabecerasYEventos(t *testing.T) {
 		select {
 		case line, ok := <-lines:
 			if !ok {
-				t.Fatal("stream cerrado antes del preámbulo")
+				t.Fatal("stream closed before the prelude")
 			}
 			prelude = append(prelude, line)
 			if strings.HasPrefix(line, "retry:") {
@@ -118,7 +118,7 @@ func TestServeCabecerasYEventos(t *testing.T) {
 				gotConnected = true
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatalf("preámbulo incompleto: %q", prelude)
+			t.Fatalf("incomplete prelude: %q", prelude)
 		}
 	}
 
@@ -128,64 +128,64 @@ func TestServeCabecerasYEventos(t *testing.T) {
 		select {
 		case line, ok := <-lines:
 			if !ok {
-				t.Fatal("stream cerrado sin evento")
+				t.Fatal("stream closed without an event")
 			}
 			if strings.HasPrefix(line, "data: ") {
 				data = strings.TrimPrefix(line, "data: ")
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatal("no llegó el evento")
+			t.Fatal("the event did not arrive")
 		}
 	}
 	var ev Event
 	if err := json.Unmarshal([]byte(data), &ev); err != nil {
-		t.Fatalf("evento no es JSON: %q", data)
+		t.Fatalf("event is not JSON: %q", data)
 	}
 	if ev.Topic != "photos" || ev.Client != "tab-1" {
-		t.Fatalf("evento inesperado: %+v", ev)
+		t.Fatalf("unexpected event: %+v", ev)
 	}
 
-	// Close termina el stream (si no, Shutdown agotaría su presupuesto).
+	// Close ends the stream (otherwise Shutdown would exhaust its budget).
 	h.Close()
 	for {
 		select {
 		case _, ok := <-lines:
 			if !ok {
-				return // EOF: el stream terminó
+				return // EOF: the stream ended
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatal("el stream no terminó tras Close")
+			t.Fatal("the stream did not end after Close")
 		}
 	}
 }
 
-// TestServeRequiereOwner: sin owner no se abre un stream (todos los handlers
-// están detrás de auth, pero el hub no se fía).
+// TestServeRequiereOwner: without an owner no stream is opened (all handlers
+// are behind auth, but the hub does not trust that).
 func TestServeRequiereOwner(t *testing.T) {
 	h := NewHub()
 	rr := httptest.NewRecorder()
 	h.Serve(rr, httptest.NewRequest(http.MethodGet, "/stream", nil), "")
 	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, esperado 401", rr.Code)
+		t.Fatalf("status = %d, want 401", rr.Code)
 	}
 }
 
-// TestSubscribeTrasClose: el hub cerrado no acepta suscriptores nuevos.
+// TestSubscribeTrasClose: a closed hub does not accept new subscribers.
 func TestSubscribeTrasClose(t *testing.T) {
 	h := NewHub()
 	h.Close()
 	if _, _, ok := h.Subscribe("owner-a"); ok {
-		t.Fatal("Subscribe devolvió ok con el hub cerrado")
+		t.Fatal("Subscribe returned ok with the hub closed")
 	}
 	rr := httptest.NewRecorder()
 	h.Serve(rr, httptest.NewRequest(http.MethodGet, "/stream", nil), "owner-a")
 	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, esperado 503", rr.Code)
+		t.Fatalf("status = %d, want 503", rr.Code)
 	}
 }
 
-// TestSubscribeCierraCanal: al desuscribirse el canal se cierra y deja de
-// contar; desuscribirse dos veces no entra en pánico.
+// TestSubscribeCierraCanal: on unsubscribe the channel is closed and stops
+// counting, unsubscribing twice does not panic.
 func TestSubscribeCierraCanal(t *testing.T) {
 	h := NewHub()
 	ch, unsubscribe, _ := h.Subscribe("owner-a")
@@ -195,18 +195,18 @@ func TestSubscribeCierraCanal(t *testing.T) {
 	unsubscribe()
 	unsubscribe()
 	if _, ok := <-ch; ok {
-		t.Fatal("el canal debería estar cerrado")
+		t.Fatal("the channel should be closed")
 	}
 	if n := h.Subscribers("owner-a"); n != 0 {
-		t.Fatalf("Subscribers tras cerrar = %d", n)
+		t.Fatalf("Subscribers after closing = %d", n)
 	}
 }
 
-// TestClientID: el id de cliente se acota y se ignora si es demasiado largo.
+// TestClientID: the client id is capped and ignored if it is too long.
 func TestClientID(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	if got := ClientID(r); got != "" {
-		t.Fatalf("sin cabecera = %q", got)
+		t.Fatalf("no header = %q", got)
 	}
 	r.Header.Set(clientHeader, "tab-1")
 	if got := ClientID(r); got != "tab-1" {
@@ -214,6 +214,6 @@ func TestClientID(t *testing.T) {
 	}
 	r.Header.Set(clientHeader, strings.Repeat("x", maxClientIDLen+1))
 	if got := ClientID(r); got != "" {
-		t.Fatalf("id largo debería descartarse, got %q", got)
+		t.Fatalf("a long id should be discarded, got %q", got)
 	}
 }

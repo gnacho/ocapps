@@ -1,15 +1,15 @@
-// Package news: wiring del módulo news de ocapps (SPEC §4.5, §8 H4).
+// Package news: wiring of the ocapps news module (SPEC §4.5, §8 H4).
 //
-// El módulo satisface la interfaz unificada common/module.Module (SPEC §4.5,
-// promovida a common en H5) con las firmas exactas del SPEC.
+// The module satisfies the unified common/module.Module interface (SPEC §4.5,
+// promoted to common in H5) with the exact SPEC signatures.
 //
-// Constructor para el wiring (H5): m, err := news.New(cfg, log, gv) donde
-// cfg es el *common/config.Config ya cargado, log el logger BASE (New le
-// añade module=news vía common/log.Module) y gv el validador Graph
-// COMPARTIDO del proceso (common/auth, política MultiTenant; una sola caché
-// para los tres módulos, SPEC §6.2). gv solo se usa con AuthMode=opencloud;
-// en modo local puede ser nil. Un error de New significa "módulo failed":
-// el wiring registra el handler 503 en su namespace (D3) y sigue.
+// Constructor for the wiring (H5): m, err := news.New(cfg, log, gv) where
+// cfg is the already loaded *common/config.Config, log the BASE logger (New
+// adds module=news through common/log.Module) and gv the process SHARED
+// Graph validator (common/auth, MultiTenant policy, a single cache
+// for the three modules, SPEC §6.2). gv is only used with AuthMode=opencloud,
+// in local mode it can be nil. An error from New means "module failed":
+// the wiring registers the 503 handler in its namespace (D3) and goes on.
 package news
 
 import (
@@ -40,14 +40,14 @@ import (
 	"github.com/gnacho/ocapps/internal/news/websub"
 )
 
-// dbFileName es el nombre histórico del fichero SQLite de news (SPEC §5.1:
-// se conserva para que la copia 1:1 de la migración funcione tal cual).
+// dbFileName is the historical name of the news SQLite file (SPEC §5.1:
+// it is kept so that the 1:1 copy of the migration works as is).
 const dbFileName = "ocnews.db"
 
 var _ commonmodule.Module = (*Module)(nil)
 
-// Module es el módulo news: News API v1.3 + API propia + scheduler de
-// refresco/retención/WebSub.
+// Module is the news module: News API v1.3 + own API + refresh/
+// retention/WebSub scheduler.
 type Module struct {
 	enabled bool
 	server  *api.Server
@@ -55,18 +55,18 @@ type Module struct {
 	store   *store.Store
 	log     *slog.Logger
 
-	runErr atomic.Value // error: lo fija Run si termina de forma anómala
+	runErr atomic.Value // error: Run sets it if it ends abnormally
 }
 
-// New construye el módulo a partir de la config unificada. Equivale al
-// arranque histórico de ocnews (cmd/ocnews/main.go) pero sobre los paquetes
-// common: store.Open+Migrate, cred (feedsecret), imgproxy (imgsecret +
-// imgcache en <NewsDataDir>) y el validador Graph COMPARTIDO (gv, recibido
-// del wiring desde H5 — antes lo creaba el propio módulo) con MultiTenant +
-// glue de shadow users (internal/news/auth). En modo local se conserva el
-// bootstrap del primer admin con OCAPPS_NEWS_AUTH_USER/PASS.
+// New builds the module from the unified config. It is equivalent to the
+// historical boot of ocnews (cmd/ocnews/main.go) but on top of the common
+// packages: store.Open+Migrate, cred (feedsecret), imgproxy (imgsecret +
+// imgcache in <NewsDataDir>) and the SHARED Graph validator (gv, received
+// from the wiring since H5, before it the module created it itself) with MultiTenant +
+// shadow users glue (internal/news/auth). In local mode the bootstrap of the
+// first admin with OCAPPS_NEWS_AUTH_USER/PASS is kept.
 //
-// log es el logger base del proceso; New le añade module=news.
+// log is the base logger of the process, New adds module=news to it.
 func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*Module, error) {
 	if log == nil {
 		log = slog.Default()
@@ -77,7 +77,7 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 		return m, nil
 	}
 	if err := cfg.ModuleErr("news"); err != nil {
-		return nil, fmt.Errorf("config de news inválida: %w", err)
+		return nil, fmt.Errorf("invalid news config: %w", err)
 	}
 
 	dataDir := cfg.NewsDataDir
@@ -85,9 +85,9 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 	if err != nil {
 		return nil, err
 	}
-	// I2: todo fallo tras abrir la BD debe cerrarla antes de devolver
-	// (patrón de internal/notes/module.go); si no, el *sql.DB queda
-	// abierto y fugado cuando el wiring registra el módulo failed.
+	// I2: every failure after opening the DB must close it before returning
+	// (pattern of internal/notes/module.go), otherwise the *sql.DB is left
+	// open and leaked when the wiring registers the module failed.
 	fail := func(err error) (*Module, error) {
 		_ = st.Close()
 		return nil, err
@@ -111,13 +111,13 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 		return fail(err)
 	}
 
-	// validador: opencloud (Graph común COMPARTIDO + shadow users) o local
-	// (bcrypt). El wiring pasa gv con política MultiTenant (SPEC §6.2).
+	// validator: opencloud (SHARED common Graph + shadow users) or local
+	// (bcrypt). The wiring passes gv with the MultiTenant policy (SPEC §6.2).
 	var validator auth.Validator
 	switch cfg.AuthMode {
 	case "opencloud":
 		if gv == nil {
-			return fail(errors.New("modo opencloud requiere el validador Graph compartido (gv nil)"))
+			return fail(errors.New("opencloud mode requires the shared Graph validator (gv nil)"))
 		}
 		validator = auth.NewShadowValidator(gv, st, log)
 		log.Info("auth: opencloud", "server", cfg.OpenCloudURL)
@@ -133,7 +133,7 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 				return fail(err)
 			}
 			if created {
-				log.Info("usuario admin bootstrap", "username", cfg.News.AuthUser)
+				log.Info("admin bootstrap user", "username", cfg.News.AuthUser)
 			}
 		} else {
 			var count int
@@ -141,7 +141,7 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 				return fail(err)
 			}
 			if count == 0 {
-				return fail(errors.New("sin usuarios en BD: define OCAPPS_NEWS_AUTH_USER y OCAPPS_NEWS_AUTH_PASS para el bootstrap del primer admin"))
+				return fail(errors.New("no users in the DB: set OCAPPS_NEWS_AUTH_USER and OCAPPS_NEWS_AUTH_PASS for the first admin bootstrap"))
 			}
 		}
 	}
@@ -156,32 +156,32 @@ func New(cfg *config.Config, log *slog.Logger, gv *commonauth.GraphValidator) (*
 	m.server = api.NewServer(st, validator, fetcher, refresh, favicons, imgs, extractor, creds,
 		cfg.News.Retention(), log)
 
-	log.Info("módulo news listo",
+	log.Info("news module ready",
 		"db", filepath.Join(dataDir, dbFileName), "api", api.Base,
 		"interval", cfg.News.FeedInterval, "max_gap", cfg.News.MaxGap,
-		"retencion", cfg.News.Retention().String())
+		"retention", cfg.News.Retention().String())
 	return m, nil
 }
 
-// Name devuelve el nombre del módulo ("news").
+// Name returns the module name ("news").
 func (m *Module) Name() string { return "news" }
 
-// Enabled informa de si el módulo está habilitado (OCAPPS_NEWS_ENABLED).
+// Enabled reports whether the module is enabled (OCAPPS_NEWS_ENABLED).
 func (m *Module) Enabled() bool { return m.enabled }
 
-// Register monta las rutas del módulo en el mux compartido (SPEC §4.1).
-// /healthz y /readyz los sirve common; aquí no se registran.
+// Register mounts the module routes on the shared mux (SPEC §4.1).
+// /healthz and /readyz are served by common, they are not registered here.
 func (m *Module) Register(mux *http.ServeMux) {
 	m.server.RegisterOn(mux)
 }
 
-// Run ejecuta los loops de background (scheduler: refresco de feeds,
-// retención y suscripciones/renovaciones WebSub — las notificaciones ntfy
-// las emite el refresher dentro de esos ciclos). Bloquea hasta que ctx se
-// cancela (shutdown gracioso: el scheduler drena sus goroutines) y devuelve
-// nil en apagado normal. Un pánico recuperado en el loop principal del
-// scheduler (I3) vuelve como error: queda en runErr (Healthy) y el wiring
-// marca el módulo failed sin tumbar el proceso (D3).
+// Run runs the background loops (scheduler: feed refresh,
+// retention and WebSub subscriptions/renewals, the ntfy notifications
+// are emitted by the refresher inside those cycles). It blocks until ctx is
+// cancelled (graceful shutdown: the scheduler drains its goroutines) and returns
+// nil on a normal shutdown. A panic recovered in the scheduler main loop
+// (I3) comes back as an error: it stays in runErr (Healthy) and the wiring
+// marks the module failed without taking down the process (D3).
 func (m *Module) Run(ctx context.Context) error {
 	err := m.sched.Run(ctx)
 	if err != nil && ctx.Err() == nil {
@@ -190,8 +190,8 @@ func (m *Module) Run(ctx context.Context) error {
 	return err
 }
 
-// Close cierra la SQLite del módulo (apagado ordenado; el wiring lo invoca
-// por type assertion io.Closer tras drenar los Run, SPEC §4.5/H5).
+// Close closes the module SQLite (orderly shutdown, the wiring calls it
+// by io.Closer type assertion after draining the Run, SPEC §4.5/H5).
 func (m *Module) Close() error {
 	if m.store != nil {
 		return m.store.Close()
@@ -199,13 +199,13 @@ func (m *Module) Close() error {
 	return nil
 }
 
-// Healthy informa a /healthz y /readyz (SPEC §4.5): error de una ejecución
-// anómala de Run si la hubo; si no, ping a la SQLite del módulo.
+// Healthy reports to /healthz and /readyz (SPEC §4.5): error of an abnormal
+// Run if there was one, otherwise a ping to the module SQLite.
 func (m *Module) Healthy() error {
 	if err, ok := m.runErr.Load().(error); ok && err != nil {
 		return err
 	}
-	if m.store == nil { // módulo disabled: no degrada el readyz global
+	if m.store == nil { // disabled module: it does not degrade the global readyz
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

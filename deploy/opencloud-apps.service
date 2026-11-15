@@ -1,10 +1,10 @@
-# opencloud-apps.service — unit único del backend unificado ocapps (SPEC §9.1).
+# opencloud-apps.service - single unit of the unified ocapps backend (SPEC §9.1).
 #
-# Instalación:
+# Installation:
 #   install -m 644 deploy/opencloud-apps.service /etc/systemd/system/
 #   systemctl daemon-reload && systemctl enable --now opencloud-apps
 #
-# Requiere: usuario/grupo `ocapps` y /etc/ocapps/env (ver deploy/env.example).
+# Requires: the `ocapps` user and group, and /etc/ocapps/env (see deploy/env.example).
 [Unit]
 Description=OpenCloud Apps (news+notes+photos unified backend)
 After=network-online.target
@@ -17,17 +17,17 @@ Group=ocapps
 EnvironmentFile=/etc/ocapps/env
 ExecStart=/usr/local/bin/ocapps
 
-# Restart=on-failure solo actúa si muere el PROCESO ENTERO. Un módulo caído
-# (p. ej. la BD de photos corrupta) NO reinicia nada: por diseño (D3,
-# SPEC §4.5) el módulo queda en estado failed, su namespace sirve 503 y los
-# demás módulos siguen operativos — un reinicio no arreglaría la causa y un
-# bucle de reinicios tumbaría también los módulos sanos. La señal operativa
-# de un módulo caído es `GET /readyz` → 503 (más el log "módulo failed"):
-# monitoriza/alerta sobre readyz, no sobre reinicios de systemd.
+# Restart=on-failure only acts if the WHOLE PROCESS dies. A failed module
+# (for instance a corrupt photos database) restarts nothing: by design (D3,
+# SPEC §4.5) the module stays failed, its namespace serves 503 and the other
+# modules keep working. A restart would not fix the cause, and a restart loop
+# would also take the healthy modules down. The operational signal of a failed
+# module is `GET /readyz` -> 503 (plus the "module failed" log line), so
+# monitor and alert on readyz, not on systemd restarts.
 Restart=on-failure
 RestartSec=5s
 
-# /var/lib/ocapps creado y gestionado por systemd (0700, propiedad ocapps).
+# /var/lib/ocapps created and managed by systemd (0700, owned by ocapps).
 StateDirectory=ocapps
 StateDirectoryMode=0700
 

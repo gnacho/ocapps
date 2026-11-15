@@ -1,5 +1,5 @@
-// Package phash — hash perceptual (dHash) para detectar fotos casi iguales.
-// Go puro: usa image.Decode (con HEIC registrado por el import en blanco).
+// Package phash - perceptual hash (dHash) to detect nearly identical photos.
+// Pure Go: uses image.Decode (with HEIC registered by the blank import).
 package phash
 
 import (
@@ -14,7 +14,7 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-// DHash calcula un hash de diferencia de 64 bits (hex) de una imagen.
+// DHash computes a 64-bit difference hash (hex) of an image.
 func DHash(img image.Image) string {
 	g := image.NewGray(image.Rect(0, 0, 9, 8))
 	draw.CatmullRom.Scale(g, g.Bounds(), img, img.Bounds(), draw.Over, nil)
@@ -29,7 +29,7 @@ func DHash(img image.Image) string {
 	return fmt.Sprintf("%016x", bits)
 }
 
-// Hamming: distancia entre dos hashes hex de 64 bits.
+// Hamming: distance between two 64-bit hex hashes.
 func Hamming(a, b string) int {
 	var x, y uint64
 	if _, err := fmt.Sscanf(a, "%x", &x); err != nil {
@@ -45,7 +45,7 @@ func Hamming(a, b string) int {
 	return d
 }
 
-// Group agrupa hashes con distancia <= maxDist. Devuelve grupos de >= 2 ids.
+// Group groups hashes with distance <= maxDist. Returns groups of >= 2 ids.
 func Group(hashes map[int64]string, maxDist int) [][]int64 {
 	ids := make([]int64, 0, len(hashes))
 	for id := range hashes {

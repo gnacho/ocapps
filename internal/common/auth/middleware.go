@@ -13,9 +13,9 @@ type ctxKey int
 
 const userKey ctxKey = iota + 1
 
-// Middleware exige credenciales válidas (Basic o Bearer) validadas contra
-// Graph; 401 con WWW-Authenticate si no. El *User autenticado queda en el
-// contexto de la petición (recupéralo con FromContext).
+// Middleware requires valid credentials (Basic or Bearer) validated against
+// Graph, 401 with WWW-Authenticate otherwise. The authenticated *User is kept
+// in the request context (retrieve it with FromContext).
 func Middleware(v *GraphValidator, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cred, ok := credentials(r)
@@ -25,23 +25,23 @@ func Middleware(v *GraphValidator, next http.Handler) http.Handler {
 		}
 		if !ok {
 			w.Header().Set("WWW-Authenticate", `Basic realm="ocapps"`)
-			httpx.ErrorStatus(w, r, httpx.NewError(http.StatusUnauthorized, "unauthorized", "credenciales inválidas"))
+			httpx.ErrorStatus(w, r, httpx.NewError(http.StatusUnauthorized, "unauthorized", "invalid credentials"))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
 	})
 }
 
-// FromContext recupera el usuario autenticado del contexto (nil si no hay).
+// FromContext retrieves the authenticated user from the context (nil if absent).
 func FromContext(ctx context.Context) *User {
 	u, _ := ctx.Value(userKey).(*User)
 	return u
 }
 
-// User es un atajo de FromContext sobre la petición.
+// User is a shorthand for FromContext on the request.
 func UserFrom(r *http.Request) *User { return FromContext(r.Context()) }
 
-// credentials extrae Basic o Bearer de la cabecera Authorization.
+// credentials extracts Basic or Bearer from the Authorization header.
 func credentials(r *http.Request) (Credential, bool) {
 	h := r.Header.Get("Authorization")
 	switch {

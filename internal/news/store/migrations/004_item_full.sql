@@ -1,5 +1,5 @@
--- F1: cuerpo completo extraído del artículo original (readability);
--- los feeds suelen traer solo el resumen.
+-- F1: full body extracted from the original article (readability),
+-- feeds usually only carry the summary.
 
 CREATE TABLE item_full (
   item_id    INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,

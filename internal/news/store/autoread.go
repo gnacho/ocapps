@@ -6,15 +6,15 @@ import (
 	"regexp"
 )
 
-// AutoReadRule: regla que marca como leídos los items nuevos cuyo título casa
-// con el patrón. FeedID 0 = se aplica a todos los feeds del usuario.
+// AutoReadRule: rule that marks as read the new items whose title matches
+// the pattern. FeedID 0 = it applies to all the user feeds.
 type AutoReadRule struct {
 	ID           int64  `json:"id"`
 	FeedID       int64  `json:"feedId"`
 	TitlePattern string `json:"titlePattern"`
 }
 
-// ListAutoRead devuelve las reglas de auto-marcado del usuario.
+// ListAutoRead returns the user auto-mark rules.
 func (s *Store) ListAutoRead(userID int64) ([]AutoReadRule, error) {
 	rows, err := s.db.Query(
 		`SELECT id, feed_id, title_pattern FROM auto_read WHERE user_id = ? ORDER BY id`, userID)
@@ -33,7 +33,7 @@ func (s *Store) ListAutoRead(userID int64) ([]AutoReadRule, error) {
 	return out, rows.Err()
 }
 
-// AddAutoRead crea una regla de auto-marcado.
+// AddAutoRead creates an auto-mark rule.
 func (s *Store) AddAutoRead(userID, feedID int64, pattern string) (*AutoReadRule, error) {
 	if feedID != 0 {
 		var one int
@@ -62,7 +62,7 @@ func (s *Store) AddAutoRead(userID, feedID int64, pattern string) (*AutoReadRule
 	return &r, err
 }
 
-// DeleteAutoRead borra la regla (ErrNotFound si no existe o es de otro usuario).
+// DeleteAutoRead deletes the rule (ErrNotFound if it does not exist or belongs to another user).
 func (s *Store) DeleteAutoRead(userID, ruleID int64) error {
 	res, err := s.db.Exec(`DELETE FROM auto_read WHERE user_id = ? AND id = ?`, userID, ruleID)
 	if err != nil {
@@ -79,8 +79,8 @@ type compiledAutoRead struct {
 	pattern *regexp.Regexp
 }
 
-// autoReadForFeed compila las reglas del usuario que aplican al feed dado.
-// Los patrones inválidos (no deberían existir: la API valida) se ignoran.
+// autoReadForFeed compiles the user rules that apply to the given feed.
+// Invalid patterns (they should not exist, the API validates) are ignored.
 func (s *Store) autoReadForFeed(userID, feedID int64) ([]compiledAutoRead, error) {
 	rows, err := s.db.Query(
 		`SELECT feed_id, title_pattern FROM auto_read WHERE user_id = ? AND (feed_id = 0 OR feed_id = ?)`,

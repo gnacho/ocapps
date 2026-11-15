@@ -10,8 +10,8 @@ import (
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
-// serveFavicon: GET /favicon/{feedUrlHash} — responde desde la caché.
-// Solo servimos si el hash corresponde a un feed existente.
+// serveFavicon: GET /favicon/{feedUrlHash} - it responds from the cache.
+// We only serve if the hash corresponds to an existing feed.
 func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
 	hash := r.PathValue("hash")
 	if hash == "" || s.favicons == nil {
@@ -25,21 +25,21 @@ func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
 	s.favicons.Serve(w, hash)
 }
 
-// faviconRouter sirve el favicon por ruta pública (sin auth). El <img> del
-// navegador no lleva credenciales; solo se lee del cache en disco.
+// faviconRouter serves the favicon through a public route (no auth). The browser
+// <img> carries no credentials, it only reads from the on-disk cache.
 func (s *Server) faviconRouter() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /favicon/{hash}", s.serveFavicon)
 	return mux
 }
 
-// cleanupBefore: spec — borra carpetas/feeds marcados para borrar. En nuestra
-// implementación los DELETE ya son inmediatos; queda como no-op de contrato.
+// cleanupBefore: spec - deletes folders/feeds flagged for deletion. In our
+// implementation the DELETEs are already immediate, it remains as a contract no-op.
 func (s *Server) cleanupBefore(w http.ResponseWriter, _ *http.Request) {
 	writeEmpty(w)
 }
 
-// cleanupAfter: spec — purga items leídos no destacados según retención.
+// cleanupAfter: spec - purges read non-starred items according to retention.
 func (s *Server) cleanupAfter(w http.ResponseWriter, r *http.Request) {
 	if s.retention > 0 {
 		cutoff := time.Now().Add(-s.retention).Unix()
@@ -53,7 +53,7 @@ func (s *Server) cleanupAfter(w http.ResponseWriter, r *http.Request) {
 	writeEmpty(w)
 }
 
-// allFeedsForUpdater: spec — feeds con userId para el updater externo.
+// allFeedsForUpdater: spec - feeds with userId for the external updater.
 func (s *Server) allFeedsForUpdater(w http.ResponseWriter, r *http.Request) {
 	feeds, err := s.store.AllFeedsWithUser()
 	if err != nil {
@@ -81,7 +81,7 @@ type opmlDoc struct {
 	Outlines []opmlOutline `xml:"body>outline"`
 }
 
-// exportOPML: GET /export/opml — suscripciones del usuario en OPML 2.0.
+// exportOPML: GET /export/opml - user subscriptions in OPML 2.0.
 func (s *Server) exportOPML(w http.ResponseWriter, r *http.Request) {
 	u := user(r)
 	folders, err := s.store.ListFolders(u.ID)
@@ -120,7 +120,7 @@ func (s *Server) exportOPML(w http.ResponseWriter, r *http.Request) {
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
 	if err := enc.Encode(doc); err != nil {
-		s.log.Error("codificar opml", "err", err)
+		s.log.Error("encode opml", "err", err)
 	}
 }
 
@@ -129,8 +129,8 @@ type importedFeed struct {
 	FolderName string
 }
 
-// parseOPML extrae feeds (y su carpeta contenedora) de un documento OPML.
-// Tolerante: carpetas anidadas se aplanan (el modelo solo tiene 1 nivel).
+// parseOPML extracts feeds (and their containing folder) from an OPML document.
+// Tolerant: nested folders are flattened (the model only has 1 level).
 func parseOPML(body []byte) []importedFeed {
 	var doc opmlDoc
 	if err := xml.Unmarshal(body, &doc); err != nil {
@@ -156,9 +156,9 @@ func parseOPML(body []byte) []importedFeed {
 	return out
 }
 
-// importOPML: POST /import/opml — importa suscripciones (crea carpetas,
-// feeds sin fetchejar; el scheduler los refresca en el próximo ciclo al
-// tener next_update=0).
+// importOPML: POST /import/opml - imports subscriptions (it creates folders,
+// feeds without fetching, the scheduler refreshes them in the next cycle since
+// next_update=0).
 func (s *Server) importOPML(w http.ResponseWriter, r *http.Request) {
 	u := user(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
@@ -196,7 +196,7 @@ func (s *Server) importOPML(w http.ResponseWriter, r *http.Request) {
 			skipped++
 			continue
 		}
-		// feed sin fetch inicial: el scheduler lo rescata (next_update 0)
+		// feed without an initial fetch: the scheduler rescues it (next_update 0)
 		if _, err := s.store.CreateFeedDeferred(u.ID, imp.URL, folderID); err == nil {
 			created++
 		} else {

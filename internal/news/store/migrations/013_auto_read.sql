@@ -1,5 +1,5 @@
--- Auto-marcar como leído al llegar: reglas por usuario (feed_id 0 = todos)
--- que marcan unread=0 los items nuevos cuyo título casa con el patrón regex.
+-- Auto-mark as read on arrival: per-user rules (feed_id 0 = all)
+-- that set unread=0 on new items whose title matches the regex pattern.
 
 CREATE TABLE IF NOT EXISTS auto_read (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

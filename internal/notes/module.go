@@ -1,11 +1,11 @@
-// Package notes: módulo Notes del servicio unificado ocapps (SPEC §8 H2).
-// Cablea la apertura SQLite común + adopción de la BD (backup pre-migración y
-// backfill de owner, SPEC §5.3), el imgproxy común (instancia propia con su
-// imgsecret/imgcache en el subdir de notes), los adjuntos y el servidor de la
-// API Notes/OCS sobre el validador Graph compartido (SPEC §6).
+// Package notes: Notes module of the unified ocapps service (SPEC §8 H2).
+// It wires the shared SQLite opening plus database adoption (pre-migration
+// backup and owner backfill, SPEC §5.3), the shared imgproxy (its own instance
+// with its imgsecret/imgcache in the notes subdir), attachments and the
+// Notes/OCS API server on top of the shared Graph validator (SPEC §6).
 //
-// La interfaz Module (SPEC §4.5) vive en internal/common/module desde H5;
-// este módulo la satisface (ver el var _ abajo).
+// The Module interface (SPEC §4.5) lives in internal/common/module since H5.
+// This module satisfies it (see the var _ below).
 package notes
 
 import (
@@ -30,18 +30,18 @@ import (
 
 var _ commonmodule.Module = (*notesModule)(nil)
 
-// Rutas públicas del módulo (contrato Notes API + OCS, SPEC §4.1/§4.2):
-//   - /index.php/apps/notes/api/v1/   (subárbol; GET /v1/img público firmado)
-//   - /index.php/apps/notes/api/v1.4/ (subárbol; adjuntos)
-//   - /ocs/v2.php/cloud/capabilities  (OCS, exclusivo de notes tras §4.2)
+// Public routes of the module (Notes API plus OCS contract, SPEC §4.1/§4.2):
+//   - /index.php/apps/notes/api/v1/   (subtree, GET /v1/img is public and signed)
+//   - /index.php/apps/notes/api/v1.4/ (subtree, attachments)
+//   - /ocs/v2.php/cloud/capabilities  (OCS, exclusive to notes after §4.2)
 //   - /ocs/v2.php/cloud/user          (OCS)
 const (
 	ocsCapabilitiesPath = "/ocs/v2.php/cloud/capabilities"
 	ocsUserPath         = "/ocs/v2.php/cloud/user"
 )
 
-// notesModule implementa common/module.Module. (El tipo NO se llama "module"
-// para no colisionar con el paquete común importado.)
+// notesModule implements common/module.Module. (The type is NOT called "module"
+// to avoid a collision with the imported common package.)
 type notesModule struct {
 	enabled bool
 	log     *slog.Logger
@@ -49,17 +49,18 @@ type notesModule struct {
 	server  *api.Server
 }
 
-// New construye el módulo notes con dependencias inyectadas (SPEC §4.5):
-//   - cfg: configuración unificada (usa NotesEnabled, NotesDataDir y
-//     Notes.Owner = OCAPPS_NOTES_OWNER para el backfill).
-//   - logger: logger base; el módulo añade el atributo module=notes.
-//   - validator: validador Graph COMPARTIDO (common/auth, política
-//     MultiTenant): la semántica de shadow user en memoria y el escopado por
-//     graph ID en la columna `user` se conservan.
+// New builds the notes module with injected dependencies (SPEC §4.5):
+//   - cfg: unified configuration (uses NotesEnabled, NotesDataDir and
+//     Notes.Owner = OCAPPS_NOTES_OWNER for the backfill).
+//   - logger: base logger, the module adds the module=notes attribute.
+//   - validator: SHARED Graph validator (common/auth, MultiTenant policy):
+//     the in-memory shadow user semantics and the scoping by graph ID on the
+//     `user` column are preserved.
 //
-// Un error aquí (BD que no abre, migración rota, backfill sin owner,
-// imgsecret corrupto) debe degradar el módulo a 503, no tumbar el proceso
-// (D3): es responsabilidad del wiring de H5 registrar el handler sustituto.
+// An error here (database that does not open, broken migration, backfill
+// without owner, corrupt imgsecret) must degrade the module to 503, never take
+// the process down (D3): registering the replacement handler is the job of the
+// H5 wiring.
 func New(cfg *config.Config, logger *slog.Logger, validator *auth.GraphValidator) (commonmodule.Module, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -105,9 +106,9 @@ func (m *notesModule) Name() string { return "notes" }
 
 func (m *notesModule) Enabled() bool { return m.enabled }
 
-// Register monta las rutas del contrato Notes en el mux compartido. El
-// preflight OPTIONS lo responde el middleware CORS de la propia cadena del
-// servidor (204 sin auth, SPEC §4.4), así que no hace falta registro aparte.
+// Register mounts the Notes contract routes on the shared mux. The OPTIONS
+// preflight is answered by the CORS middleware of the server chain itself (204
+// with no auth, SPEC §4.4), so no extra registration is needed.
 func (m *notesModule) Register(mux *http.ServeMux) {
 	if !m.enabled || m.server == nil {
 		return
@@ -119,19 +120,19 @@ func (m *notesModule) Register(mux *http.ServeMux) {
 	mux.Handle(ocsUserPath, h)
 }
 
-// Run no tiene tareas de fondo en notes: bloquea hasta la cancelación.
+// Run has no background tasks in notes: it blocks until cancellation.
 func (m *notesModule) Run(ctx context.Context) error {
 	<-ctx.Done()
 	return nil
 }
 
-// Healthy hace ping a la BD del módulo (SPEC §4.5).
+// Healthy pings the module database (SPEC §4.5).
 func (m *notesModule) Healthy() error {
 	if !m.enabled {
 		return nil
 	}
 	if m.db == nil {
-		return fmt.Errorf("notes: módulo no inicializado")
+		return fmt.Errorf("notes: module not initialized")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -141,7 +142,7 @@ func (m *notesModule) Healthy() error {
 	return nil
 }
 
-// Close cierra la BD del módulo (para apagado ordenado en H5).
+// Close closes the module database (for an orderly shutdown in H5).
 func (m *notesModule) Close() error {
 	if m.db != nil {
 		return m.db.Close()
