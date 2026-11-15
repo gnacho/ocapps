@@ -18,7 +18,7 @@ import (
 const (
 	corsAllowOrigin   = "*"
 	corsAllowMethods  = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-	corsAllowHeaders  = "Authorization, Content-Type, If-Match, OCS-APIRequest"
+	corsAllowHeaders  = "Authorization, Content-Type, If-Match, OCS-APIRequest, X-Ocapps-Client"
 	corsExposeHeaders = "ETag, Last-Modified, X-Notes-API-Versions, X-Notes-Chunk-Cursor"
 )
 

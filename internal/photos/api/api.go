@@ -37,6 +37,7 @@ import (
 
 	"github.com/gnacho/ocapps/internal/common/auth"
 	"github.com/gnacho/ocapps/internal/common/httpx"
+	"github.com/gnacho/ocapps/internal/common/live"
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"github.com/gnacho/ocapps/internal/photos/exif"
 	"github.com/gnacho/ocapps/internal/photos/geo"
@@ -44,6 +45,13 @@ import (
 	"github.com/gnacho/ocapps/internal/photos/store"
 	"github.com/gnacho/ocapps/internal/photos/thumb"
 	"github.com/gnacho/ocapps/internal/xmp"
+)
+
+// TopicStream es el topic de los eventos del stream: "photos" cuando cambia el
+// índice o los metadatos de un asset, "albums" cuando cambian los álbumes.
+const (
+	TopicPhotos = "photos"
+	TopicAlbums = "albums"
 )
 
 // PublicPrefix es el namespace público del módulo photos (SPEC §4.3). Se usa
@@ -102,6 +110,7 @@ type Server struct {
 	provider  SessionProvider
 	cfg       Config
 	log       *slog.Logger
+	hub       *live.Hub // opcional: sin hub no hay stream (SetHub)
 }
 
 func New(st *store.Store, th *thumb.Service, gc *geo.Geocoder, v *auth.GraphValidator, sp SessionProvider, cfg Config, log *slog.Logger) *Server {
@@ -111,6 +120,37 @@ func New(st *store.Store, th *thumb.Service, gc *geo.Geocoder, v *auth.GraphVali
 
 // SetExifWorker habilita POST /api/admin/exif. Sin worker la ruta responde 503.
 func (s *Server) SetExifWorker(w *exif.Worker) { s.exif = w }
+
+// SetHub habilita GET /api/stream y la publicación de cambios. Sin hub (tests,
+// módulo degradado) el stream responde 503 y las mutaciones no publican nada.
+func (s *Server) SetHub(h *live.Hub) { s.hub = h }
+
+// publish avisa a los streams del owner de que ha cambiado un topic. El id del
+// cliente que hizo el cambio viaja en el evento para que esa pestaña no
+// recargue lo que ya tiene.
+func (s *Server) publish(r *http.Request, topics ...string) {
+	s.publishOwner(OwnerFrom(r.Context()), live.ClientID(r), topics...)
+}
+
+// publishOwner publica para un owner concreto (procesos de fondo, p. ej. el
+// EXIF, no tienen request). Sin hub no hace nada.
+func (s *Server) publishOwner(owner, client string, topics ...string) {
+	if s.hub == nil {
+		return
+	}
+	for _, t := range topics {
+		s.hub.Publish(owner, live.Event{Topic: t, Client: client})
+	}
+}
+
+// stream es el canal de invalidaciones (SSE) del owner autenticado.
+func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
+	if s.hub == nil {
+		http.Error(w, "stream no disponible", http.StatusServiceUnavailable)
+		return
+	}
+	s.hub.Serve(w, r, OwnerFrom(r.Context()))
+}
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -144,6 +184,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE "+PublicPrefix+"/api/albums/{id}/assets/{assetId}", s.removeFromAlbum)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/admin/rescan", s.rescan)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/admin/exif", s.exifBacklog)
+	// Canal de invalidaciones (SSE): el cliente deja de preguntar cada N
+	// segundos y recarga cuando el servidor le avisa.
+	mux.HandleFunc("GET "+PublicPrefix+"/api/stream", s.stream)
 	// CORS por fuera de auth: el preflight OPTIONS se responde 204 sin auth
 	// (SPEC §4.4).
 	return httpx.CORS(s.withAuth(mux))
@@ -353,6 +396,7 @@ func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeXMP(r.Context(), OwnerFrom(r.Context()), id)
+	s.publish(r, TopicPhotos)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -369,6 +413,7 @@ func (s *Server) archive(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	s.publish(r, TopicPhotos)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -731,6 +776,7 @@ func (s *Server) addTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeXMP(r.Context(), OwnerFrom(r.Context()), id)
+	s.publish(r, TopicPhotos)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -741,6 +787,7 @@ func (s *Server) removeTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeXMP(r.Context(), OwnerFrom(r.Context()), id)
+	s.publish(r, TopicPhotos)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -834,6 +881,7 @@ func (s *Server) createAlbum(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	s.publish(r, TopicAlbums)
 	writeJSON(w, map[string]any{"id": id})
 }
 
@@ -850,6 +898,7 @@ func (s *Server) renameAlbum(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	s.publish(r, TopicAlbums)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -859,6 +908,7 @@ func (s *Server) deleteAlbum(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	s.publish(r, TopicAlbums)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -885,6 +935,7 @@ func (s *Server) addToAlbum(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	s.publish(r, TopicAlbums)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -895,6 +946,7 @@ func (s *Server) removeFromAlbum(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	s.publish(r, TopicAlbums)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -939,6 +991,8 @@ func (s *Server) exifBacklog(w http.ResponseWriter, r *http.Request) {
 		if err := s.exif.Run(ctx, owner, dav); err != nil {
 			s.log.Warn("exif backlog", "owner", owner, "err", err)
 		}
+		// Las fechas y el GPS cambian: que las pestañas abiertas recarguen.
+		s.publishOwner(owner, "", TopicPhotos)
 	}()
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "exif encolado"})
 }

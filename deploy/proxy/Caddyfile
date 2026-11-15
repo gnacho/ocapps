@@ -58,6 +58,17 @@ handle /ocphotos-api/api/video/* {
 		}
 	}
 }
+# Canal de avisos de cambio (SSE): sin buffer (flush_interval -1 es el default
+# de Caddy, se deja explícito) y timeouts largos.
+handle /ocphotos-api/api/stream {
+	reverse_proxy 127.0.0.1:8096 {
+		flush_interval -1
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+}
 handle /ocphotos-api/* {
 	reverse_proxy 127.0.0.1:8096
 }

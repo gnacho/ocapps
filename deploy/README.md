@@ -301,6 +301,13 @@ En ambos snippets se preservan `Authorization` y `Host`, y
 (Range requests). Tras recargar el proxy, valida con
 `nginx -t` / `caddy validate` antes de `reload`.
 
+El canal de avisos en vivo (`/ocphotos-api/api/stream`, SSE) necesita además
+**buffering desactivado**: en nginx, un `location` propio con
+`proxy_buffering off` (los snippets lo traen). En Traefik basta el
+`responseForwarding.flushInterval: 1ms` del servicio; en Caddy,
+`flush_interval -1`. Si el stream queda bufferizado no se rompe nada, pero los
+avisos llegan tarde o no llegan y los clientes siguen sin actualizarse solos.
+
 Las mismas rutas sirven a los **clientes Android** de las tres apps
 ([ocnews-android](https://github.com/gnacho/ocnews-android),
 [ocnotes-android](https://github.com/gnacho/ocnotes-android),
