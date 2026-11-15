@@ -20,10 +20,29 @@ jobs:
           cache: true
       - name: Vet
         run: go vet ./...
-      - name: Test (race, shuffle)
-        run: go test ./... -race -shuffle=on -count=1
+      - name: Test (race, shuffle, coverage)
+        run: |
+          go test ./... -race -shuffle=on -count=1 \
+            -covermode=atomic -coverprofile=coverage.out
+      - name: Coverage gate
+        env:
+          COVERAGE_MIN: "60"
+        run: |
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${total}%"
+          awk -v t="${total}" -v min="${COVERAGE_MIN}" 'BEGIN {
+            if (t + 0 < min + 0) {
+              printf "FAIL: coverage %.1f%% is below the %s%% gate\n", t, min
+              exit 1
+            }
+            printf "OK: coverage %.1f%% meets the %s%% gate\n", t, min
+          }'
       - name: go mod tidy check
         run: go mod tidy && git diff --exit-code
+      - name: Third-party inventory check
+        run: |
+          go run tools/thirdparty/main.go > "$RUNNER_TEMP/THIRD_PARTY.md"
+          diff -u THIRD_PARTY.md "$RUNNER_TEMP/THIRD_PARTY.md"
 
   lint:
     runs-on: ubuntu-latest
