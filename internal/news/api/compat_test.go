@@ -10,7 +10,7 @@ import (
 
 func readBody(t *testing.T, resp *http.Response) []byte {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -59,17 +59,17 @@ func TestAndroidCompat(t *testing.T) {
 	}
 
 	// create a folder (JSON, the client does it with Map) and a feed with query params
-	code, fb := e.do(t, "POST", "/folders", e.user, e.pass, map[string]string{"name": "C"})
+	code, _ := e.do(t, "POST", "/folders", e.user, e.pass, map[string]string{"name": "C"})
 	if code != 200 {
 		t.Fatalf("folder: %d", code)
 	}
-	code, fb = e.do(t, "GET", "/items?type=3&getRead=true", e.user, e.pass, nil)
+	code, fb := e.do(t, "GET", "/items?type=3&getRead=true", e.user, e.pass, nil)
 	if !strings.Contains(string(fb), "form.example") {
 		_ = code
 	}
 
 	// PUT rename feed (the spec says POST, the client sends PUT)
-	code, fb = e.do(t, "GET", "/feeds", e.user, e.pass, nil)
+	_, fb = e.do(t, "GET", "/feeds", e.user, e.pass, nil)
 	feedID := extractJSONInt(t, fb, `"id":`)
 	if code, _ = e.do(t, "PUT", "/feeds/"+itoa(feedID)+"/rename", e.user, e.pass,
 		map[string]string{"feedTitle": "Renombrado"}); code != 204 {

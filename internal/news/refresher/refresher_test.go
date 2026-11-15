@@ -66,7 +66,7 @@ func newEnv(t *testing.T) (*store.Store, int64, *fakeFetcher, *Refresher) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	hash, err := auth.HashPassword("x")
 	if err != nil {
 		t.Fatal(err)

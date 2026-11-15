@@ -21,7 +21,7 @@ func newStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
 
@@ -61,7 +61,7 @@ func (f *fakeGraph) handler(t *testing.T) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"id":"uuid-1234","displayName":"Nacho Real","onPremisesSamAccountName":"nacho"}`)
+		_, _ = io.WriteString(w, `{"id":"uuid-1234","displayName":"Nacho Real","onPremisesSamAccountName":"nacho"}`)
 	})
 }
 

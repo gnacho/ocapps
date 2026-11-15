@@ -130,7 +130,7 @@ func (s *Store) existingTables() (map[string]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list tables: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]bool{}
 	for rows.Next() {
 		var name string
@@ -157,7 +157,7 @@ func (s *Store) assetColumns() (map[string]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("table_info(assets): %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]bool{}
 	for rows.Next() {
 		var cid int
@@ -299,7 +299,7 @@ func (s *Store) SoftDeleteExcept(ctx context.Context, owner, prefix string, seen
 		var id int64
 		var path, etag string
 		if err := rows.Scan(&id, &path, &etag); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return 0, err
 		}
 		if prefix != "" && !strings.HasPrefix(path, prefix) {
@@ -309,7 +309,7 @@ func (s *Store) SoftDeleteExcept(ctx context.Context, owner, prefix string, seen
 			stale = append(stale, id)
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 	now := time.Now().Unix()
 	for _, id := range stale {
 		if _, err := s.db.ExecContext(ctx, `UPDATE assets SET deleted_at=? WHERE id=?`, now, id); err != nil {
@@ -327,7 +327,7 @@ func (s *Store) PendingExif(ctx context.Context, owner string, limit int) ([]Ass
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Asset
 	for rows.Next() {
 		var a Asset
@@ -432,7 +432,7 @@ func (s *Store) AssetsPage(ctx context.Context, owner string, beforeTaken int64,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -528,7 +528,7 @@ func (s *Store) AssetsWithoutPHash(ctx context.Context, owner string, limit int)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -548,7 +548,7 @@ func (s *Store) AllPHashes(ctx context.Context, owner string) (map[int64]string,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[int64]string{}
 	for rows.Next() {
 		var id int64
@@ -588,7 +588,7 @@ func (s *Store) OnThisDay(ctx context.Context, owner string, month, day, thisYea
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -612,7 +612,7 @@ func (s *Store) OnThisMonth(ctx context.Context, owner string, month, thisYear, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -631,7 +631,7 @@ func (s *Store) OldestAssets(ctx context.Context, owner string, limit int) ([]As
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -691,7 +691,7 @@ func (s *Store) ListAlbums(ctx context.Context, owner string) ([]Album, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Album{}
 	for rows.Next() {
 		var al Album
@@ -715,7 +715,7 @@ func (s *Store) AlbumAssets(ctx context.Context, owner string, albumID int64) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -744,7 +744,7 @@ func (s *Store) AddToAlbum(ctx context.Context, owner string, albumID int64, ass
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 	for _, id := range assetIDs {
 		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM assets WHERE id=? AND owner=?`, id, owner).Scan(&one); err != nil {
 			return err // ErrNoRows: asset that does not exist or is foreign
@@ -797,12 +797,12 @@ func (s *Store) PlaceClusters(ctx context.Context, owner string, decimals int) (
 	for rows.Next() {
 		var p Place
 		if err := rows.Scan(&p.Lat, &p.Lon, &p.Count); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		out = append(out, p)
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -860,7 +860,7 @@ func (s *Store) AssetTags(ctx context.Context, owner string, assetID int64) ([]s
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []string{}
 	for rows.Next() {
 		var t string
@@ -922,7 +922,7 @@ func (s *Store) ListTags(ctx context.Context, owner string) ([]Tag, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Tag{}
 	for rows.Next() {
 		var tg Tag
@@ -941,7 +941,7 @@ func (s *Store) AssetsByTag(ctx context.Context, owner, tag string) ([]Asset, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -972,7 +972,7 @@ func (s *Store) Subfolders(ctx context.Context, owner, base string) ([]FolderEnt
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []FolderEntry{}
 	for rows.Next() {
 		var fe FolderEntry
@@ -992,7 +992,7 @@ func (s *Store) FolderAssets(ctx context.Context, owner, base string) ([]Asset, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -1032,7 +1032,7 @@ func (s *Store) GeoAssets(ctx context.Context, owner string, limit int) ([]Asset
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Asset{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
@@ -1069,7 +1069,7 @@ func (s *Store) Calendar(ctx context.Context, owner string) ([]YearCount, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	byYear := map[int]*YearCount{}
 	order := []int{}
 	for rows.Next() {

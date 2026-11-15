@@ -41,7 +41,9 @@ func Open(path string) (*sql.DB, error) {
 	// modernc/sqlite writes better with 1 writer connection.
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
-		db.Close()
+		// The pool is discarded anyway and Ping already reports the real
+		// failure, so a Close error adds nothing actionable.
+		_ = db.Close()
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	return db, nil

@@ -33,11 +33,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: golangci-lint (new issues only)
+      - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
-          only-new-issues: true
 
   security:
     runs-on: ubuntu-latest

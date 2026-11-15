@@ -15,7 +15,7 @@ func TestWriteJSON(t *testing.T) {
 	rec := httptest.NewRecorder()
 	WriteJSON(rec, http.StatusTeapot, map[string]string{"a": "b"})
 	res := rec.Result()
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusTeapot {
 		t.Fatalf("code: got %d", res.StatusCode)
 	}
@@ -34,7 +34,7 @@ func TestErrorStatus(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/x", nil)
 		ErrorStatus(rec, r, NewError(http.StatusConflict, "conflict", "already exists"))
 		res := rec.Result()
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		if res.StatusCode != http.StatusConflict {
 			t.Fatalf("code: got %d", res.StatusCode)
 		}
@@ -56,7 +56,7 @@ func TestErrorStatus(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/x", nil)
 		ErrorStatus(rec, r, fmt.Errorf("internal detail: %w", errors.New("boom")))
 		res := rec.Result()
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		if res.StatusCode != http.StatusInternalServerError {
 			t.Fatalf("code: got %d", res.StatusCode)
 		}
@@ -125,7 +125,7 @@ func TestCORS(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/api/x", nil))
 		res := rec.Result()
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		if res.StatusCode != http.StatusNoContent {
 			t.Fatalf("preflight: got %d", res.StatusCode)
 		}
@@ -140,7 +140,7 @@ func TestCORS(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/x", nil))
 		res := rec.Result()
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		if !called || res.StatusCode != http.StatusOK {
 			t.Fatalf("handler: called=%v code=%d", called, res.StatusCode)
 		}

@@ -55,7 +55,7 @@ func newTestServer(t *testing.T) (*Server, *store.Store, *fakeProvider) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	fp := &fakeProvider{legacy: "legacy-owner"}
 	s := New(st, nil, nil, nil, fp,
 		Config{Token: "test-token", Secret: []byte("0123456789abcdef0123456789abcdef")},
@@ -286,7 +286,7 @@ func newMultiServer(t *testing.T) (*Server, *store.Store, *fakeProvider) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	fp := &fakeProvider{}
 	gv := auth.NewGraphValidator(graphFake(t).URL, auth.MultiTenant(), slog.Default())
 	s := New(st, nil, nil, gv, fp, Config{Secret: []byte("0123456789abcdef0123456789abcdef")}, slog.Default())
@@ -389,7 +389,7 @@ func TestBasicAuthMultiTenant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	fp := &fakeProvider{}
 	gv := auth.NewGraphValidator(srv.URL, auth.MultiTenant(), slog.Default())
 	s := New(st, nil, nil, gv, fp, Config{Secret: []byte("x")}, slog.Default())

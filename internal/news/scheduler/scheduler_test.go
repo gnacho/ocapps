@@ -54,7 +54,7 @@ func feedServer(t *testing.T) (*httptest.Server, *int32, *int32) {
 		for i := int32(0); i < atomic.LoadInt32(&extra); i++ {
 			items += itemXML("extra-" + string(rune('a'+i)))
 		}
-		w.Write([]byte(strings.Replace(rssBody, "ITEMSPLACEHOLDER", items, 1)))
+		_, _ = w.Write([]byte(strings.Replace(rssBody, "ITEMSPLACEHOLDER", items, 1)))
 	}))
 	t.Cleanup(ts.Close)
 	return ts, &hits, &extra
@@ -69,7 +69,7 @@ func TestSchedulerPicksUpNewItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	hash, _ := auth.HashPassword("x")
 	uid, _ := st.CreateUser("u", hash, "u", "user")
@@ -85,7 +85,7 @@ func TestSchedulerPicksUpNewItems(t *testing.T) {
 	}
 	// CreateFeed schedules at +600s (already fetched on subscription): force
 	// expiry so that the scheduler cycle picks it up NOW.
-	st.SetNextUpdate(created.ID, time.Now().Unix()-1)
+	_ = st.SetNextUpdate(created.ID, time.Now().Unix()-1)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	creds := testCipher(t)
@@ -95,7 +95,7 @@ func TestSchedulerPicksUpNewItems(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var done = make(chan struct{})
-	go func() { s.Run(ctx); close(done) }()
+	go func() { _ = s.Run(ctx); close(done) }()
 	defer func() {
 		cancel()
 		<-done

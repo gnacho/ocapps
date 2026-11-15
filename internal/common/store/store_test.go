@@ -38,7 +38,7 @@ func open(t *testing.T) (*sql.DB, string) {
 
 func TestOpenPragmas(t *testing.T) {
 	db, _ := open(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	for pragma, want := range map[string]string{
 		"journal_mode": "wal",
 		"synchronous":  "1", // NORMAL
@@ -57,7 +57,7 @@ func TestOpenPragmas(t *testing.T) {
 
 func TestMigrateOrdenYUserVersion(t *testing.T) {
 	db, _ := open(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	fsys := fstest.MapFS{
 		"migrations/002_segunda.sql": &fstest.MapFile{Data: []byte(
@@ -100,13 +100,13 @@ func TestMigrateReaperturaNoOp(t *testing.T) {
 	if err := Migrate(db, fsys, "migrations"); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	db2, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	if err := Migrate(db2, fsys, "migrations"); err != nil {
 		t.Fatalf("re-open: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestMigrateReaperturaNoOp(t *testing.T) {
 
 func TestMigrateRollbackEnDefectuosa(t *testing.T) {
 	db, _ := open(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	good := fstest.MapFS{
 		"migrations/001_ok.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE uno (id INTEGER PRIMARY KEY);`)},
@@ -149,7 +149,7 @@ func TestMigrateRollbackEnDefectuosa(t *testing.T) {
 // expected tables/columns -> Baseline(db, 1).
 func TestBaselineSobreEsquemaPhotos(t *testing.T) {
 	db, _ := open(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// historical photos schema (ocphotos internal/store/sqlite.go), already with
 	// the columns of the idempotent ALTERs applied
@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS geocode (
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -243,7 +243,7 @@ CREATE TABLE IF NOT EXISTS geocode (
 
 func TestBaselineRechazaNegativo(t *testing.T) {
 	db, _ := open(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := Baseline(db, -1); err == nil {
 		t.Fatal("expected an error with a negative version")
 	}

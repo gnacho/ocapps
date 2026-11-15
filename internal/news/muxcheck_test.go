@@ -20,7 +20,7 @@ func TestExactPatternEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("DELETE /api/me: %d (expected 405)", resp.StatusCode)
 	}
@@ -30,7 +30,7 @@ func TestExactPatternEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 	if resp2.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET /api/users/1: %d (esperado 405)", resp2.StatusCode)
 	}

@@ -14,7 +14,7 @@ func newTestStore(t *testing.T) (*Store, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	hash, err := bcrypt.GenerateFromPassword([]byte("x"), bcrypt.MinCost)
 	if err != nil {
 		t.Fatal(err)
@@ -80,8 +80,8 @@ func TestListDueFeeds(t *testing.T) {
 	now := time.Now().Unix()
 	a, _ := st.CreateFeed(uid, "https://a.example/f", nil, "a", "", "", nil)
 	b, _ := st.CreateFeed(uid, "https://b.example/f", nil, "b", "", "", nil)
-	st.SetNextUpdate(a.ID, now-100)
-	st.SetNextUpdate(b.ID, now+1000)
+	_ = st.SetNextUpdate(a.ID, now-100)
+	_ = st.SetNextUpdate(b.ID, now+1000)
 
 	due, err := st.ListDueFeeds(now, 10)
 	if err != nil {
@@ -180,7 +180,7 @@ func TestFeedFilter(t *testing.T) {
 // TestSearchItems: query search in title/body/URL, with scoping.
 func TestSearchItems(t *testing.T) {
 	st, uid := newTestStore(t)
-	st.CreateFeed(uid, "https://s.example/f", nil, "s", "", "", []NewItem{
+	_, _ = st.CreateFeed(uid, "https://s.example/f", nil, "s", "", "", []NewItem{
 		{GUID: "a", GUIDHash: "ha", Title: "How to bake bread", URL: "https://s.example/bread", Body: "flour and water"},
 		{GUID: "b", GUIDHash: "hb", Title: "Go vs Rust", URL: "https://s.example/go", Body: "performance"},
 		{GUID: "c", GUIDHash: "hc", Title: "Tennis news", URL: "https://s.example/tennis", Body: "rafa nadal"},
@@ -222,9 +222,9 @@ func TestFeedRetention(t *testing.T) {
 	// mark as read and age
 	for _, g := range []string{"a", "b"} {
 		id := 0
-		st.db.QueryRow(`SELECT id FROM items WHERE guid = ?`, g).Scan(&id)
-		st.MarkItemsUnreadFlag(uid, []int64{int64(id)}, false)
-		st.db.Exec(`UPDATE items SET last_modified = ? WHERE id = ?`, time.Now().Add(-48*time.Hour).Unix(), id)
+		_ = st.db.QueryRow(`SELECT id FROM items WHERE guid = ?`, g).Scan(&id)
+		_ = st.MarkItemsUnreadFlag(uid, []int64{int64(id)}, false)
+		_, _ = st.db.Exec(`UPDATE items SET last_modified = ? WHERE id = ?`, time.Now().Add(-48*time.Hour).Unix(), id)
 	}
 	// f1 with a 1 day override -> it purges on its own, f2 without override -> uses global
 	if err := st.SetFeedRetentionDays(f1.ID, uid, 1); err != nil {
@@ -267,12 +267,12 @@ func TestUserSettings(t *testing.T) {
 		t.Fatalf("theme: %q", v)
 	}
 	// upsert
-	st.SetUserSetting(uid, "theme", "light")
+	_ = st.SetUserSetting(uid, "theme", "light")
 	if v, _ := st.GetUserSetting(uid, "theme"); v != "light" {
 		t.Fatalf("theme after upsert: %q", v)
 	}
 	// delete with an empty value
-	st.SetUserSetting(uid, "theme", "")
+	_ = st.SetUserSetting(uid, "theme", "")
 	if v, _ := st.GetUserSetting(uid, "theme"); v != "" {
 		t.Fatalf("theme after delete: %q", v)
 	}

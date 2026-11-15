@@ -52,7 +52,7 @@ func TestShareAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("public view: %d", resp.StatusCode)
 	}
@@ -69,7 +69,7 @@ func TestShareAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Fatalf("public view after delete expected 404, I have %d", resp2.StatusCode)
 	}

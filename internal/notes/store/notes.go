@@ -77,7 +77,7 @@ func (s *Store) ListNotes(user string, category string, exclude []string, limit 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var notes []Note
 	for rows.Next() {
@@ -112,7 +112,9 @@ func (s *Store) UpdateNote(user string, id int64, title *string, content *string
 		if *favorite {
 			favInt = 1
 		}
-		s.db.Exec(`UPDATE notes SET favorite=? WHERE id=? AND user=?`, favInt, id, user)
+		if _, err := s.db.Exec(`UPDATE notes SET favorite=? WHERE id=? AND user=?`, favInt, id, user); err != nil {
+			return nil, err
+		}
 		existing.Favorite = *favorite
 	}
 	existing.Modified = modified
@@ -172,7 +174,7 @@ func (s *Store) SearchNotes(user string, query string, maxResults int) ([]Note, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var notes []Note
 	for rows.Next() {
@@ -191,7 +193,7 @@ func (s *Store) GetSettings(user string) (Settings, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var key, value string

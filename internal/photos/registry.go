@@ -87,7 +87,7 @@ func (r *registry) Touch(_ context.Context, u *auth.User, cred auth.Credential) 
 		sess = &session{}
 		r.sessions[u.ID] = sess
 	}
-	if !(sess.seeded && sess.isBasic) {
+	if !sess.seeded || !sess.isBasic {
 		if cred.Bearer != "" {
 			sess.dav = webdav.NewBearer(r.baseURL, cred.Bearer)
 			sess.isBasic = false

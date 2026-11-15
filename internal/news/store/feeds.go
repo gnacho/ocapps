@@ -43,7 +43,7 @@ func (s *Store) ListFeeds(userID int64) ([]Feed, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Feed{}
 	for rows.Next() {
 		f, err := scanFeed(rows)
@@ -92,7 +92,7 @@ func (s *Store) createFeed(userID int64, url string, folderID *int64, title, lin
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.Exec(
 		`INSERT INTO feeds (user_id, folder_id, url, url_hash, link, title, favicon, added, next_update, full_content, is_podcast)
@@ -145,7 +145,7 @@ func (s *Store) ReplaceFeedItems(feedID, userID int64, title, link string, items
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(`UPDATE feeds SET title = ?, link = ?, update_error_count = 0, last_update_error = '' WHERE id = ?`,
 		title, link, feedID); err != nil {
 		return 0, err
@@ -213,8 +213,9 @@ func boolInt(b bool) int {
 	return 0
 }
 
-func (s *Store) RecordFeedError(feedID int64, msg string) {
-	s.db.Exec(`UPDATE feeds SET update_error_count = update_error_count + 1, last_update_error = ? WHERE id = ?`, msg, feedID)
+func (s *Store) RecordFeedError(feedID int64, msg string) error {
+	_, err := s.db.Exec(`UPDATE feeds SET update_error_count = update_error_count + 1, last_update_error = ? WHERE id = ?`, msg, feedID)
+	return err
 }
 
 // ListDueFeeds returns the feeds with next_update in the past (for the scheduler).
@@ -227,7 +228,7 @@ func (s *Store) ListDueFeeds(now int64, limit int) ([]Feed, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Feed{}
 	for rows.Next() {
 		f, err := scanFeed(rows)
@@ -298,7 +299,7 @@ func (s *Store) AllFeedsWithUser() ([]UpdaterFeed, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []UpdaterFeed{}
 	for rows.Next() {
 		var f UpdaterFeed

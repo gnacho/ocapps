@@ -46,7 +46,7 @@ func TestVideoPoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	img, _, err := image.Decode(f)
 	if err != nil {
 		t.Fatalf("poster is not an image: %v", err)

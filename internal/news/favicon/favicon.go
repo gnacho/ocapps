@@ -62,7 +62,7 @@ func (c *Cache) Fetch(ctx context.Context, feedURL, siteLink string) {
 		c.log.Debug("favicon not downloaded", "url", icoURL, "err", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return
 	}
@@ -95,7 +95,7 @@ func (c *Cache) Serve(w http.ResponseWriter, hash string) {
 			w.Header().Set("Content-Type", contentType(ext))
 			w.Header().Set("Cache-Control", "public, max-age=86400")
 			w.WriteHeader(http.StatusOK)
-			w.Write(b)
+			_, _ = w.Write(b)
 			return
 		}
 	}

@@ -49,7 +49,7 @@ func davFake(t *testing.T, handler func(path string) (int, string)) *httptest.Se
 		code, body := handler(r.URL.Path)
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(code)
-		fmt.Fprint(w, body)
+		_, _ = fmt.Fprint(w, body)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -69,7 +69,7 @@ func TestScanAbortsWithoutSoftDeleteOn401(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 	if _, _, err := st.UpsertByETag(ctx, "alice", "/dav/spaces/x/Fotos/a.jpg", "e1", "a.jpg", "image", time.Now(), 100); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestScanGuardHalfFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 	// previous asset whose etag will NOT show up in the scan: without the
 	// guard it would be soft-deleted
@@ -144,7 +144,7 @@ func TestScanUpsertsPerOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 
 	srv := davFake(t, func(path string) (int, string) {

@@ -53,13 +53,17 @@ func (r *Refresher) Refresh(ctx context.Context, f *store.Feed) Result {
 func (r *Refresher) refresh(ctx context.Context, f *store.Feed) Result {
 	authPass, err := r.cred.Decrypt(f.AuthPassEnc)
 	if err != nil {
-		r.store.RecordFeedError(f.ID, "unreadable credentials (key rotated?)")
+		if rerr := r.store.RecordFeedError(f.ID, "unreadable credentials (key rotated?)"); rerr != nil {
+			r.log.Warn("record feed error failed", "url", f.URL, "err", rerr)
+		}
 		r.log.Warn("decrypt credentials failed", "url", f.URL, "err", err)
 		return Result{FeedID: f.ID, Err: err}
 	}
 	parsed, items, err := r.fetcher.Fetch(ctx, f.URL, f.AuthUser, authPass)
 	if err != nil {
-		r.store.RecordFeedError(f.ID, err.Error())
+		if rerr := r.store.RecordFeedError(f.ID, err.Error()); rerr != nil {
+			r.log.Warn("record feed error failed", "url", f.URL, "err", rerr)
+		}
 		r.log.Warn("fetch failed", "url", f.URL, "err", err)
 		return Result{FeedID: f.ID, Err: err}
 	}
@@ -161,7 +165,9 @@ func (r *Refresher) scheduleNext(f *store.Feed, res Result) {
 		gap = interval
 	}
 	gap = jitter(gap, 0.2)
-	r.store.SetNextUpdate(f.ID, time.Now().Add(gap).Unix())
+	if err := r.store.SetNextUpdate(f.ID, time.Now().Add(gap).Unix()); err != nil {
+		r.log.Warn("set next update failed", "feed", f.ID, "err", err)
+	}
 }
 
 // feedInterval returns the base interval of the feed: the user override

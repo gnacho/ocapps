@@ -326,7 +326,7 @@ func TestMiddleware(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
 		res := rec.Result()
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		if res.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("got %d", res.StatusCode)
 		}

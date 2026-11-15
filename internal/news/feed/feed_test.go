@@ -141,7 +141,7 @@ func TestDiscover(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/rss.xml" {
 			w.Header().Set("Content-Type", "application/rss+xml")
-			w.Write(loadFixture(t, "rss.xml"))
+			_, _ = w.Write(loadFixture(t, "rss.xml"))
 			return
 		}
 		html := `<!doctype html><html><head>
@@ -150,7 +150,7 @@ func TestDiscover(t *testing.T) {
 			<link rel="icon" href="/favicon.ico">
 			</head><body>hello</body></html>`
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(html))
+		_, _ = w.Write([]byte(html))
 	}))
 	defer srv.Close()
 
@@ -200,7 +200,7 @@ func TestFetchBasicAuth(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/rss+xml")
-		w.Write(loadFixture(t, "rss.xml"))
+		_, _ = w.Write(loadFixture(t, "rss.xml"))
 	}))
 	defer srv.Close()
 

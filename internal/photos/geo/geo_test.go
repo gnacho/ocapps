@@ -23,13 +23,13 @@ func TestNameConcurrentThrottle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"name":"Madrid","display_name":"Madrid, España"}`)
+		_, _ = fmt.Fprint(w, `{"name":"Madrid","display_name":"Madrid, España"}`)
 	}))
 	defer srv.Close()
 

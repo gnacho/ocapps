@@ -96,7 +96,7 @@ func newTestEnv(t *testing.T, fetcher feed.Fetcher) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 
 	hash, err := auth.HashPassword("pass1234")
 	if err != nil {
@@ -163,7 +163,7 @@ func (e *testEnv) doRaw(t *testing.T, method, path, user, pass string, body any)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, data
 }
@@ -181,7 +181,7 @@ func TestHealthzWithoutAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Fatalf("healthz: %d", resp.StatusCode)
 	}
@@ -262,7 +262,7 @@ func TestFolderCRUD(t *testing.T) {
 	if code, _ = e.do(t, "PUT", fmt.Sprintf("/folders/%d", folderID), e.user, e.pass, map[string]string{"name": "Tech2"}); code != 204 {
 		t.Fatalf("rename: %d", code)
 	}
-	code, body = e.do(t, "GET", "/folders", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/folders", e.user, e.pass, nil)
 	if !strings.Contains(string(body), "Tech2") {
 		t.Fatalf("rename not applied: %s", body)
 	}
@@ -355,7 +355,7 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	// pagination: batchSize 2 + offset by id (cursor: items with id <= cursor)
 	// NOTE: capture ids BEFORE the next decode (json.Unmarshal reuses
 	// the slice backing array and would overwrite page1).
-	code, body = e.do(t, "GET", "/items?type=3&getRead=true&batchSize=2", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/items?type=3&getRead=true&batchSize=2", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	page1 := itemsResp.Items
 	if len(page1) != 2 {
@@ -363,7 +363,7 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	}
 	cursor := page1[len(page1)-1].ID
 	secondID := page1[1].ID // page1[0] == firstID (same newest item)
-	code, body = e.do(t, "GET", fmt.Sprintf("/items?type=3&getRead=true&batchSize=2&offset=%d", cursor), e.user, e.pass, nil)
+	_, body = e.do(t, "GET", fmt.Sprintf("/items?type=3&getRead=true&batchSize=2&offset=%d", cursor), e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 2 {
 		t.Fatalf("page 2 with batchSize=2 must have 2 items, I have %d", len(itemsResp.Items))
@@ -385,14 +385,14 @@ func TestFeedAndSyncFlow(t *testing.T) {
 		t.Fatalf("read multiple PUT: %d", code)
 	}
 
-	code, body = e.do(t, "GET", "/items?type=3&getRead=false&batchSize=-1", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/items?type=3&getRead=false&batchSize=-1", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != n-2 {
 		t.Fatalf("after marking 2 as read %d remain, expected %d", len(itemsResp.Items), n-2)
 	}
 
 	// GET /feeds reflects unreadCount
-	code, body = e.do(t, "GET", "/feeds", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/feeds", e.user, e.pass, nil)
 	decode(t, body, &feedResp)
 	if feedResp.Feeds[0].UnreadCount != int64(n-2) {
 		t.Errorf("unreadCount en feeds: %d", feedResp.Feeds[0].UnreadCount)
@@ -402,14 +402,14 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	if code, _ = e.do(t, "POST", fmt.Sprintf("/items/%d/star", firstID), e.user, e.pass, nil); code != 204 {
 		t.Fatalf("star: %d", code)
 	}
-	code, body = e.do(t, "GET", "/items?type=2&getRead=true&batchSize=-1", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/items?type=2&getRead=true&batchSize=-1", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 1 || !itemsResp.Items[0].Starred {
 		t.Fatalf("starred: %s", body)
 	}
 
 	// /items/updated reflects state changes (lastModified bump)
-	code, body = e.do(t, "GET", "/items/updated?lastModified=1&type=3", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/items/updated?lastModified=1&type=3", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != n {
 		t.Fatalf("updated after the marks: %d (expected %d)", len(itemsResp.Items), n)
@@ -420,7 +420,7 @@ func TestFeedAndSyncFlow(t *testing.T) {
 		map[string]any{"newestItemId": newest}); code != 204 {
 		t.Fatalf("feed read: %d", code)
 	}
-	code, body = e.do(t, "GET", "/items?type=3&getRead=false", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/items?type=3&getRead=false", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 0 {
 		t.Fatalf("%d unread remain after feed read", len(itemsResp.Items))
@@ -435,9 +435,9 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	if ff.fetches != fetchesBefore+1 {
 		t.Fatal("the updater has not fetched")
 	}
-	code, body = e.do(t, "GET", "/items?type=3&getRead=true&batchSize=1&oldestFirst=false", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/items?type=3&getRead=true&batchSize=1&oldestFirst=false", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
-	code, body = e.do(t, "GET", "/items?type=3&getRead=false", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/items?type=3&getRead=false", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 1 {
 		t.Fatalf("after refresh expected 1 new unread, I have %d", len(itemsResp.Items))
@@ -460,7 +460,7 @@ func TestFeedAndSyncFlow(t *testing.T) {
 	if code, _ = e.do(t, "DELETE", fmt.Sprintf("/feeds/%d", feedID), e.user, e.pass, nil); code != 204 {
 		t.Fatalf("delete feed: %d", code)
 	}
-	code, body = e.do(t, "GET", "/items?type=3&getRead=true", e.user, e.pass, nil)
+	_, body = e.do(t, "GET", "/items?type=3&getRead=true", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
 	if len(itemsResp.Items) != 0 {
 		t.Fatalf("deleting a feed must take its items away: %d", len(itemsResp.Items))
@@ -598,7 +598,7 @@ func TestCORSPresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatal("CORS ausente en preflight")
 	}
@@ -638,7 +638,7 @@ func TestErrorI18n(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	decode(t, raw, &env)
 	if env.Error.Message != "folder not found" {
 		t.Errorf("message in en via Accept-Language: %q", env.Error.Message)
@@ -652,7 +652,7 @@ func TestErrorI18n(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw2, _ := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 	decode(t, raw2, &env)
 	if env.Error.Code != "unauthorized" || env.Error.Message != "no autorizado" {
 		t.Errorf("401 i18n: %s", raw2)

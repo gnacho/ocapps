@@ -65,7 +65,7 @@ func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, eta
 	if err != nil {
 		return "", err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return "", err
@@ -76,12 +76,17 @@ func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, eta
 		return "", err
 	}
 	if _, err := io.Copy(f, io.LimitReader(rc, 2<<30)); err != nil {
-		f.Close()
-		os.Remove(tmpIn)
+		_ = f.Close()
+		_ = os.Remove(tmpIn)
 		return "", err
 	}
-	f.Close()
-	defer os.Remove(tmpIn)
+	// the input file has to be complete before ffmpeg reads it: a Close that
+	// fails means the copy did not reach the disk
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpIn)
+		return "", err
+	}
+	defer func() { _ = os.Remove(tmpIn) }()
 
 	tmpOut := out + ".tmp.jpg" // ffmpeg infers the format from the extension
 	// first attempt at second 1, if the video is shorter, from the beginning
@@ -93,7 +98,7 @@ func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, eta
 				return out, os.Rename(tmpOut, out)
 			}
 		}
-		os.Remove(tmpOut)
+		_ = os.Remove(tmpOut)
 	}
 	return "", errors.New("ffmpeg could not extract a frame")
 }
@@ -112,7 +117,7 @@ func (s *Service) Get(ctx context.Context, dav *webdav.Client, href, etag string
 	if err != nil {
 		return "", err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	// defensive limit: 60 MB per photo
 	img, _, err := image.Decode(io.LimitReader(rc, 60<<20))
@@ -143,9 +148,13 @@ func (s *Service) Get(ctx context.Context, dav *webdav.Client, href, etag string
 		return "", err
 	}
 	err = jpeg.Encode(f, dst, &jpeg.Options{Quality: 80})
-	f.Close()
+	// the thumbnail is only renamed into the cache when it is complete on disk:
+	// a Close that fails after a good Encode means a truncated file
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
 	if err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	return out, os.Rename(tmp, out)

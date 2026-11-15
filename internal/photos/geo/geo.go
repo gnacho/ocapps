@@ -77,7 +77,7 @@ func (g *Geocoder) Name(ctx context.Context, lat, lon float64, decimals int) (st
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("nominatim: %s", resp.Status)
 	}

@@ -89,7 +89,7 @@ func TestPropfind(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusMultiStatus)
-		fmt.Fprint(w, multistatusXML)
+		_, _ = fmt.Fprint(w, multistatusXML)
 	}))
 	defer srv.Close()
 
@@ -165,10 +165,10 @@ func TestDownloadYMeID(t *testing.T) {
 		switch r.URL.Path {
 		case "/graph/v1.0/me":
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"id":"id-alice"}`)
+			_, _ = fmt.Fprint(w, `{"id":"id-alice"}`)
 		case "/dav/f.jpg":
 			w.Header().Set("Content-Type", "image/jpeg")
-			fmt.Fprint(w, "jpeg-bytes")
+			_, _ = fmt.Fprint(w, "jpeg-bytes")
 		default:
 			http.NotFound(w, r)
 		}
@@ -184,7 +184,7 @@ func TestDownloadYMeID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	b, _ := io.ReadAll(body)
 	if string(b) != "jpeg-bytes" || ct != "image/jpeg" {
 		t.Fatalf("Download: %q %q", b, ct)
@@ -199,13 +199,13 @@ func TestNewBearerAuth(t *testing.T) {
 		auths = append(auths, r.Method+" "+r.Header.Get("Authorization"))
 		switch {
 		case r.URL.Path == "/graph/v1.0/me":
-			fmt.Fprint(w, `{"id":"u1"}`)
+			_, _ = fmt.Fprint(w, `{"id":"u1"}`)
 		case r.URL.Path == "/graph/v1.0/me/drives":
-			fmt.Fprint(w, `{"value":[]}`)
+			_, _ = fmt.Fprint(w, `{"value":[]}`)
 		case r.Method == "PROPFIND":
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusMultiStatus)
-			fmt.Fprint(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
+			_, _ = fmt.Fprint(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
 		default:
 			w.Header().Set("Content-Type", "application/octet-stream")
 			_, _ = fmt.Fprint(w, "data")
@@ -231,12 +231,12 @@ func TestNewBearerAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc.Close()
+	_ = rc.Close()
 	rc2, _, _, err := c.DownloadRange(ctx, "/dav/spaces/x/a.jpg", "bytes=0-3")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc2.Close()
+	_ = rc2.Close()
 
 	if len(auths) != 6 {
 		t.Fatalf("requests: %d (%v)", len(auths), auths)

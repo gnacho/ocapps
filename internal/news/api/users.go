@@ -369,7 +369,9 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if language != "auto" {
-		s.store.SetUserLanguage(id, language)
+		if err := s.store.SetUserLanguage(id, language); err != nil {
+			s.logError(w, r, "set user language", err)
+		}
 	}
 	created, err := s.store.GetUserByID(id)
 	if err != nil {

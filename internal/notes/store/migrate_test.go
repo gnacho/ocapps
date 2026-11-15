@@ -172,7 +172,7 @@ func TestSecondOpenIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 
 	var v int
 	if err := s2.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
