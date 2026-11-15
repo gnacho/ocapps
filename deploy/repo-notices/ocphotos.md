@@ -1,49 +1,48 @@
-# Aviso para el README de `ocphotos`
+# Notice for the `ocphotos` README
 
-> Borrador (H6, SPEC §1.2/§8 + quick-win Q6): **prependear** este bloque
-> al README del repo `ocphotos` al publicar la release unificada,
-> sustituyendo `vX.Y.Z` por la versión de ocapps publicada (≥ la release
-> unificada 0.1.0). Tras la release, el repo `ocphotos` se archiva.
+> Draft (H6, SPEC §1.2/§8 + quick-win Q6): **prepend** this block to the
+> `ocphotos` repo README when the unified release is published, replacing
+> `vX.Y.Z` with the published ocapps version (>= the unified 0.1.0 release).
+> After the release, the `ocphotos` repo is archived.
 
 ---
 
-> ## ⚠️ El backend vive ahora en `ocapps`
+> ## The backend now lives in `ocapps`
 >
-> El backend Go de esta app (`app/server-go/`) está **congelado** en su
-> último commit y **ya no recibe desarrollo**. Su sucesor es el servicio
-> unificado **[`ocapps`](https://github.com/gnacho/ocapps) ≥ vX.Y.Z**, que
-> sirve los backends de news, notes y photos en un solo binario con el
-> mismo contrato de API (`/ocphotos-api/api/...`).
+> This app's Go backend (`app/server-go/`) is **frozen** at its last commit and
+> **is no longer developed**. Its successor is the unified
+> **[`ocapps`](https://github.com/gnacho/ocapps) >= vX.Y.Z** service, which
+> serves the news, notes and photos backends in a single binary with the same
+> API contract (`/ocphotos-api/api/...`).
 >
-> - **Este repo sigue siendo la cara de la app**: `ocphotos/` (extensión),
->   `deploy/README.md` y metadata de Store se mantienen aquí. Solo
->   `app/server-go/` queda congelado (no aceptar PRs contra él).
-> - **Cambio de proxy al migrar**: el proxy debe pasar `/ocphotos-api/`
->   al upstream de ocapps (`127.0.0.1:8096`) **SIN strip** — el trailing
->   slash que strip-peaba el prefijo hacia el servicio antiguo debe
->   quitarse. La extensión ya llama `/ocphotos-api/api/...`, así que no
->   hay cambios en el frontend.
-> - **Variables de entorno**: `OC_USER` → `OCAPPS_PHOTOS_USER`,
->   `OC_APP_TOKEN` → `OCAPPS_PHOTOS_APP_TOKEN`, `MEMORIES_TOKEN` →
->   `OCAPPS_PHOTOS_TOKEN`, `SCAN_ROOT` → `OCAPPS_PHOTOS_SCAN_ROOT`,
->   `SCAN_EVERY` → `OCAPPS_PHOTOS_SCAN_EVERY`, `OC_BASE_URL` →
->   `OCAPPS_OPENCLOUD_URL`. Las legacy siguen aceptadas durante 2
->   versiones menores (hasta ocapps 0.3.0) con warning.
-> - **Store**: el paquete de la app declara como requisito el companion
->   server `ocapps >= vX.Y.Z` (una sola instalación de ocapps sirve a las
->   tres apps; esta app usa el módulo **photos**). El empaquetado de la
->   extensión no cambia (`vite build`).
+> - **This repo is still the face of the app**: `ocphotos/` (the extension),
+>   `deploy/README.md` and the Store metadata stay here. Only `app/server-go/`
+>   is frozen (do not accept PRs against it).
+> - **Proxy change when migrating**: the proxy must pass `/ocphotos-api/` to the
+>   ocapps upstream (`127.0.0.1:8096`) **WITHOUT strip**, so the trailing slash
+>   that stripped the prefix towards the old service has to be removed. The
+>   extension already calls `/ocphotos-api/api/...`, so there are no frontend
+>   changes.
+> - **Environment variables**: `OC_USER` -> `OCAPPS_PHOTOS_USER`,
+>   `OC_APP_TOKEN` -> `OCAPPS_PHOTOS_APP_TOKEN`, `MEMORIES_TOKEN` ->
+>   `OCAPPS_PHOTOS_TOKEN`, `SCAN_ROOT` -> `OCAPPS_PHOTOS_SCAN_ROOT`,
+>   `SCAN_EVERY` -> `OCAPPS_PHOTOS_SCAN_EVERY`, `OC_BASE_URL` ->
+>   `OCAPPS_OPENCLOUD_URL`. The legacy names are still accepted for 2 minor
+>   versions (up to ocapps 0.3.0) with a warning.
+> - **Store**: the app package declares the `ocapps >= vX.Y.Z` companion server
+>   as a requirement (a single ocapps installation serves all three apps, and
+>   this app uses the **photos** module). Extension packaging does not change
+>   (`vite build`).
 >
-> ## 🗑️ Retirada de la PWA legacy (quick-win Q6)
+> ## Removal of the legacy PWA (quick-win Q6)
 >
-> La PWA antigua queda **retirada** en la release unificada y se elimina
-> de este repo:
+> The old PWA is **retired** in the unified release and removed from this repo:
 >
-> - `app/src` — la PWA legacy (sucesora: la extensión `ocphotos/`).
-> - `app/info.md` — documentación de la PWA.
-> - `app/Dockerfile` — imagen all-in-one (PWA + backend). El despliegue
->   soportado es el binario/imagen de `ocapps` (que incluye `ffmpeg` como
->   única dependencia de sistema) detrás de tu proxy.
+> - `app/src`: the legacy PWA (successor: the `ocphotos/` extension).
+> - `app/info.md`: documentation of the PWA.
+> - `app/Dockerfile`: the all-in-one image (PWA + backend). The supported
+>   deployment is the `ocapps` binary or image (which includes `ffmpeg` as the
+>   only system dependency) behind your proxy.
 >
-> La variable `WEB_DIR` desaparece con la PWA: si está definida, ocapps la
-> ignora con un warning.
+> The `WEB_DIR` variable goes away with the PWA: if it is defined, ocapps
+> ignores it with a warning.

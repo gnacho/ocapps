@@ -1,34 +1,33 @@
-# Aviso para el README de `ocnotes`
+# Notice for the `ocnotes` README
 
-> Borrador (H6, SPEC §1.2/§8): **prependear** este bloque al README del
-> repo `ocnotes` al publicar la release unificada, sustituyendo `vX.Y.Z`
-> por la versión de ocapps publicada (≥ la release unificada 0.1.0).
-> Tras la release, el repo `ocnotes` se archiva.
+> Draft (H6, SPEC §1.2/§8): **prepend** this block to the `ocnotes` repo README
+> when the unified release is published, replacing `vX.Y.Z` with the published
+> ocapps version (>= the unified 0.1.0 release). After the release, the
+> `ocnotes` repo is archived.
 
 ---
 
-> ## ⚠️ El backend vive ahora en `ocapps`
+> ## The backend now lives in `ocapps`
 >
-> El backend Go de esta app (`backend/`) está **congelado** en su último
-> commit y **ya no recibe desarrollo**. Su sucesor es el servicio unificado
-> **[`ocapps`](https://github.com/gnacho/ocapps) ≥ vX.Y.Z**, que sirve los
-> backends de news, notes y photos en un solo binario con el mismo
-> contrato de API (Notes API bajo `/index.php/apps/notes/api/v1/` y
-> `/v1.4/`, más `/ocs/v2.php/cloud/capabilities` y `/ocs/v2.php/cloud/user`).
+> This app's Go backend (`backend/`) is **frozen** at its last commit and **is
+> no longer developed**. Its successor is the unified
+> **[`ocapps`](https://github.com/gnacho/ocapps) >= vX.Y.Z** service, which
+> serves the news, notes and photos backends in a single binary with the same
+> API contract (Notes API under `/index.php/apps/notes/api/v1/` and `/v1.4/`,
+> plus `/ocs/v2.php/cloud/capabilities` and `/ocs/v2.php/cloud/user`).
 >
-> - **Este repo sigue siendo la cara de la app**: `extension/`, README y
->   metadata de Store se mantienen aquí. Solo `backend/` queda congelado
->   (no aceptar PRs contra él).
-> - **Usuarios / despliegue**: instala el *companion server* `ocapps`
->   (binario estático + unit systemd + script de migración desde los datos
->   de `ocnotes` en
->   [`deploy/`](https://github.com/gnacho/ocapps/tree/main/deploy)) y
->   apunta el proxy a su listener único (`127.0.0.1:8096`). Las variables
->   `OCNOTES_*` siguen aceptadas como legacy durante 2 versiones menores
->   (hasta ocapps 0.3.0) con warning; migra a `OCAPPS_*`. Ojo:
->   `OCNOTES_GRAPH_URL` (URL completa `.../graph/v1.0/me`) se mapea a
->   `OCAPPS_OPENCLOUD_URL` derivando la raíz automáticamente.
-> - **Store**: el paquete de la app declara como requisito el companion
->   server `ocapps >= vX.Y.Z` (una sola instalación de ocapps sirve a las
->   tres apps; esta app usa el módulo **notes**). El empaquetado de la
->   extensión no cambia (`vite build`).
+> - **This repo is still the face of the app**: `extension/`, the README and the
+>   Store metadata stay here. Only `backend/` is frozen (do not accept PRs
+>   against it).
+> - **Users / deployment**: install the `ocapps` *companion server* (static
+>   binary + systemd unit + migration script for the `ocnotes` data in
+>   [`deploy/`](https://github.com/gnacho/ocapps/tree/main/deploy)) and point the
+>   proxy at its single listener (`127.0.0.1:8096`). The `OCNOTES_*` variables
+>   are still accepted as legacy for 2 minor versions (up to ocapps 0.3.0) with
+>   a warning, so migrate to `OCAPPS_*`. Note that `OCNOTES_GRAPH_URL` (the full
+>   `.../graph/v1.0/me` URL) maps to `OCAPPS_OPENCLOUD_URL` by deriving the root
+>   automatically.
+> - **Store**: the app package declares the `ocapps >= vX.Y.Z` companion server
+>   as a requirement (a single ocapps installation serves all three apps, and
+>   this app uses the **notes** module). Extension packaging does not change
+>   (`vite build`).
