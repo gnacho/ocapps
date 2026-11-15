@@ -25,6 +25,7 @@ import (
 	"github.com/gnacho/ocapps/internal/common/auth"
 	"github.com/gnacho/ocapps/internal/common/config"
 	"github.com/gnacho/ocapps/internal/common/cred"
+	"github.com/gnacho/ocapps/internal/common/live"
 	commonmodule "github.com/gnacho/ocapps/internal/common/module"
 	"github.com/gnacho/ocapps/internal/photos/api"
 	"github.com/gnacho/ocapps/internal/photos/exif"
@@ -36,6 +37,9 @@ import (
 // PublicPrefix es el namespace público del módulo (SPEC §4.3). Alias de la
 // constante del paquete api (fuente única: registro de rutas y firma de vídeo).
 const PublicPrefix = api.PublicPrefix
+
+// photosTopic es el topic de los eventos del stream que publica este módulo.
+const photosTopic = api.TopicPhotos
 
 // Module implementa la interfaz común de SPEC §4.5 (internal/common/module).
 var _ commonmodule.Module = (*Module)(nil)
@@ -52,6 +56,7 @@ type Module struct {
 	apiSrv *api.Server
 	reg    *registry
 	sched  *scheduler
+	hub    *live.Hub
 }
 
 // New cablea el módulo. cfg es la config unificada completa (se usa la
@@ -126,18 +131,33 @@ func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module
 	reg.touchHook = sched.maybeScan
 	reg.scanHook = sched.requestScan
 	geocoder := geo.New(st, log)
+	// Canal de invalidaciones (SSE): el cliente deja de sondear y recarga
+	// cuando el servidor avisa de un cambio del owner.
+	hub := live.NewHub()
 	srv := api.New(st, thumbs, geocoder, validator, reg,
 		api.Config{Token: pcfg.Token, Secret: secret}, log)
 	srv.SetExifWorker(exifW)
+	srv.SetHub(hub)
+	sched.setHub(hub)
 
 	return &Module{
 		cfg: pcfg, dataDir: dataDir, log: log,
 		st: st, secret: secret, validator: validator,
-		apiSrv: srv, reg: reg, sched: sched,
+		apiSrv: srv, reg: reg, sched: sched, hub: hub,
 	}, nil
 }
 
 func (m *Module) Name() string { return "photos" }
+
+// CloseStreams cierra los streams SSE abiertos. El wiring lo llama desde
+// http.Server.RegisterOnShutdown: sin esto, Shutdown espera a los handlers en
+// curso y un stream no termina nunca por sí solo (agotaría el presupuesto de
+// 10 s en cada apagado con pestañas abiertas).
+func (m *Module) CloseStreams() {
+	if m.hub != nil {
+		m.hub.Close()
+	}
+}
 
 // Enabled: si el módulo se construyó es que estaba enabled; el gate
 // OCAPPS_PHOTOS_ENABLED lo aplica el wiring antes de llamar a New.

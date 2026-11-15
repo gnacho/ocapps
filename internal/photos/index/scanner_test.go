@@ -192,3 +192,47 @@ func TestScanPrefix(t *testing.T) {
 		t.Error("un path de otra carpeta entra en el ámbito de Fotos")
 	}
 }
+
+// TestScanAvisaCambios: el hook OnIndexChange se llama cuando el scan cambia el
+// índice (altas o bajas) y NO cuando no hay nada nuevo. Es lo que dispara el
+// aviso a los clientes conectados (SSE), así que un falso negativo dejaría las
+// pestañas abiertas sin ver las fotos nuevas.
+func TestScanAvisaCambios(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	srv := davFake(t, func(path string) (int, string) {
+		if path == "/dav/spaces/x/Fotos/" {
+			return http.StatusMultiStatus, multistatus("/dav/spaces/x/Fotos/", "/dav/spaces/x/Fotos/a.jpg")
+		}
+		return http.StatusNotFound, ""
+	})
+
+	avisa := 0
+	sc := newTestScanner(t, srv, st)
+	sc.OnIndexChange = func(owner string) {
+		if owner != "alice" {
+			t.Errorf("owner del aviso = %q", owner)
+		}
+		avisa++
+	}
+
+	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
+		t.Fatal(err)
+	}
+	if avisa != 1 {
+		t.Fatalf("avisos tras el primer scan = %d, quiero 1", avisa)
+	}
+
+	// Segundo scan idéntico: nada cambia, no hay aviso.
+	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
+		t.Fatal(err)
+	}
+	if avisa != 1 {
+		t.Fatalf("avisos tras un scan sin cambios = %d, quiero 1", avisa)
+	}
+}

@@ -47,6 +47,8 @@ internal/
 │   ├── store/         apertura SQLite unificada + runner de migraciones
 │   │                  (Migrate/Baseline; WAL, busy_timeout, foreign_keys)
 │   ├── httpx/         WriteJSON, errores, CORS unificado (SPEC §4.4)
+│   ├── live/          hub SSE por owner: avisos de cambio a los clientes
+│   │                  conectados (invalidación, no datos)
 │   ├── module/        interfaz Module (Register/Run/Healthy) + handler 503
 │   ├── log/           slog JSON con attr "module"
 │   ├── cred/          secretos persistentes + AES-256-GCM (fail-loud)
@@ -55,7 +57,7 @@ internal/
 │   └── webdav/        cliente WebDAV/Graph generalizado
 ├── news/              News API v1-3 (/index.php/apps/news/api/v1-3/) + /api/me|users
 ├── notes/             Notes API v1/v1.4 + OCS (/ocs/v2.php/cloud/*)
-└── photos/            /ocphotos-api/api/* (single-tenant, app-token + Bearer propio)
+└── photos/            /ocphotos-api/api/* (multi-tenant por Bearer OIDC del host)
 ```
 
 Decisiones clave (SPEC): **D2** — tres ficheros SQLite
@@ -64,6 +66,33 @@ transformación de las BDs vivas (user_version 18/2/baseline→1); **D3** —
 un módulo cuyo wiring falla queda `failed` (su namespace sirve 503) sin
 tumbar el proceso: `GET /healthz` (200 siempre, detalle por módulo) y
 `GET /readyz` (503 si algún módulo enabled falla) son la señal operativa.
+
+## Avisos en vivo (SSE)
+
+`GET /ocphotos-api/api/stream` es un stream de Server-Sent Events **por
+usuario**: el cliente lo deja abierto y el servidor le avisa cuando cambia algo
+de lo suyo, en vez de que el cliente pregunte cada N segundos. Por el stream no
+viajan datos, solo invalidaciones: al recibir un evento, el cliente recarga ese
+dato con la API normal.
+
+- Autenticación: la misma del resto de `/ocphotos-api/` (Bearer OIDC del host o
+  Basic app-password). Cada stream queda atado al `oc_id` del usuario: los
+  eventos de otros usuarios no se entregan.
+- Topics: `photos` (índice o metadatos de assets: scan que cambió algo, backlog
+  EXIF, favorito, archivo, etiquetas) y `albums` (crear, renombrar, borrar y
+  pertenencia).
+- Si el cliente manda `X-Ocapps-Client: <id>` en sus escrituras, el evento
+  vuelve con ese id para que la pestaña que hizo el cambio no recargue lo que ya
+  tiene.
+- Comportamiento: heartbeat cada 25 s, `X-Accel-Buffering: no` y `retry: 3000`.
+  Un cliente que no lee a tiempo pierde un evento (recibirá el siguiente). Al
+  apagar el servicio los streams se cierran, así que `Shutdown` no espera.
+- **Proxy**: la ruta necesita buffering desactivado (`proxy_buffering off` en
+  nginx). Los snippets de `deploy/proxy/` ya lo traen; un vhost propio sin él
+  deja los eventos parados en el buffer.
+
+Sin consumidor del stream todo sigue funcionando: el cliente simplemente no
+recibe avisos.
 
 ## Quickstart de desarrollo
 

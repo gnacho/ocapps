@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gnacho/ocapps/internal/common/config"
+	"github.com/gnacho/ocapps/internal/common/live"
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"github.com/gnacho/ocapps/internal/photos/exif"
 	"github.com/gnacho/ocapps/internal/photos/index"
@@ -33,6 +34,7 @@ type scheduler struct {
 	tmo    time.Duration // timeout por scan (2h)
 	sweep  time.Duration // periodo de purga de sesiones Bearer >24h
 	maxPar chan struct{} // semáforo global de scans concurrentes
+	hub    *live.Hub     // opcional: aviso de cambios a los clientes conectados
 
 	mu       sync.Mutex
 	queued   map[string]bool
@@ -53,6 +55,19 @@ func newScheduler(reg *registry, st *store.Store, exifW *exif.Worker, root strin
 		lastScan: map[string]time.Time{},
 		queue:    make(chan string, 64),
 	}
+}
+
+// setHub conecta el scheduler con el canal de avisos: un scan que cambia el
+// índice avisa al owner para que las pestañas abiertas recarguen sin esperar a
+// su siguiente sondeo. Sin hub (tests) simplemente no avisa.
+func (s *scheduler) setHub(h *live.Hub) { s.hub = h }
+
+// publishIndexChange avisa al owner de que su índice fotográfico ha cambiado.
+func (s *scheduler) publishIndexChange(owner string) {
+	if s.hub == nil {
+		return
+	}
+	s.hub.Publish(owner, live.Event{Topic: photosTopic})
 }
 
 // maybeScan es el hook de actividad (Touch del registry): encola el scan del
@@ -172,6 +187,7 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 	}
 
 	scanner := index.NewScanner(sess.dav, webdav.DefaultOptions(), s.st, s.log)
+	scanner.OnIndexChange = s.publishIndexChange
 	if err := scanner.ScanSpace(sctx, owner, webdavURL, s.root); err != nil {
 		if errors.Is(err, webdav.ErrUnauthorized) {
 			s.reg.markExpired(owner)
@@ -188,5 +204,9 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 	if err := s.exifW.Run(sctx, owner, sess.dav); err != nil && errors.Is(err, webdav.ErrUnauthorized) {
 		s.reg.markExpired(owner)
 		s.log.Info("exif pospuesto: token caducado, se reanudará con la próxima actividad", "owner", owner)
+		return
 	}
+	// El EXIF corrige fechas y GPS de lo recién escaneado: un segundo aviso
+	// para que la pestaña abierta no se quede con la fecha del mtime.
+	s.publishIndexChange(owner)
 }

@@ -69,6 +69,9 @@ func run() error {
 		Handler:           a.mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Los streams SSE no terminan solos: hay que cerrarlos al empezar el
+	// apagado o Shutdown esperaría a esos handlers hasta agotar el presupuesto.
+	srv.RegisterOnShutdown(a.closeStreams)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -202,6 +205,25 @@ type app struct {
 	log     *slog.Logger
 	mux     *http.ServeMux
 	modules []*entry
+}
+
+// streamCloser lo implementan los módulos que mantienen streams abiertos
+// (SSE) y necesitan cerrarlos al apagar.
+type streamCloser interface {
+	CloseStreams()
+}
+
+// closeStreams cierra los streams de todos los módulos que los tengan. Corre
+// al inicio de http.Server.Shutdown (RegisterOnShutdown).
+func (a *app) closeStreams() {
+	for _, e := range a.modules {
+		if e.mod == nil {
+			continue
+		}
+		if c, ok := e.mod.(streamCloser); ok {
+			c.CloseStreams()
+		}
+	}
 }
 
 // failedNamespaces: rutas donde se registra el handler sustituto 503 cuando

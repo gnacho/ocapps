@@ -153,7 +153,7 @@ func assertCORSHeaders(t *testing.T, res *http.Response) {
 	want := map[string]string{
 		"Access-Control-Allow-Origin":   "*",
 		"Access-Control-Allow-Methods":  "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers":  "Authorization, Content-Type, If-Match, OCS-APIRequest",
+		"Access-Control-Allow-Headers":  "Authorization, Content-Type, If-Match, OCS-APIRequest, X-Ocapps-Client",
 		"Access-Control-Expose-Headers": "ETag, Last-Modified, X-Notes-API-Versions, X-Notes-Chunk-Cursor",
 	}
 	for k, v := range want {

@@ -21,6 +21,11 @@ type Scanner struct {
 	opts  webdav.Options // clasificación de medios por extensión (SPEC §2.1)
 	store *store.Store
 	log   *slog.Logger
+
+	// OnIndexChange, si no es nil, se llama al terminar un scan que ha
+	// cambiado el índice (altas, bajas o metadatos XMP aplicados). El módulo
+	// lo usa para avisar a los clientes conectados; nil = no avisar.
+	OnIndexChange func(owner string)
 }
 
 // NewScanner crea el scanner de UN owner: dav es el cliente de su sesión
@@ -178,6 +183,11 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 		"owner", owner, "escaneados", scanned, "cambiados", changed, "eliminados", removed,
 		"xmp", xmpApplied,
 		"duracion", time.Since(start).Round(time.Second))
+	if changed > 0 || removed > 0 || xmpApplied > 0 {
+		if s.OnIndexChange != nil {
+			s.OnIndexChange(owner)
+		}
+	}
 	return nil
 }
 
