@@ -1,128 +1,128 @@
-# Informe de auditoría: ocnotes (OpenCloud Notes)
+# Audit report: ocnotes (OpenCloud Notes)
 
-Repo auditado: `/mnt/agents/work/opencloud/ocnotes` (HEAD `2c0ff6b`, v0.1.4). Solo lectura; no se ha modificado nada.
+Audited repo: `/mnt/agents/work/opencloud/ocnotes` (HEAD `2c0ff6b`, v0.1.4). Read-only, nothing modified.
 
 ---
 
-## 1. Métricas reales vs. plan
+## 1. Real metrics vs. plan
 
-| Métrica | Plan | Real | Veredicto |
+| Metric | Plan | Real | Verdict |
 |---|---|---|---|
-| Líneas Go | 2.905 | **2.905** | ✔ exacto |
-| Ficheros Go | 18 | **18** | ✔ exacto |
-| Líneas TS+Vue | 1.790 | **1.785** en `extension/src` (12 ficheros: 6 `.ts` + 6 `.vue`) | discrepancia de 5 líneas = `extension/vite.config.ts` (5 líneas). El plan contaba TS también fuera de `src/`. Con él: 1.790 exactos. |
+| Go lines | 2,905 | **2,905** | exact |
+| Go files | 18 | **18** | exact |
+| TS+Vue lines | 1,790 | **1,785** in `extension/src` (12 files: 6 `.ts` + 6 `.vue`) | discrepancy of 5 lines = `extension/vite.config.ts` (5 lines). The plan counted TS outside `src/` too. With it: exactly 1,790. |
 
-Matices que el plan no desglosa:
-- De las 2.905 líneas Go, **963 son tests** (6 ficheros `_test.go`): `server_test.go` 249, `attachments_test.go` 240, `migrate_test.go` 198, `store_test.go` 139, `imgproxy_test.go` 83, `netguard_test.go` 54. Código Go de producción: **1.942 líneas en 12 ficheros**.
-- El TS/Vue excluye `styles.css` (756 líneas) y `l10n/translations.json` (148).
-- **No existe `deploy/`** en el repo (el contexto del plan lo menciona; está ausente). Tampoco hay `manifest.json`, `Dockerfile`, `Makefile` ni CI.
+Nuances the plan does not break down:
+- Of the 2,905 Go lines, **963 are tests** (6 `_test.go` files): `server_test.go` 249, `attachments_test.go` 240, `migrate_test.go` 198, `store_test.go` 139, `imgproxy_test.go` 83, `netguard_test.go` 54. Production Go code: **1,942 lines in 12 files**.
+- The TS/Vue figure excludes `styles.css` (756 lines) and `l10n/translations.json` (148).
+- **There is no `deploy/`** in the repo (the plan context mentions one, but it is absent). There is also no `manifest.json`, `Dockerfile`, `Makefile` or CI.
 
-## 2. Inventario del backend
+## 2. Backend inventory
 
-### Endpoints exactos (`backend/internal/api/server.go`, router en líneas 87–128)
+### Exact endpoints (`backend/internal/api/server.go`, router on lines 87-128)
 
-Base `v1` = `/index.php/apps/notes/api/v1`, `v1.4` = `/index.php/apps/notes/api/v1.4` (constantes en líneas 25–26):
+Base `v1` = `/index.php/apps/notes/api/v1` and `v1.4` = `/index.php/apps/notes/api/v1.4` (constants on lines 25-26):
 
-| Método | Path | Handler | Uso |
+| Method | Path | Handler | Use |
 |---|---|---|---|
-| GET | `/v1/notes` | `handleGetNotes` (l.340) | Lista con `category`, `exclude`, `pruneBefore`, `chunkSize` (protocolo de sync incremental de la API Notes) |
-| POST | `/v1/notes` | `handleCreateNote` (l.451) | Crear |
-| GET | `/v1/notes/{id}` | `handleGetNote` (l.477) | Leer (devuelve ETag) |
-| PUT | `/v1/notes/{id}` | `handleUpdateNote` (l.494) | Actualizar título/contenido/categoría/favorito, con `If-Match` → 412 (l.506–512) |
-| DELETE | `/v1/notes/{id}` | `handleDeleteNote` (l.541) | Borrar + cascada de adjuntos (l.553–557) |
-| GET/PUT | `/v1/settings` | `handleGetSettings`/`handlePutSettings` (l.563, 575) | Settings por usuario |
-| POST | `/v1/img/sign` | `handleImgSign` (l.132) | Firma HMAC de URLs de imagen externas |
-| GET | `/v1/img?u=&t=` | `imgproxy.Serve` (pública, sin auth, firmada) | Proxy de imágenes con caché en disco |
-| POST/GET | `/v1.4/attachment/{id}` | `handleAttachment` (l.165) | Subir (multipart, ≤32 MiB) / descargar adjuntos |
-| GET | `/ocs/v2.php/cloud/capabilities` | `handleCapabilities` (l.623) | OCS XML/JSON, anuncia `api_version ["0.2","1.4"]`, version 6.0.0 |
-| GET | `/ocs/v2.php/cloud/user` | `handleUserInfo` (l.667) | Info de usuario OCS |
+| GET | `/v1/notes` | `handleGetNotes` (l.340) | List with `category`, `exclude`, `pruneBefore`, `chunkSize` (incremental sync protocol of the Notes API) |
+| POST | `/v1/notes` | `handleCreateNote` (l.451) | Create |
+| GET | `/v1/notes/{id}` | `handleGetNote` (l.477) | Read (returns the ETag) |
+| PUT | `/v1/notes/{id}` | `handleUpdateNote` (l.494) | Update title, content, category or favourite, with `If-Match` -> 412 (l.506-512) |
+| DELETE | `/v1/notes/{id}` | `handleDeleteNote` (l.541) | Delete plus attachment cascade (l.553-557) |
+| GET/PUT | `/v1/settings` | `handleGetSettings`/`handlePutSettings` (l.563, 575) | Per-user settings |
+| POST | `/v1/img/sign` | `handleImgSign` (l.132) | HMAC signature of external image URLs |
+| GET | `/v1/img?u=&t=` | `imgproxy.Serve` (public, no auth, signed) | Image proxy with an on-disk cache |
+| POST/GET | `/v1.4/attachment/{id}` | `handleAttachment` (l.165) | Upload (multipart, <= 32 MiB) or download attachments |
+| GET | `/ocs/v2.php/cloud/capabilities` | `handleCapabilities` (l.623) | OCS XML/JSON, announces `api_version ["0.2","1.4"]`, version 6.0.0 |
+| GET | `/ocs/v2.php/cloud/user` | `handleUserInfo` (l.667) | OCS user info |
 
-Todas las respuestas llevan `X-Notes-API-Versions: 0.2, 1.4` (l.27–28).
+All responses carry `X-Notes-API-Versions: 0.2, 1.4` (l.27-28).
 
-### Esquema SQLite (`backend/internal/store/migrations/`)
+### SQLite schema (`backend/internal/store/migrations/`)
 
-- **Tabla `notes`** (001_initial.sql l.4–12 + 002_multiuser.sql l.4): `id INTEGER PK AUTOINCREMENT, title, content, category, favorite INTEGER, modified INTEGER, etag TEXT, user TEXT`. Índices por category, favorite, modified, user, (user,category), (user,modified).
-- **Tabla `settings`** (reconstruida en 002 l.10–22): `(user, key, value)` con PK compuesta. Defaults sembrados en código: `notesPath="Notes"`, `fileSuffix=".md"` (`store/notes.go` l.237).
-- Los adjuntos **no** están en SQLite: van a disco en `<dataDir>/attachments/<noteID>/<nombre>` (`attachments/attachments.go`).
+- **`notes` table** (001_initial.sql l.4-12 + 002_multiuser.sql l.4): `id INTEGER PK AUTOINCREMENT, title, content, category, favorite INTEGER, modified INTEGER, etag TEXT, user TEXT`. Indexes on category, favorite, modified, user, (user,category) and (user,modified).
+- **`settings` table** (rebuilt in 002 l.10-22): `(user, key, value)` with a composite PK. Defaults seeded in code: `notesPath="Notes"`, `fileSuffix=".md"` (`store/notes.go` l.237).
+- Attachments are **not** in SQLite, they go to disk at `<dataDir>/attachments/<noteID>/<name>` (`attachments/attachments.go`).
 
-### Lógica que va MÁS ALLÁ de un CRUD trivial sobre `.md` (riesgos para F1)
+### Logic that goes BEYOND a trivial CRUD over `.md` (risks for F1)
 
-1. **Servidor de la API Nextcloud Notes para clientes externos, no solo para la extensión.** Los comentarios citan a *Iotas* (cliente Android de Notes) en `server.go` l.52–55 y l.594, y los endpoints OCS (capabilities/user) solo existen para clientes externos. Los commits `e7704cf fix(api): close the Notes API gaps that break Iotas` y `9f1de3c feat(api): implement the Notes API v1.4 attachment endpoints` lo confirman. **Eliminar el backend rompe la sincronización con clientes móviles/escritorio**, no solo la web.
-2. **Autenticación multiusuario contra Graph** (`auth/auth.go`): valida Basic y Bearer contra `OCNOTES_GRAPH_URL`, cachea "shadow users" 5 min, y **escopa todas las notas por graph ID** (migración 002_multiuser). WebDAV del host daría esto gratis para la web, pero es lo que permite a Iotas autenticarse.
-3. **Favoritos persistidos** (columna `favorite`, orden `favorite DESC, modified DESC` en `store/notes.go` l.98). No es derivable del contenido del `.md`.
-4. **Categorías como metadato por nota** (columna `category`, filtrable por query param). No son carpetas reales.
-5. **Etags y control de conflictos**: `If-Match` → 412 con la nota actual en el cuerpo (`server.go` l.506–512); ETag agregado SHA-256 en la lista (l.370); cabecera `Last-Modified`.
-6. **Protocolo de sync incremental**: `pruneBefore` (notas podadas a solo `{id}`), `chunkSize` + `X-Notes-Chunk-Cursor`, `exclude=content` (l.340–449). Pensado para clientes con caché local.
-7. **Proxy de imágenes firmado HMAC-SHA256** (`imgproxy/imgproxy.go`): existe porque la CSP del host es `img-src 'self'` y el preview no puede cargar imágenes externas. Incluye mitigación SSRF (`netguard`: rechaza IPs privadas/loopback/link-local), caché en disco, límite 8 MB, secret persistente. **Sin sustituto WebDAV.**
-8. **Adjuntos con dedup de nombres** estilo Nextcloud 6.1+ (`nombre (1).ext`), escritura atómica, límite 32 MiB, rutas `.attachments.<id>/`, borrado en cascada.
-9. **Settings por usuario servidor-side** (fuente, tamaño, notesPath, fileSuffix).
-10. **Código muerto relevante**: `Store.SearchNotes` (`store/notes.go` l.194, LIKE sobre título+contenido) **no está expuesto en ningún endpoint** — la búsqueda la hace el cliente en memoria. `crypto/secrets.go` tampoco se usa desde `main.go` (imgproxy gestiona su propio secret).
+1. **It is a Nextcloud Notes API server for external clients, not just for the extension.** The comments cite *Iotas* (the Notes Android client) in `server.go` l.52-55 and l.594, and the OCS endpoints (capabilities and user) only exist for external clients. The commits `e7704cf fix(api): close the Notes API gaps that break Iotas` and `9f1de3c feat(api): implement the Notes API v1.4 attachment endpoints` confirm it. **Removing the backend breaks synchronisation with mobile and desktop clients**, not just the web app.
+2. **Multi-user authentication against Graph** (`auth/auth.go`): it validates Basic and Bearer against `OCNOTES_GRAPH_URL`, caches "shadow users" for 5 min, and **scopes every note by graph ID** (migration 002_multiuser). The host WebDAV would give this for free for the web app, but this is what lets Iotas authenticate.
+3. **Persisted favourites** (the `favorite` column, ordered `favorite DESC, modified DESC` in `store/notes.go` l.98). It is not derivable from the `.md` content.
+4. **Categories as per-note metadata** (the `category` column, filterable by query param). They are not real folders.
+5. **Etags and conflict control**: `If-Match` -> 412 with the current note in the body (`server.go` l.506-512), an aggregate SHA-256 ETag in the list (l.370), and a `Last-Modified` header.
+6. **Incremental sync protocol**: `pruneBefore` (notes pruned down to `{id}`), `chunkSize` plus `X-Notes-Chunk-Cursor`, `exclude=content` (l.340-449). Designed for clients with a local cache.
+7. **HMAC-SHA256 signed image proxy** (`imgproxy/imgproxy.go`): it exists because the host CSP is `img-src 'self'` and the preview cannot load external images. It includes SSRF mitigation (`netguard`: rejects private, loopback and link-local IPs), an on-disk cache, an 8 MB limit and a persistent secret. **It has no WebDAV substitute.**
+8. **Attachments with Nextcloud 6.1+ style name deduplication** (`name (1).ext`), atomic writes, a 32 MiB limit, `.attachments.<id>/` paths and cascading delete.
+9. **Server-side per-user settings** (source, size, notesPath, fileSuffix).
+10. **Relevant dead code**: `Store.SearchNotes` (`store/notes.go` l.194, LIKE over title and content) **is not exposed by any endpoint**, because the search is done by the client in memory. `crypto/secrets.go` is not used from `main.go` either (imgproxy manages its own secret).
 
-## 3. Uso desde la extensión (`extension/src/composables/api.ts`)
+## 3. Usage from the extension (`extension/src/composables/api.ts`)
 
-| Endpoint | Consumido en | ¿Depende de lógica no-WebDAV? |
+| Endpoint | Consumed in | Does it depend on non-WebDAV logic? |
 |---|---|---|
-| `GET /notes` | `NoteList.vue` l.40 (`loadNotes`) | Lista ordenada fav+fecha; el cliente recibe **contenido completo** de todas las notas y lo usa para preview (l.167) y búsqueda en memoria (l.77–80). Con WebDAV habría que GET de cada `.md` tras el PROPFIND. |
-| `GET /notes/{id}` | — | **Definido en `api.ts` l.42 pero nunca llamado.** Código muerto en cliente. |
-| `POST /notes` | `NotesApp.vue` l.81 | ID numérico generado por servidor. WebDAV: el "id" pasaría a ser la ruta del fichero. |
-| `PUT /notes/{id}` (título/contenido) | `NoteEditor.vue` l.342 (`save`) | ETag + If-Match: WebDAV lo da gratis (`getetag`/`If-Match` en PUT). |
-| `PUT /notes/{id}` (favorite) | `NoteEditor.vue` l.375 (`toggleFavorite`) | **Sin equivalente `.md`.** Alternativas: PROPPATCH de propiedad custom (soporte incierto en el WebDAV de OpenCloud), sidecar en cliente, o perderlo. |
-| `PUT /notes/{id}` (category) | `NoteEditor.vue` l.387, `useDragNote.ts` l.55 (drag&drop a sidebar) | Categoría como metadato. Con WebDAV: mapear a subcarpetas (MOVE) o PROPPATCH; requiere reescribir el modelo de datos. |
-| `DELETE /notes/{id}` | `NoteEditor.vue` l.358 | WebDAV DELETE directo; la cascada de adjuntos habría que rehacerla en cliente. |
-| `GET/PUT /settings` | `NotesApp.vue` l.135, `SidebarNav.vue` l.92, l.110 | Sustituible por `localStorage` (ya usado para `listWidth`, `NotesApp.vue` l.93). **Ojo:** `notesPath`/`fileSuffix` se guardan en el servidor pero **ningún código los consume** — son settings zombie heredados del API Notes. |
-| `POST /img/sign` | `NoteEditor.vue` l.492 (`buildPreview`) | **Sin sustituto sin backend**: la CSP `img-src 'self'` bloquea imágenes externas en el preview. |
-| `POST /v1.4/attachment/{id}` | `NoteEditor.vue` l.294 (`onAttachmentSelected`) | WebDAV PUT a una subcarpeta de adjuntos lo resuelve bien (incluso más simple). |
-| `GET /v1.4/attachment/{id}?path=` | `NoteEditor.vue` l.473 (`resolveAttachments`) | WebDAV GET + blob URL. Resoluble. |
-| OCS capabilities/user | — | **No los usa la extensión.** Son para Iotas/otros clientes Nextcloud Notes. |
+| `GET /notes` | `NoteList.vue` l.40 (`loadNotes`) | List ordered by favourite and date. The client receives the **full content** of every note and uses it for previews (l.167) and in-memory search (l.77-80). With WebDAV it would have to GET every `.md` after the PROPFIND. |
+| `GET /notes/{id}` | - | **Defined in `api.ts` l.42 but never called.** Dead code on the client. |
+| `POST /notes` | `NotesApp.vue` l.81 | Numeric ID generated by the server. With WebDAV the "id" would become the file path. |
+| `PUT /notes/{id}` (title/content) | `NoteEditor.vue` l.342 (`save`) | ETag plus If-Match, which WebDAV gives for free (`getetag`/`If-Match` on PUT). |
+| `PUT /notes/{id}` (favorite) | `NoteEditor.vue` l.375 (`toggleFavorite`) | **No `.md` equivalent.** Alternatives: PROPPATCH of a custom property (uncertain support in the OpenCloud WebDAV), a client-side sidecar, or losing it. |
+| `PUT /notes/{id}` (category) | `NoteEditor.vue` l.387, `useDragNote.ts` l.55 (drag and drop to the sidebar) | Category as metadata. With WebDAV: map to subfolders (MOVE) or PROPPATCH, which requires rewriting the data model. |
+| `DELETE /notes/{id}` | `NoteEditor.vue` l.358 | Direct WebDAV DELETE, and the attachment cascade would have to be redone on the client. |
+| `GET/PUT /settings` | `NotesApp.vue` l.135, `SidebarNav.vue` l.92, l.110 | Replaceable by `localStorage` (already used for `listWidth`, `NotesApp.vue` l.93). **Note:** `notesPath`/`fileSuffix` are stored on the server but **no code consumes them**, as they are zombie settings inherited from the Notes API. |
+| `POST /img/sign` | `NoteEditor.vue` l.492 (`buildPreview`) | **No substitute without a backend**: the `img-src 'self'` CSP blocks external images in the preview. |
+| `POST /v1.4/attachment/{id}` | `NoteEditor.vue` l.294 (`onAttachmentSelected`) | A WebDAV PUT to an attachments subfolder handles it well (even more simply). |
+| `GET /v1.4/attachment/{id}?path=` | `NoteEditor.vue` l.473 (`resolveAttachments`) | WebDAV GET plus a blob URL. Solvable. |
+| OCS capabilities and user | - | **The extension does not use them.** They are for Iotas and other Nextcloud Notes clients. |
 
-Funciones UI que dependen de lógica del backend que WebDAV no da gratis:
-1. **Favoritos persistidos** (grupo "Favorites" en `NoteList.vue` l.84–85, estrella en editor).
-2. **Imágenes externas en el preview** (proxy firmado, por CSP).
-3. **Categorías agregadas**: se computan en cliente (`SidebarNav.vue` l.49–56) pero desde un campo `category` por nota que hoy vive en SQLite; con WebDAV hay que redefinir dónde vive (carpetas vs. propiedad).
-4. **ID estable numérico** usado como clave de adjuntos y `key` de listas; desaparece (la ruta lo sustituiría).
-5. **Clientes externos (Iotas)** vía API Notes + OCS: se pierden por completo.
+UI features that depend on backend logic WebDAV does not give for free:
+1. **Persisted favourites** (the "Favorites" group in `NoteList.vue` l.84-85, the star in the editor).
+2. **External images in the preview** (signed proxy, because of the CSP).
+3. **Aggregated categories**: they are computed on the client (`SidebarNav.vue` l.49-56) but from a per-note `category` field that lives in SQLite today. With WebDAV it has to be redefined where it lives (folders vs. a property).
+4. **Stable numeric ID** used as the key for attachments and as the `key` of lists: it disappears, and the path would replace it.
+5. **External clients (Iotas)** through the Notes API plus OCS: entirely lost.
 
-## 4. Viabilidad de la Fase 1
+## 4. Feasibility of Phase 1
 
-| Capacidad | (a) WebDAV puro | (b) Cliente JS | (c) Sin sustituto |
+| Capability | (a) Pure WebDAV | (b) JS client | (c) No substitute |
 |---|---|---|---|
-| Listar notas (PROPFIND carpeta) | ✔ | | |
-| Leer/crear/editar/borrar `.md` | ✔ GET/PUT/DELETE | | |
-| Etag + If-Match (conflictos) | ✔ `getetag` + `If-Match` | | |
-| Título (del nombre de fichero o 1ª línea) | ✔ | ✔ | |
-| Búsqueda por título+contenido | parcial (hoy es en cliente) | ✔ (exige descargar todos los contenidos — coste N GETs) | |
-| Categorías | ✔ si se mapean a subcarpetas (MOVE para recategorizar) | ✔ agregación en cliente como hoy | |
-| Favoritos | ✖ estándar | solo local (localStorage, no sincroniza) | ✖ persistencia multi-dispositivo sin PROPPATCH fiable |
-| Adjuntos | ✔ PUT/GET en subcarpeta | | |
-| Settings (fuente, tamaño, vista) | | ✔ localStorage (patrón ya usado) | |
-| Preview markdown | | ✔ ya es 100% cliente (markdown-it + DOMPurify) | |
-| Imágenes externas en preview (CSP) | | ✖ (fetch desde cliente también choca con CSP/origen) | ✖ **necesita proxy servidor** |
-| API Nextcloud Notes + OCS para Iotas/móviles | | | ✖ **se pierde entera** |
-| Multiusuario | ✔ lo da la sesión del host | | |
+| List notes (PROPFIND on the folder) | yes | | |
+| Read/create/edit/delete `.md` | yes GET/PUT/DELETE | | |
+| Etag plus If-Match (conflicts) | yes `getetag` + `If-Match` | | |
+| Title (from the file name or the first line) | yes | yes | |
+| Search by title and content | partial (it is client-side today) | yes (requires downloading every content, N GETs of cost) | |
+| Categories | yes if mapped to subfolders (MOVE to recategorise) | yes, aggregated on the client as today | |
+| Favourites | no, not standard | local only (localStorage, no sync) | no multi-device persistence without a reliable PROPPATCH |
+| Attachments | yes PUT/GET in a subfolder | | |
+| Settings (source, size, view) | | yes, localStorage (a pattern already in use) | |
+| Markdown preview | | yes, it is already 100% client-side (markdown-it + DOMPurify) | |
+| External images in the preview (CSP) | | no (fetching from the client hits the CSP and origin too) | **needs a server proxy** |
+| Nextcloud Notes API plus OCS for Iotas and mobiles | | | **entirely lost** |
+| Multi-user | yes, the host session provides it | | |
 
-**Veredicto: F1 es viable CON PÉRDIDAS**, y una de ellas es estructural, no cosmética:
+**Verdict: F1 is feasible WITH LOSSES**, and one of them is structural, not cosmetic:
 
-1. **Pérdida 1 (grande): se apaga la API Nextcloud Notes para clientes externos.** El backend no es un mero sirve-ficheros para la web: es un servidor Notes v1.4 completo con OCS capabilities pensado para Iotas (citado en código y commits). Si el objetivo del producto incluye sincronización móvil, F1 directa es **no viable**; si el alcance es solo la app web, sigue.
-2. **Pérdida 2 (media): imágenes externas en el preview.** Sin el proxy firmado no hay workaround en cliente puro por la CSP del host. Se puede degradar a "no cargar imágenes externas".
-3. **Pérdida 3 (media): favoritos sincronizados.** Solo persisten localmente salvo que el WebDAV de OpenCloud acepte PROPPATCH de propiedades custom (a verificar).
-4. **Rediseño (no pérdida):** categorías → carpetas, id numérico → path, carga perezosa de contenidos (hoy la UI asume tener todos los contenidos en memoria para buscar y previsualizar; con WebDAV hay que cambiar la estrategia de carga).
+1. **Loss 1 (big): the Nextcloud Notes API for external clients goes away.** The backend is not a mere file server for the web app, it is a full Notes v1.4 server with OCS capabilities designed for Iotas (cited in code and commits). If the product goal includes mobile sync, a straight F1 is **not viable**. If the scope is only the web app, it holds.
+2. **Loss 2 (medium): external images in the preview.** Without the signed proxy there is no workaround on a pure client because of the host CSP. It can be degraded to "do not load external images".
+3. **Loss 3 (medium): synced favourites.** They only persist locally unless the OpenCloud WebDAV accepts PROPPATCH of custom properties (to be verified).
+4. **Redesign (not a loss):** categories become folders, the numeric id becomes a path, and content loading becomes lazy (today the UI assumes it has every content in memory to search and preview, and with WebDAV the loading strategy has to change).
 
-Además, **migración de datos**: las notas actuales viven en SQLite y los adjuntos en `<dataDir>/attachments/`; F1 necesita exportar a la carpeta WebDAV del usuario (decisión: categoría → subcarpeta; favoritos → ¿frontmatter?).
+On top of that, **data migration**: the current notes live in SQLite and the attachments in `<dataDir>/attachments/`, so F1 needs to export them to the user's WebDAV folder (decision: category to subfolder, favourites to frontmatter?).
 
-## 5. Estructura de la extensión
+## 5. Extension structure
 
-- **Tipo:** `defineWebApplication` de `@opencloud-eu/web-pkg` (`extension/src/index.ts` l.30) — es una **app web completa con ruta propia** (`/` montada bajo `/notes`, `authContext: 'user'`), **no** una extensión `folderView`/`customComponent`/`sidebarPanel`. El único punto de extensión declarado es `appMenuItem` (l.56–65). No hay ninguna referencia a `folderView` en el código (grep vacío).
-- **Empaquetado:** Vite + `@opencloud-eu/extension-sdk` v7 (`extension/vite.config.ts`: `defineConfig({ name: 'web-app-notes' })`). El SDK genera el manifest en build; **no hay `manifest.json` en el repo** ni `dist/` commiteado (`.gitignore`). Estilos inyectados en runtime vía `<style>` (`index.ts` l.11–22).
-- **`deploy/`: no existe.** Si el plan asume manifests/docker de despliegue, hay que crearlos o vivían fuera del repo.
-- Estructura: `views/NotesApp.vue` (layout 3 columnas), `components/` (SidebarNav, NoteList, NoteEditor 713 líneas, NewNoteDialog, ModalDialog), `composables/` (api, theme, useDragNote), `stores/notes.ts` (estado reactivo global, sin Pinia), i18n con vue3-gettext (`gettext.config.cjs`, locales es/en).
+- **Type:** `defineWebApplication` from `@opencloud-eu/web-pkg` (`extension/src/index.ts` l.30), which makes it a **full web app with its own route** (`/` mounted under `/notes`, `authContext: 'user'`), **not** a `folderView`/`customComponent`/`sidebarPanel` extension. The only declared extension point is `appMenuItem` (l.56-65). There is no reference to `folderView` anywhere in the code (empty grep).
+- **Packaging:** Vite plus `@opencloud-eu/extension-sdk` v7 (`extension/vite.config.ts`: `defineConfig({ name: 'web-app-notes' })`). The SDK generates the manifest at build time, so **there is no `manifest.json` in the repo** and no committed `dist/` (`.gitignore`). Styles are injected at runtime through `<style>` (`index.ts` l.11-22).
+- **`deploy/`: it does not exist.** If the plan assumes deployment manifests or Docker files, they have to be created or they lived outside the repo.
+- Structure: `views/NotesApp.vue` (3-column layout), `components/` (SidebarNav, NoteList, NoteEditor at 713 lines, NewNoteDialog, ModalDialog), `composables/` (api, theme, useDragNote), `stores/notes.ts` (global reactive state, no Pinia), and i18n with vue3-gettext (`gettext.config.cjs`, es/en locales).
 
-## 6. Tests y build
+## 6. Tests and build
 
-- **Tests:** solo Go (6 ficheros, 963 líneas): API (`server_test.go`), adjuntos, migraciones, store, imgproxy, netguard. `go test ./...` debería cubrirlos. **Cero tests de frontend.**
-- **Scripts npm** (`extension/package.json` l.6–9): solo `dev` y `build`. **No hay `check:types`** (aunque `vue-tsc` y `@opencloud-eu/tsconfig` están en devDependencies — fácil de añadir), ni `lint`, ni `test`.
-- **CI: ninguna.** No hay `.github/`, `.woodpecker/`, ni ningún YAML de pipeline en el repo.
-- **Go:** `go 1.25.0`, única dependencia directa `modernc.org/sqlite v1.56.0` (sin framework web; `net/http` stdlib).
-- Config del backend por env: `OCNOTES_ADDR`, `OCNOTES_DATA_DIR`, `OCNOTES_GRAPH_URL`, `OCNOTES_AUTH_MODE`, `OCNOTES_OWNER` (`config/config.go`).
+- **Tests:** Go only (6 files, 963 lines): API (`server_test.go`), attachments, migrations, store, imgproxy, netguard. `go test ./...` should cover them. **Zero frontend tests.**
+- **npm scripts** (`extension/package.json` l.6-9): only `dev` and `build`. **There is no `check:types`** (even though `vue-tsc` and `@opencloud-eu/tsconfig` are in devDependencies, so it is easy to add), nor `lint`, nor `test`.
+- **CI: none.** There is no `.github/`, no `.woodpecker/`, and no pipeline YAML of any kind in the repo.
+- **Go:** `go 1.25.0`, with `modernc.org/sqlite v1.56.0` as the only direct dependency (no web framework, just the `net/http` stdlib).
+- Backend config through env: `OCNOTES_ADDR`, `OCNOTES_DATA_DIR`, `OCNOTES_GRAPH_URL`, `OCNOTES_AUTH_MODE`, `OCNOTES_OWNER` (`config/config.go`).
 
-### Resumen ejecutivo
-Las métricas del plan son exactas (2.905 Go / 1.790 TS+Vue contando `vite.config.ts`). Pero el plan subestima el backend: no es "un CRUD sobre SQLite", es un **servidor Nextcloud Notes v1.4 multiusuario con clientes externos (Iotas), proxy de imágenes anti-CSP, favoritos, sync incremental y adjuntos**. F1 (WebDAV puro) es viable para la app web con pérdidas concretas: API externa/OCS, imágenes externas en preview y favoritos sincronizados; y exige rediseño de categorías, ids y estrategia de carga, más una migración SQLite → WebDAV que el plan debe presupuestar.
+### Executive summary
+The plan metrics are exact (2,905 Go lines and 1,790 TS+Vue lines counting `vite.config.ts`). But the plan underestimates the backend: it is not "a CRUD over SQLite", it is a **multi-user Nextcloud Notes v1.4 server with external clients (Iotas), an anti-CSP image proxy, favourites, incremental sync and attachments**. F1 (pure WebDAV) is viable for the web app with concrete losses: the external API and OCS, external images in the preview, and synced favourites. It also demands a redesign of categories, ids and loading strategy, plus a SQLite to WebDAV migration that the plan must budget for.
