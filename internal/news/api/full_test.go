@@ -13,7 +13,7 @@ func articleServer(t *testing.T) *httptest.Server {
 	long := "<p>" + strings.Repeat("Substantial article text. ", 40) + "</p>"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<!doctype html><html><head><title>Article</title></head><body>
+		_, _ = w.Write([]byte(`<!doctype html><html><head><title>Article</title></head><body>
 <nav>menu menu</nav>
 <article><h1>Real title</h1>` + long + `</article>
 <footer>footer</footer></body></html>`))
@@ -65,7 +65,7 @@ func TestItemFullExtractsAndCaches(t *testing.T) {
 func TestItemFullUnextractable(t *testing.T) {
 	// minimal page: extraction < minTextLen -> 422 with a stable code
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`<html><body><p>corto</p></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><p>short</p></body></html>`))
 	}))
 	t.Cleanup(ts.Close)
 

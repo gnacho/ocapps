@@ -13,7 +13,7 @@ import (
 
 func TestArticleWithSelector(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`<html><body><div id="articleBody"><h1>Title</h1><p>Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris.</p><p>Second paragraph with more filler content to go over the minimum character threshold of the extraction and make sure the validation passes without problems.</p><p>Third additional paragraph to give room to the total length of the plain text extracted from the selector.</p></div></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><div id="articleBody"><h1>Title</h1><p>Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris.</p><p>Second paragraph with more filler content to go over the minimum character threshold of the extraction and make sure the validation passes without problems.</p><p>Third additional paragraph to give room to the total length of the plain text extracted from the selector.</p></div></body></html>`))
 	}))
 	defer ts.Close()
 
@@ -33,7 +33,7 @@ func TestArticleSelectorFallbackToReadability(t *testing.T) {
 	// page without the selector: it must fall back to readability (which with little text
 	// returns an error or content, here we only check that it does not panic)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`<html><body><main><p>Short content.</p></main></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><main><p>Short content.</p></main></body></html>`))
 	}))
 	defer ts.Close()
 
@@ -43,7 +43,7 @@ func TestArticleSelectorFallbackToReadability(t *testing.T) {
 
 func TestArticleSelectorInvalid(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`<html><body><p>x</p></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><p>x</p></body></html>`))
 	}))
 	defer ts.Close()
 	e := NewAllowLocal(5 * time.Second)
