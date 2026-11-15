@@ -208,7 +208,7 @@ func TestNewBearerAuth(t *testing.T) {
 			fmt.Fprint(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
 		default:
 			w.Header().Set("Content-Type", "application/octet-stream")
-			fmt.Fprint(w, "data")
+			_, _ = fmt.Fprint(w, "data")
 		}
 	}))
 	defer srv.Close()
