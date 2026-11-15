@@ -63,7 +63,7 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, url, authUser, authPass string)
 	if err != nil {
 		return nil, nil, fmt.Errorf("download feed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return nil, nil, fmt.Errorf("download feed: HTTP %d: %w", resp.StatusCode, ErrAuthRequired)
 	}

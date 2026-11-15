@@ -116,7 +116,7 @@ func TestServeRejectsBadSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("bad signature: got %d, want 403", resp.StatusCode)
 	}
@@ -151,7 +151,7 @@ func TestServeFirmaAntiguaValida(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("old signature rejected in Serve: got %d", resp.StatusCode)
 	}
@@ -168,7 +168,7 @@ func TestServeFirmaAntiguaValida(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("cache: got %d", resp2.StatusCode)
 	}
@@ -183,7 +183,7 @@ func TestServeRechazaEsquema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("file:// scheme: got %d, want 403", resp.StatusCode)
 	}
@@ -203,7 +203,7 @@ func TestServeTipoNoPermitido(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnsupportedMediaType {
 		t.Fatalf("html: got %d, want 415", resp.StatusCode)
 	}

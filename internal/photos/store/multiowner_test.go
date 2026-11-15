@@ -16,7 +16,7 @@ func twoOwnersFixture(t *testing.T) (*Store, context.Context, map[string]int64, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	ctx := context.Background()
 	now := time.Now()
 	ids := map[string]int64{}
@@ -241,7 +241,7 @@ func TestBackfillCollisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 	now := time.Now()
 	add := func(owner, path, etag string) int64 {

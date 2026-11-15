@@ -107,7 +107,7 @@ func verifyBackup(path string) error {
 	if err != nil {
 		return err
 	}
-	defer bdb.Close()
+	defer func() { _ = bdb.Close() }()
 	var result string
 	if err := bdb.QueryRow(`PRAGMA quick_check`).Scan(&result); err != nil {
 		return err
@@ -174,7 +174,7 @@ func stripComments(sqlText string) string {
 		}
 		if i+1 < len(sqlText) && sqlText[i] == '/' && sqlText[i+1] == '*' {
 			i += 2
-			for i+1 < len(sqlText) && !(sqlText[i] == '*' && sqlText[i+1] == '/') {
+			for i+1 < len(sqlText) && (sqlText[i] != '*' || sqlText[i+1] != '/') {
 				i++
 			}
 			if i+1 < len(sqlText) {

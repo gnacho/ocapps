@@ -96,7 +96,7 @@ func (s *Store) ListItems(f ItemFilter) ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Item{}
 	for rows.Next() {
 		it, err := scanItem(rows)
@@ -214,7 +214,7 @@ func (s *Store) markItems(userID int64, ids []int64, col string, val bool) error
 		return fmt.Errorf("invalid column: %s", col)
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("UPDATE items SET %s = ?, last_modified = ? WHERE user_id = ? AND id IN (", col))
+	fmt.Fprintf(&sb, "UPDATE items SET %s = ?, last_modified = ? WHERE user_id = ? AND id IN (", col)
 	args := []any{v, now(), userID}
 	for i, id := range ids {
 		if i > 0 {

@@ -36,7 +36,7 @@ func TestSaveOpenRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	body, err := io.ReadAll(rc)
 	if err != nil {
@@ -66,7 +66,7 @@ func TestSaveDetectsImageContentType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	if ct != "image/png" {
 		t.Fatalf("content type = %q, want image/png", ct)
@@ -106,7 +106,7 @@ func TestSaveDeduplicatesNames(t *testing.T) {
 			t.Fatalf("Open %s: %v", path, err)
 		}
 		body, _ := io.ReadAll(rc)
-		rc.Close()
+		_ = rc.Close()
 		if string(body) != want {
 			t.Fatalf("%s content = %q, want %q", path, body, want)
 		}

@@ -468,7 +468,7 @@ func (s *Server) duplicates(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) signVideo(id int64, exp int64) string {
 	mac := hmac.New(sha256.New, s.cfg.Secret)
-	fmt.Fprintf(mac, "%d|%d", id, exp)
+	_, _ = fmt.Fprintf(mac, "%d|%d", id, exp)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -518,10 +518,10 @@ func (s *Server) videoStream(w http.ResponseWriter, r *http.Request) {
 	}
 	rc, hdr, status, err := dav.DownloadRange(r.Context(), a.Path, r.Header.Get("Range"))
 	if err != nil {
-		http.Error(w, err.Error(), 502)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	if ct := hdr.Get("Content-Type"); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
@@ -551,7 +551,7 @@ func (s *Server) computePHash(ctx context.Context, owner string, a store.Asset) 
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return err
@@ -644,10 +644,10 @@ func (s *Server) original(w http.ResponseWriter, r *http.Request) {
 	}
 	rc, ct, err := dav.Download(r.Context(), a.Path)
 	if err != nil {
-		http.Error(w, err.Error(), 502)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	if ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}

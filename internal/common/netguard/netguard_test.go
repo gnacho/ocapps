@@ -25,7 +25,7 @@ func TestSafeTransportBlocksPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allow-local did not connect to loopback: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // TestIsBlockedIP covers the critical ranges.

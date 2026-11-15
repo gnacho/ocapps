@@ -42,7 +42,7 @@ func fakeOpenCloud(t *testing.T, propfind func(path string) (int, string)) *http
 			code, body := propfind(r.URL.Path)
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(code)
-			fmt.Fprint(w, body)
+			_, _ = fmt.Fprint(w, body)
 		default:
 			http.NotFound(w, r)
 		}
@@ -69,7 +69,7 @@ func fakeOpenCloudReq(t *testing.T, propfind func(r *http.Request) (int, string)
 			code, body := propfind(r)
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(code)
-			fmt.Fprint(w, body)
+			_, _ = fmt.Fprint(w, body)
 		default:
 			http.NotFound(w, r)
 		}
@@ -448,7 +448,7 @@ INSERT INTO albums (name) VALUES ('Vacaciones');
 `); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	srv := fakeOpenCloud(t, nil) // fake Graph: /me -> user-1
 	m, err := New(testConfig(config.Common{OpenCloudURL: srv.URL, PhotosDataDir: dataDir}, photosCfg()), slog.Default(), nil)

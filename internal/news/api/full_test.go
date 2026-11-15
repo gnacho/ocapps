@@ -55,7 +55,7 @@ func TestItemFullExtractsAndCaches(t *testing.T) {
 
 	// second call: served from cache (an invalid URL would prove it now:
 	// we change the URL to something unreachable and it still works from cache)
-	e.srv.store.SetItemURLForTesting(itemID, "http://127.0.0.1:1/dead")
+	_ = e.srv.store.SetItemURLForTesting(itemID, "http://127.0.0.1:1/dead")
 	code, body = e.do(t, "GET", "/items/"+itoa(itemID)+"/full", e.user, e.pass, nil)
 	if code != 200 || !strings.Contains(string(body), "Substantial") {
 		t.Fatalf("full cache: %d", code)
@@ -78,7 +78,7 @@ func TestItemFullUnextractable(t *testing.T) {
 	}
 	_, body := e.do(t, "GET", "/items?type=3&getRead=true", e.user, e.pass, nil)
 	decode(t, body, &itemsResp)
-	e.srv.store.SetItemURLForTesting(itemsResp.Items[0].ID, ts.URL+"/x")
+	_ = e.srv.store.SetItemURLForTesting(itemsResp.Items[0].ID, ts.URL+"/x")
 
 	code, body := e.do(t, "GET", "/items/"+itoa(itemsResp.Items[0].ID)+"/full", e.user, e.pass, nil)
 	if code != 422 || !strings.Contains(string(body), "full_unavailable") {

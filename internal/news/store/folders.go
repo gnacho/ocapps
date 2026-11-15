@@ -10,7 +10,7 @@ func (s *Store) ListFolders(userID int64) ([]Folder, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Folder{}
 	for rows.Next() {
 		f := Folder{}

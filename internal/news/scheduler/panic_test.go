@@ -42,7 +42,7 @@ func expiredFeed(t *testing.T, st *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.SetNextUpdate(f.ID, time.Now().Unix()-1)
+	_ = st.SetNextUpdate(f.ID, time.Now().Unix()-1)
 }
 
 // A panic in a cycle() worker is recovered: the process goes on, the main
@@ -53,7 +53,7 @@ func TestPanicInWorkerDoesNotKillLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	expiredFeed(t, st)
 
 	pr := &panicRefresher{}
@@ -84,7 +84,7 @@ func TestPanicInMainLoopReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	pr := &panicRefresher{}
 	s := New(st, pr, nil, discardLog(), time.Hour, 1, 0, nil, "")

@@ -111,8 +111,9 @@ func (s *Store) BootstrapCount(count *int) error {
 
 // TouchLogin updates last_login_at with throttle: only if the last mark
 // is older than 60s (it avoids one write per request on every API GET).
+// The mark is display-only (admin listing): a failure is not actionable.
 func (s *Store) TouchLogin(userID int64) {
-	s.db.Exec(`UPDATE users SET last_login_at = ? WHERE id = ? AND last_login_at < ? - 60`,
+	_, _ = s.db.Exec(`UPDATE users SET last_login_at = ? WHERE id = ? AND last_login_at < ? - 60`,
 		now(), userID, now())
 }
 
@@ -137,7 +138,7 @@ func (s *Store) ListUsers() ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []User{}
 	for rows.Next() {
 		u := User{}

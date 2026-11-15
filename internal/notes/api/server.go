@@ -202,7 +202,7 @@ func (s *Server) handleImgSign(w http.ResponseWriter, r *http.Request) {
 		signed[u] = imgproxy.ProxiedURL(s.base, u, s.images.Sign(u))
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"signed": signed})
+	_ = json.NewEncoder(w).Encode(map[string]any{"signed": signed})
 }
 
 // handleAttachment serves the Nextcloud Notes API v1.4 attachment endpoints.
@@ -260,7 +260,7 @@ func (s *Server) handleAttachmentUpload(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, `{"error":"missing file field"}`, http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	apiPath, err := s.attachments.Save(id, header.Filename, file)
 	if err != nil {
@@ -273,7 +273,7 @@ func (s *Server) handleAttachmentUpload(w http.ResponseWriter, r *http.Request, 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"filename": apiPath})
+	_ = json.NewEncoder(w).Encode(map[string]any{"filename": apiPath})
 }
 
 func (s *Server) handleAttachmentDownload(w http.ResponseWriter, r *http.Request, id int64) {
@@ -288,7 +288,7 @@ func (s *Server) handleAttachmentDownload(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		return
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
@@ -423,7 +423,7 @@ func (s *Server) handleGetNotes(w http.ResponseWriter, r *http.Request) {
 
 	if len(notes) == 0 {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode([]interface{}{})
+		_ = json.NewEncoder(w).Encode([]interface{}{})
 		return
 	}
 
@@ -446,7 +446,7 @@ func (s *Server) handleGetNotes(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(pruned)
+		_ = json.NewEncoder(w).Encode(pruned)
 		return
 	}
 
@@ -489,7 +489,7 @@ func (s *Server) handleGetNotes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
@@ -515,7 +515,7 @@ func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(note)
+	_ = json.NewEncoder(w).Encode(note)
 }
 
 func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request, id int64) {
@@ -532,7 +532,7 @@ func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request, id int64)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("ETag", note.Etag)
-	json.NewEncoder(w).Encode(note)
+	_ = json.NewEncoder(w).Encode(note)
 }
 
 func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request, id int64) {
@@ -551,7 +551,7 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request, id int
 	if expectedEtag != "" && expectedEtag != note.Etag {
 		w.WriteHeader(http.StatusPreconditionFailed)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(note)
+		_ = json.NewEncoder(w).Encode(note)
 		return
 	}
 
@@ -579,7 +579,7 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request, id int
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(updated)
+	_ = json.NewEncoder(w).Encode(updated)
 }
 
 func (s *Server) handleDeleteNote(w http.ResponseWriter, r *http.Request, id int64) {
@@ -601,7 +601,7 @@ func (s *Server) handleDeleteNote(w http.ResponseWriter, r *http.Request, id int
 	}
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, `{}`)
+	_, _ = fmt.Fprintln(w, `{}`)
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -613,7 +613,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(settings)
+	_ = json.NewEncoder(w).Encode(settings)
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
@@ -631,7 +631,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 // capabilitiesResponse mirrors the OCS capabilities envelope returned when a
@@ -691,7 +691,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 
 	if wantsJSON {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(capabilitiesResponse{
+		_ = json.NewEncoder(w).Encode(capabilitiesResponse{
 			Ocs: capabilitiesOcs{
 				Meta: capabilitiesMeta{Status: "ok", StatusCode: 200, Message: "OK"},
 				Data: capabilitiesData{Capabilities: capabilitiesCaps{Notes: capabilitiesNotes{
@@ -721,7 +721,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 </ocs>`, Version)
 
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	fmt.Fprint(w, xml)
+	_, _ = fmt.Fprint(w, xml)
 }
 
 // notesCapabilityJSON is the notes block injected into the core capabilities.
@@ -783,7 +783,7 @@ func (s *Server) fetchCoreCapabilities(r *http.Request, endpoint string, wantsJS
 	if err != nil {
 		return nil, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, false
 	}
@@ -961,5 +961,5 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 </ocs>`, displayName, displayName)
 
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	fmt.Fprint(w, xml)
+	_, _ = fmt.Fprint(w, xml)
 }

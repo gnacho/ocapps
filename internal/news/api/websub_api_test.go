@@ -44,7 +44,7 @@ func TestWebSubCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Fatalf("verification: %d", resp.StatusCode)
 	}
@@ -63,7 +63,7 @@ func TestWebSubCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != 204 {
 		t.Fatalf("delivery: %d", resp2.StatusCode)
 	}
@@ -90,7 +90,7 @@ func TestWebSubCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp3.Body.Close()
+	defer func() { _ = resp3.Body.Close() }()
 	if resp3.StatusCode != 401 {
 		t.Fatalf("wrong signature expected 401, I have %d", resp3.StatusCode)
 	}

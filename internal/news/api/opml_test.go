@@ -118,7 +118,7 @@ func TestFaviconEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Fatalf("favicon: %d", resp.StatusCode)
 	}
@@ -131,7 +131,7 @@ func TestFaviconEndpoint(t *testing.T) {
 	}
 
 	// unknown hash -> 404 (even if the file exists)
-	os.WriteFile(filepath.Join(e.faviconDir, "ffff"+".png"), []byte(png), 0o600)
+	_ = os.WriteFile(filepath.Join(e.faviconDir, "ffff"+".png"), []byte(png), 0o600)
 	code, _ = e.do(t, "GET", "/favicon/ffff", e.user, e.pass, nil)
 	if code != 404 {
 		t.Fatalf("hash without feed: %d", code)

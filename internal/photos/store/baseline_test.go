@@ -69,7 +69,7 @@ func userVersion(t *testing.T, path string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var v int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func execFixture(t *testing.T, path, sqlBody string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.Exec(sqlBody); err != nil {
 		t.Fatalf("fixture: %v", err)
 	}
@@ -97,7 +97,7 @@ func indexExists(t *testing.T, path, name string) bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var n int
 	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?`, name).Scan(&n); err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestBaselineAdoptsLiveDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("adoption of the live database: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if v := userVersion(t, path); v != lastVersion {
 		t.Fatalf("user_version after baseline+migrations = %d, want %d", v, lastVersion)
 	}
@@ -135,7 +135,7 @@ func TestBaselineAdoptsLiveDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopening: %v", err)
 	}
-	st2.Close()
+	_ = st2.Close()
 	if v := userVersion(t, path); v != lastVersion {
 		t.Fatalf("user_version after reopening = %d, want %d", v, lastVersion)
 	}
@@ -149,7 +149,7 @@ func TestBaselineNewDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if v := userVersion(t, path); v != lastVersion {
 		t.Fatalf("user_version = %d, want %d", v, lastVersion)
 	}
@@ -186,7 +186,7 @@ func TestMigration002KeepsIDsAndFKs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration 002: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 
 	// owner empty after the migration, IDs preserved (7 and 9)

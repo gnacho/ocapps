@@ -11,7 +11,7 @@ func TestStoreRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
 	owner := "user-a"
 
@@ -89,7 +89,7 @@ func TestSoftDeleteExceptHonoursPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	now := time.Now()
 
 	for path, etag := range map[string]string{
