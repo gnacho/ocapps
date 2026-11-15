@@ -731,37 +731,43 @@ func notesCapabilityJSON() map[string]any {
 	}
 }
 
-// coreCapabilitiesURL builds the upstream URL, forcing the response format to
-// match what the caller asked for.
-func (s *Server) coreCapabilitiesURL(r *http.Request, wantsJSON bool) string {
+// coreCapabilitiesEndpoints lists the upstream OCS endpoints asked for the
+// capabilities, in the order they are tried. The v2 endpoint authenticates the
+// caller so the core answers with the session capabilities. The v1 endpoint
+// answers without credentials and still returns the whole core block: it covers
+// the case of a client that asks for the capabilities before (or while) it
+// refreshes its token, where v2 would answer 401 and the notes-only fallback
+// would hide the product version (clients then report an unsupported server).
+var coreCapabilitiesEndpoints = []string{
+	"/ocs/v2.php/cloud/capabilities",
+	"/ocs/v1.php/cloud/capabilities",
+}
+
+// coreCapabilitiesURL builds the upstream URL for one endpoint, forcing the
+// response format to match what the caller asked for.
+func (s *Server) coreCapabilitiesURL(r *http.Request, endpoint string, wantsJSON bool) string {
 	q := r.URL.Query()
 	if wantsJSON {
 		q.Set("format", "json")
 	}
-	u := s.coreURL + "/ocs/v2.php/cloud/capabilities"
+	u := s.coreURL + endpoint
 	if enc := q.Encode(); enc != "" {
 		u += "?" + enc
 	}
 	return u
 }
 
-// mergeCoreCapabilities fetches the OpenCloud core capabilities and writes the
-// merged response (core + notes). It returns false, without writing anything,
-// when the merge is not possible so the caller can answer with the fallback.
-func (s *Server) mergeCoreCapabilities(w http.ResponseWriter, r *http.Request, wantsJSON bool) bool {
-	if s.coreURL == "" {
-		return false
-	}
-
+// fetchCoreCapabilities performs one upstream capabilities request, forwarding
+// the caller credentials and OCS headers. It reports false on any transport
+// error or non-200 answer.
+func (s *Server) fetchCoreCapabilities(r *http.Request, endpoint string, wantsJSON bool) ([]byte, bool) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.coreCapabilitiesURL(r, wantsJSON), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.coreCapabilitiesURL(r, endpoint, wantsJSON), nil)
 	if err != nil {
-		return false
+		return nil, false
 	}
-	// Forward the caller's credentials and OCS headers so the core can
-	// authenticate the request: the upstream endpoint requires auth.
 	for k, vs := range r.Header {
 		switch http.CanonicalHeaderKey(k) {
 		case "Host", "Connection", "Content-Length", "Accept-Encoding", "Transfer-Encoding", "Te", "Trailer", "Upgrade":
@@ -774,36 +780,53 @@ func (s *Server) mergeCoreCapabilities(w http.ResponseWriter, r *http.Request, w
 
 	resp, err := coreHTTPClient.Do(req)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false
+		return nil, false
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
+		return nil, false
+	}
+	return body, true
+}
+
+// mergeCoreCapabilities fetches the OpenCloud core capabilities and writes the
+// merged response (core + notes). It returns false, without writing anything,
+// when no upstream endpoint can be merged so the caller can answer with the
+// fallback.
+func (s *Server) mergeCoreCapabilities(w http.ResponseWriter, r *http.Request, wantsJSON bool) bool {
+	if s.coreURL == "" {
 		return false
 	}
 
-	if wantsJSON {
-		merged, ok := injectNotesJSON(body)
+	for _, endpoint := range coreCapabilitiesEndpoints {
+		body, ok := s.fetchCoreCapabilities(r, endpoint, wantsJSON)
 		if !ok {
-			return false
+			continue
 		}
-		w.Header().Set("Content-Type", "application/json")
+		if wantsJSON {
+			merged, ok := injectNotesJSON(body)
+			if !ok {
+				continue
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(merged)
+			return true
+		}
+		merged, ok := injectNotesXML(body)
+		if !ok {
+			continue
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(merged)
+		_, _ = w.Write([]byte(merged))
 		return true
 	}
-
-	merged, ok := injectNotesXML(body)
-	if !ok {
-		return false
-	}
-	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(merged))
-	return true
+	return false
 }
 
 // injectNotesJSON adds the notes block to a JSON capabilities document.

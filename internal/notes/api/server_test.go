@@ -439,6 +439,83 @@ func TestCapabilitiesMergeCoreXML(t *testing.T) {
 	}
 }
 
+// A client asks for the capabilities before it has a valid token (the Android
+// app does this while refreshing it). The authenticated endpoint answers 401,
+// and the public one must keep the core block so the client still learns the
+// product version instead of falling back to the notes-only envelope.
+func TestCapabilitiesMergeCoreFromPublicEndpoint(t *testing.T) {
+	var paths []string
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/ocs/v2.php/cloud/capabilities" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100,"message":"OK"},`+
+			`"data":{"capabilities":{"core":{"status":{"productversion":"9.1.0","versionstring":"0.1.0"}}},`+
+			`"files":{"bigfilechunking":true}}}}`)
+	}))
+	defer core.Close()
+
+	s := NewServer(Base, core.URL, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/capabilities?format=json", nil)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	s.handleCapabilities(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	if len(paths) != 2 || paths[1] != "/ocs/v1.php/cloud/capabilities" {
+		t.Fatalf("endpoints pedidos = %#v, want v2 y despues v1", paths)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	caps := doc["ocs"].(map[string]any)["data"].(map[string]any)["capabilities"].(map[string]any)
+	coreBlock, ok := caps["core"].(map[string]any)
+	if !ok {
+		t.Fatalf("falta el bloque core: %s", w.Body.String())
+	}
+	status, ok := coreBlock["status"].(map[string]any)
+	if !ok || status["productversion"] != "9.1.0" {
+		t.Fatalf("productversion = %v, want 9.1.0", status["productversion"])
+	}
+	if _, ok := caps["notes"].(map[string]any); !ok {
+		t.Fatalf("falta el bloque notes: %s", w.Body.String())
+	}
+}
+
+func TestCapabilitiesMergeCoreXMLFromPublicEndpoint(t *testing.T) {
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ocs/v2.php/cloud/capabilities" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		_, _ = io.WriteString(w, `<?xml version="1.0"?><ocs><meta><status>ok</status>`+
+			`<statuscode>100</statuscode><message>OK</message></meta><data><capabilities>`+
+			`<core><status><productversion>9.1.0</productversion></status></core>`+
+			`</capabilities></data></ocs>`)
+	}))
+	defer core.Close()
+
+	s := NewServer(Base, core.URL, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/ocs/v2.php/cloud/capabilities", nil)
+	w := httptest.NewRecorder()
+	s.handleCapabilities(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "<core>") || !strings.Contains(body, "9.1.0") {
+		t.Fatalf("falta el bloque core: %s", body)
+	}
+	if !strings.Contains(body, "<notes>") {
+		t.Fatalf("falta el bloque notes: %s", body)
+	}
+}
+
 func TestCapabilitiesFallbackWhenCoreFails(t *testing.T) {
 	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
