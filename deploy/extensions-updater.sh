@@ -26,6 +26,9 @@ SERVICE=${OCAPPS_EXT_SERVICE:-opencloud}
 LOCAL_PORT=${OCAPPS_EXT_PORT:-9200}
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 KEEP_BACKUPS=${OCAPPS_EXT_KEEP:-5}
+# Path of the backup taken by the last install_archive call, so the caller can
+# roll back exactly what that call replaced.
+LAST_BACKUP=''
 
 DEFAULT_CONF='news|gnacho/ocnews|^news-[0-9.]+\.zip$
 notes|gnacho/ocnotes|^notes-[0-9.]+\.zip$
@@ -68,8 +71,13 @@ stamp_of() {
 }
 
 write_stamp() {
-    printf '%s\n' "$2" > "$APPS_DIR/$1/.ocapps-release"
-    chown 1000:1000 "$APPS_DIR/$1/.ocapps-release" 2>/dev/null || true
+    local file="$APPS_DIR/$1/.ocapps-release"
+    printf '%s\n' "$2" > "$file"
+    chown 1000:1000 "$file" 2>/dev/null || true
+    # A stamp that cannot be read back is the same as no stamp: the next run
+    # reports "unknown" and a protected local build becomes indistinguishable
+    # from a lost one. Fail here instead of leaving the app in that state.
+    [ "$(head -n1 "$file" 2>/dev/null)" = "$2" ] || die "cannot write the stamp for $1"
 }
 
 # Prints "<tag> <url>" of the newest release carrying an asset that matches the
@@ -168,6 +176,7 @@ backup_app() {
 
 install_archive() {
     local id=$1 file=$2 tag=$3 tmp
+    LAST_BACKUP=""
     tmp=$(mktemp -d)
     local root manifest entry
     root=$(python3 - "$file" "$tmp" "$id" <<'PY'
@@ -195,9 +204,8 @@ PY
     [ -f "$root/$entry" ] || die "manifest entrypoint $entry missing in $id"
 
     if [ -d "$APPS_DIR/$id" ]; then
-        local b
-        b=$(backup_app "$id")
-        banner "  backup: $b"
+        LAST_BACKUP=$(backup_app "$id")
+        banner "  backup: $LAST_BACKUP"
     fi
     rm -rf "${APPS_DIR:?}/$id"
     cp -a "$root" "$APPS_DIR/$id"
@@ -303,10 +311,8 @@ cmd_update() {
         local tmp
         tmp=$(mktemp)
         curl -sSfL --max-time 300 -o "$tmp" "$url"
-        local b
-        b=$(backup_app "$id")
-        backups+=("$id:$b")
         install_archive "$id" "$tmp" "$tag"
+        backups+=("$id:$LAST_BACKUP")
         rm -f "$tmp"
         ensure_apps_yaml "$id"
     done
@@ -321,6 +327,7 @@ cmd_update() {
         local pair
         for pair in "${backups[@]}"; do
             local app=${pair%%:*} dir=${pair#*:}
+            [ -n "$dir" ] || continue
             rm -rf "${APPS_DIR:?}/$app"
             cp -a "$dir" "$APPS_DIR/$app"
             chown -R 1000:1000 "$APPS_DIR/$app"
@@ -361,4 +368,8 @@ main() {
     esac
 }
 
-main "$@"
+# Sourced by deploy/extensions-updater_test.sh to exercise the functions without
+# running a command. Only the script itself dispatches.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi

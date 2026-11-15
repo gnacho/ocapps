@@ -51,3 +51,12 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+  updater:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Sync check
+        run: bash -n deploy/extensions-updater.sh
+      - name: Tests (no root, no network)
+        run: bash deploy/extensions-updater_test.sh
