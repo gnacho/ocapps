@@ -45,6 +45,10 @@ var (
 // drain HTTP + module loops + Close.
 const shutdownBudget = 10 * time.Second
 
+// notifyContext is signal.NotifyContext, a variable so tests can drive the
+// shutdown of run without sending a real signal to the test process.
+var notifyContext = signal.NotifyContext
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -74,7 +78,7 @@ func run() error {
 	// the budget is exhausted.
 	srv.RegisterOnShutdown(a.closeStreams)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Supervisor: one Run(ctx) per enabled module in its goroutine with
