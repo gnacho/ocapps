@@ -26,10 +26,16 @@ type Refresher struct {
 	interval time.Duration // base interval between refreshes
 	maxGap   time.Duration // cap of the adaptive interval
 	notifier *notify.Notifier
+	// jitterFn spreads the schedules so that feeds do not sync together. It is
+	// a field so tests can make the gaps exactly predictable.
+	jitterFn func(time.Duration, float64) time.Duration
 }
 
 func New(st *store.Store, f feed.Fetcher, c *cred.Cipher, log *slog.Logger, interval, maxGap time.Duration, n *notify.Notifier) *Refresher {
-	return &Refresher{store: st, fetcher: f, cred: c, log: log, interval: interval, maxGap: maxGap, notifier: n}
+	return &Refresher{
+		store: st, fetcher: f, cred: c, log: log,
+		interval: interval, maxGap: maxGap, notifier: n, jitterFn: jitter,
+	}
 }
 
 // Result summarizes a refresh for the scheduler.
@@ -164,7 +170,7 @@ func (r *Refresher) scheduleNext(f *store.Feed, res Result) {
 	default:
 		gap = interval
 	}
-	gap = jitter(gap, 0.2)
+	gap = r.jitterFn(gap, 0.2)
 	if err := r.store.SetNextUpdate(f.ID, time.Now().Add(gap).Unix()); err != nil {
 		r.log.Warn("set next update failed", "feed", f.ID, "err", err)
 	}
