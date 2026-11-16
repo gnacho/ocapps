@@ -26,7 +26,7 @@ jobs:
             -covermode=atomic -coverprofile=coverage.out
       - name: Coverage gate
         env:
-          COVERAGE_MIN: "60"
+          COVERAGE_MIN: "75"
         run: |
           total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${total}%"

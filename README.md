@@ -251,7 +251,7 @@ Milestone-based implementation (SPEC §8): **H0-H6 done** - skeleton and CI (H0)
 degradation (H5) and the deployment/migration artifacts (H6, `deploy/`).
 Gates, all enforced in CI: `CGO_ENABLED=0 go build ./...`,
 `go test -race -shuffle=on ./...`, `golangci-lint` with zero findings,
-`govulncheck` and total statement coverage **>= 60%**
+`govulncheck` and total statement coverage **>= 75%**
 (`go test ./... -coverprofile=coverage.out`).
 Pending before production: a staging dry run with copies of the real databases
 and of the rollback (checklist SPEC §9.4), see `deploy/README.md`.
