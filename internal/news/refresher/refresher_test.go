@@ -79,11 +79,23 @@ func newEnv(t *testing.T) (*store.Store, int64, *fakeFetcher, *Refresher) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	creds := testCipher(t)
 	r := New(st, ff, creds, log, time.Minute, 10*time.Minute, nil)
+	// No jitter: the scheduled gap is then exactly what the backoff rules say.
+	r.jitterFn = func(d time.Duration, _ float64) time.Duration { return d }
 	return st, uid, ff, r
 }
 
 func gapUntil(nextUpdate int64) time.Duration {
 	return time.Until(time.Unix(nextUpdate, 0))
+}
+
+// assertGap checks the scheduled gap. The upper bound is the exact value and
+// the lower one allows for the time elapsed between scheduling and measuring,
+// so the assertion never depends on how fast the machine is.
+func assertGap(t *testing.T, nextUpdate int64, want time.Duration) {
+	t.Helper()
+	if g := gapUntil(nextUpdate); g > want || g < want-5*time.Second {
+		t.Fatalf("gap = %v, want %v (up to 5s of measurement latency)", g, want)
+	}
 }
 
 func TestRefreshNewItemsResetsStreak(t *testing.T) {
@@ -103,10 +115,8 @@ func TestRefreshNewItemsResetsStreak(t *testing.T) {
 	if got.NoNewStreak != 0 {
 		t.Errorf("streak must reset: %d", got.NoNewStreak)
 	}
-	// with novelty -> base gap (1m ±20%): between 48s and 72s
-	if g := gapUntil(got.NextUpdateTime); g < 48*time.Second || g > 72*time.Second {
-		t.Errorf("gap with novelty: %v", g)
-	}
+	// with novelty -> base interval (1m, jitter disabled in tests)
+	assertGap(t, got.NextUpdateTime, time.Minute)
 }
 
 func TestRefreshNoNewItemsDoubles(t *testing.T) {
@@ -127,11 +137,8 @@ func TestRefreshNoNewItemsDoubles(t *testing.T) {
 	if after.NoNewStreak != 1 {
 		t.Errorf("streak must be 1: %d", after.NoNewStreak)
 	}
-	// without novelty (streak 1) -> 2m ±20%: between 96s and 144s.
-	// Lower margin 95s: gapUntil measures after operations (it subtracts real latency).
-	if g := gapUntil(after.NextUpdateTime); g < 95*time.Second || g > 145*time.Second {
-		t.Errorf("gap without novelty: %v", g)
-	}
+	// without novelty (streak 1) -> 2m
+	assertGap(t, after.NextUpdateTime, 2*time.Minute)
 }
 
 func TestRefreshErrorBackoff(t *testing.T) {
@@ -149,11 +156,8 @@ func TestRefreshErrorBackoff(t *testing.T) {
 	if got.UpdateErrorCount != 1 || got.LastUpdateError == nil {
 		t.Fatalf("error not recorded: %+v", got)
 	}
-	// 1st error -> 2m ±20% (interval 1m << 1). Lower margin 95s because of the
-	// gapUntil measurement latency (time.Until after the operations).
-	if g := gapUntil(got.NextUpdateTime); g < 95*time.Second || g > 145*time.Second {
-		t.Errorf("backoff gap 1st error: %v", g)
-	}
+	// 1st error -> 2m (interval 1m << 1)
+	assertGap(t, got.NextUpdateTime, 2*time.Minute)
 }
 
 func TestRefreshSanitizesBody(t *testing.T) {
