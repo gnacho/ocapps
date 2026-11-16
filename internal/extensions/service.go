@@ -106,6 +106,10 @@ func (s *Service) List(ctx context.Context) []App {
 	return out
 }
 
+// commandContext is exec.CommandContext, a variable so tests can check the
+// command line without running it (on a real host the helper needs root).
+var commandContext = exec.CommandContext
+
 // Update runs `ocapps-ext update <id>` through sudo. Only ids present in the
 // configuration are accepted, so the HTTP surface cannot be used to run the
 // helper with arbitrary arguments. force replaces a local build too.
@@ -139,9 +143,9 @@ func (s *Service) Update(ctx context.Context, id string, force bool) (RunResult,
 	args = append(args, id)
 	var cmd *exec.Cmd
 	if s.UseSudo {
-		cmd = exec.CommandContext(ctx, "sudo", append([]string{"-n", s.Helper}, args...)...)
+		cmd = commandContext(ctx, "sudo", append([]string{"-n", s.Helper}, args...)...)
 	} else {
-		cmd = exec.CommandContext(ctx, s.Helper, args...)
+		cmd = commandContext(ctx, s.Helper, args...)
 	}
 	cmd.Env = append(os.Environ(), "OCAPPS_EXT_IN_PROGRESS=1")
 
