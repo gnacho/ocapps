@@ -36,19 +36,27 @@ func NewScanner(c *webdav.Client, opts webdav.Options, st *store.Store, log *slo
 }
 
 // resolveHref turns a folder reference into an absolute server href for
-// Propfind: an absolute href (returned by a previous listing) is used as is, a
-// relative path ("Fotos", "" = space root) is resolved against the path of the
-// webDavUrl of the space. It is equivalent to the resolution the old
-// dav.ListFolder did.
+// Propfind. The reference is either the configured scan root (a path inside the
+// space: "Fotos", "/", "/Fotos/" or a nested one) or an absolute href returned
+// by a previous listing of this space, which is used as is.
+//
+// "/" and "" mean the ROOT OF THE SPACE (issue #145: a space whose photos are
+// spread over several top folders has no single root folder, and resolving "/"
+// as the server root walked the wrong tree).
 func resolveHref(webdavURL, folderRef string) (string, error) {
-	if strings.HasPrefix(folderRef, "/") {
-		return folderRef, nil
-	}
 	base := ""
 	if u, err := url.Parse(webdavURL); err == nil {
 		base = strings.TrimRight(u.Path, "/")
 	}
-	for _, seg := range strings.Split(strings.Trim(folderRef, "/"), "/") {
+	ref := strings.TrimSpace(folderRef)
+	if ref == "" || ref == "/" {
+		return base + "/", nil
+	}
+	// absolute href of this space (returned by a listing): used as is
+	if ref == base || strings.HasPrefix(ref, base+"/") {
+		return ref, nil
+	}
+	for _, seg := range strings.Split(strings.Trim(ref, "/"), "/") {
 		if seg == "" {
 			continue
 		}
