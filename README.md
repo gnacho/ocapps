@@ -81,6 +81,8 @@ photo lives and filter by it.
   one space never deletes rows of another.
 - A space without `OCAPPS_PHOTOS_SCAN_ROOT` (for example a project space with no
   `Fotos` folder) is skipped: it is not an error and its indexed assets are kept.
+  With the root set to `/` the whole space is walked, which is the setting for a
+  library spread over several top folders or for an instance that indexes shares.
 - `OCAPPS_PHOTOS_SCAN_SPACES` restricts the walk to a list of drives (`personal`
   or drive ids). Empty, the default, means every visible drive.
 - The index exposes `GET /ocphotos-api/api/spaces` (spaces with photos of the
@@ -248,7 +250,7 @@ versions, up to 0.3.0) > default. Full table with legacy names and notes: SPEC
 | `OCAPPS_NOTES_OWNER` | `""` | Backfill of `user` on empty rows (migration 002) |
 | `OCAPPS_PHOTOS_USER` / `OCAPPS_PHOTOS_APP_TOKEN` | *(required if photos enabled)* | OpenCloud user and app token (single-tenant) |
 | `OCAPPS_PHOTOS_TOKEN` | `""` | Static Bearer of its own (ex `MEMORIES_TOKEN`) |
-| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | Scan root folder (each space that does not have it is skipped) |
+| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | Folder the scan starts at, inside every space. `/` walks the whole space. A space without that folder is skipped and keeps its index |
 | `OCAPPS_PHOTOS_SCAN_SPACES` | *(all visible drives)* | Drives to scan, comma separated: `personal` and/or drive ids. Empty = every space the user sees (personal, project spaces and shares) |
 | `OCAPPS_PHOTOS_SCAN_SPACE` | `""` | **DEPRECATED**: single drive id, folded into `OCAPPS_PHOTOS_SCAN_SPACES` |
 | `OCAPPS_PHOTOS_SCAN_EVERY` | `5m` | Re-scan interval |

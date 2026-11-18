@@ -178,10 +178,44 @@ func TestScanUpsertsPerOwner(t *testing.T) {
 	}
 }
 
+// TestResolveHref: the scan root is a path inside the space, and "/" (or "")
+// means the root of the space, not the root of the server. Absolute hrefs
+// returned by a listing of the same space are used as is.
+func TestResolveHref(t *testing.T) {
+	const url = "https://cloud.example.com/dav/spaces/x"
+	cases := []struct{ root, want string }{
+		{"", "/dav/spaces/x/"},
+		{"/", "/dav/spaces/x/"},
+		{"Fotos", "/dav/spaces/x/Fotos/"},
+		{"/Fotos/", "/dav/spaces/x/Fotos/"},
+		{"Fotos/2024", "/dav/spaces/x/Fotos/2024/"},
+		{"/dav/spaces/x/Fotos/2024/", "/dav/spaces/x/Fotos/2024/"},
+		{"/dav/spaces/x", "/dav/spaces/x"},
+	}
+	for _, c := range cases {
+		got, err := resolveHref(url, c.root)
+		if err != nil {
+			t.Errorf("resolveHref(%q): %v", c.root, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("resolveHref(%q) = %q, want %q", c.root, got, c.want)
+		}
+	}
+	if _, err := resolveHref(url, "../otro"); err == nil {
+		t.Error("a path traversal must be rejected")
+	}
+	// a space root never resolves to the server root
+	if got, _ := resolveHref(url, "/"); got == "/" {
+		t.Error("the space root resolved to the server root")
+	}
+}
+
 func TestScanPrefix(t *testing.T) {
 	cases := []struct{ root, want string }{
 		{"Fotos", "/dav/spaces/x/Fotos/"},
 		{"/Fotos/", "/dav/spaces/x/Fotos/"},
+		{"/", "/dav/spaces/x/"},
 		{"", "/dav/spaces/x/"},
 	}
 	for _, c := range cases {
@@ -317,5 +351,44 @@ func TestScanSkipsSpaceWithoutRoot(t *testing.T) {
 	}
 	if stats["assets"].(int64) != 1 {
 		t.Fatalf("the existing asset was touched: %v", stats)
+	}
+}
+
+// TestScanWholeSpace: with the root set to "/" the scan walks the whole space,
+// so a library spread over several top folders (gestion/, publico/) is indexed
+// without picking one of them (issue #145: with a single global root folder the
+// spaces that do not have it were skipped).
+func TestScanWholeSpace(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx := context.Background()
+
+	srv := davFake(t, func(path string) (int, string) {
+		switch path {
+		case "/dav/spaces/p/":
+			return http.StatusMultiStatus, multistatus("/dav/spaces/p/", "/dav/spaces/p/gestion/", "/dav/spaces/p/publico/")
+		case "/dav/spaces/p/gestion/":
+			return http.StatusMultiStatus, multistatus("/dav/spaces/p/gestion/", "/dav/spaces/p/gestion/a.jpg")
+		case "/dav/spaces/p/publico/":
+			return http.StatusMultiStatus, multistatus("/dav/spaces/p/publico/", "/dav/spaces/p/publico/b.jpg")
+		}
+		return http.StatusNotFound, ""
+	})
+	sc := newTestScanner(t, srv, st)
+	space := Space{ID: "p1", Name: "Personal", Type: "personal", WebDAVURL: srv.URL + "/dav/spaces/p"}
+	if err := sc.ScanSpace(ctx, "alice", space, "/"); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	all, err := st.AssetsPage(ctx, "alice", 1<<62-1, 1<<62-1, 10, false, false, "", "")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("assets = %d, err=%v", len(all), err)
+	}
+	spaces, _ := st.Spaces(ctx, "alice")
+	if len(spaces) != 1 || spaces[0].Assets != 2 {
+		t.Errorf("spaces = %+v", spaces)
 	}
 }

@@ -99,6 +99,10 @@ type PhotosConfig struct {
 	AppToken string    // OpenCloud app-token (legacy), optional since H8
 	Users    []AppUser // OCAPPS_PHOTOS_USERS + legacy folding (background scan)
 	Token    string    // static Bearer DEPRECATED (requires User), "" = disabled
+	// ScanRoot is the folder the scan starts at, inside each space. "" means
+	// the default ("Fotos") and "/" means the root of the space itself (walk
+	// the whole space), which is what a library spread over several top
+	// folders needs.
 	ScanRoot string
 	// ScanSpaces lists the drives the scan walks: drive ids (the one after
 	// "$" in /dav/spaces/<user>$<drive>) or the keyword "personal". Empty =
