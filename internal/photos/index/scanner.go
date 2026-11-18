@@ -81,9 +81,19 @@ func scanPrefix(webdavURL, root string) string {
 // before.
 const minFailGuard = 10
 
+// Space is the drive a scan walks (issue #145): the id after "$" in
+// /dav/spaces/<storage>$<space>, its display name, its driveType and the
+// webDavUrl of its root.
+type Space struct {
+	ID        string
+	Name      string
+	Type      string
+	WebDAVURL string
+}
+
 // ScanSpace walks the space OF ONE OWNER from root (for example "Fotos", "" =
 // the whole space). Incremental by etag: upsert only of what changed,
-// soft-delete (scoped to the owner) of what disappeared.
+// soft-delete (scoped to the prefix of the space) of what disappeared.
 // 70k photos is roughly a few thousand PROPFINDs: several minutes for the
 // first scan, seconds for the incremental ones (same number of requests, but
 // upserts roughly 0).
@@ -94,11 +104,30 @@ const minFailGuard = 10
 //     token the scan would "complete" with 0 seen and delete the whole index.
 //   - Sanity guard: if more than 50% of the PROPFINDs fail (and there were at
 //     least 10), it aborts as well with no soft-delete.
-func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) error {
+func (s *Scanner) ScanSpace(ctx context.Context, owner string, space Space, root string) error {
 	start := time.Now()
+	webdavURL := space.WebDAVURL
 	queue := []string{root}
 	seen := map[string]bool{}
 	var scanned, changed, attempts, failures, xmpApplied int
+
+	// A space without the configured root folder (for example "Fotos" on a
+	// project space): the scan is skipped instead of walking nothing and
+	// soft-deleting the prefix of a folder that does not exist. Only the radix
+	// of the space is walked when root is empty.
+	if root != "" {
+		href, err := resolveHref(webdavURL, root)
+		if err != nil {
+			return err
+		}
+		if _, err := s.dav.Propfind(ctx, href, 0); err != nil {
+			if errors.Is(err, webdav.ErrUnauthorized) {
+				return err
+			}
+			s.log.Info("space skipped: root folder not reachable", "owner", owner, "space", space.Name, "root", root, "err", err)
+			return nil
+		}
+	}
 
 	for len(queue) > 0 {
 		select {
@@ -158,7 +187,8 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner, webdavURL, root string) 
 				mtime = time.Now()
 			}
 			p, _ := url.PathUnescape(e.Href)
-			id, ch, err := s.store.UpsertByETag(ctx, owner, p, e.ETag, path.Base(p), mt, mtime, e.Size)
+			id, ch, err := s.store.UpsertInSpace(ctx, owner, p, e.ETag, path.Base(p), mt, mtime, e.Size,
+				store.Space{ID: space.ID, Name: space.Name, Type: space.Type})
 			if err != nil {
 				s.log.Error("upsert", "owner", owner, "path", p, "err", err)
 				continue

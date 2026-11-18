@@ -193,7 +193,9 @@ func (l *loader) dur(newVar, legacy string, def time.Duration) (time.Duration, e
 | `OCAPPS_PHOTOS_USER` | `""` | `OC_USER` | *(optional since H8)* user of the legacy app token. Still used for (a) the identity of the static Bearer and (b) the single-tenant index backfill (§5.3). Folds into `PHOTOS_USERS` with a deprecation WARN. |
 | `OCAPPS_PHOTOS_APP_TOKEN` | `""` | `OC_APP_TOKEN` | *(optional since H8)* OpenCloud app token (same). |
 | `OCAPPS_PHOTOS_TOKEN` | `""` | `MEMORIES_TOKEN` | **DEPRECATED (H8)**: static machine-to-machine Bearer. Only valid if `OCAPPS_PHOTOS_USER` is configured (it maps to the legacy oc_id), and configuring it without `USER` is a module config error. Clients should use the OpenCloud OIDC Bearer. |
-| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | `SCAN_ROOT` | applies to every user alike |
+| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | `SCAN_ROOT` | applies to every user alike; a space without that folder is skipped |
+| `OCAPPS_PHOTOS_SCAN_SPACES` | *(all)* | - | **(#145)** drives to walk: `personal` and/or ids (the one after `$` in `/dav/spaces/<storage>$<drive>`), comma separated. Empty = every drive visible to the user (personal, project spaces and shares). An id that is not visible is a scan error, never a silent fallback. |
+| `OCAPPS_PHOTOS_SCAN_SPACE` | `""` | - | **DEPRECATED**: single drive id, folded into `OCAPPS_PHOTOS_SCAN_SPACES` |
 | `OCAPPS_PHOTOS_SCAN_EVERY` | `5m` | `SCAN_EVERY` | |
 | - | - | `WEB_DIR` | **Removed** (legacy PWA retired, Q6). If defined: warn "ignored". |
 

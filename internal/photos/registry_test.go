@@ -143,7 +143,7 @@ func TestResolveSpaceConfigured(t *testing.T) {
 
 	// An id that is not among the visible drives is a clear error, not a silent
 	// fallback to the personal one.
-	m.reg.space = "no-existe"
+	m.reg.spaces = []string{"no-existe"}
 	if _, err := m.reg.resolveSpace(ctx, sess, "user-1"); err == nil {
 		t.Error("expected an error with a non-existent space")
 	}

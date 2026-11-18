@@ -11,7 +11,7 @@ import (
 // lastVersion is the last migration in migrations/: when a new one is added
 // this number has to be bumped. The adoption tests compare against it so that
 // three literals do not have to be edited every time.
-const lastVersion = 3
+const lastVersion = 4
 
 // liveSchemaSQL reproduces a LIVE pre-H8 memories.db as the historical service
 // left it: the original CREATE TABLE statements (without is_archived/phash and

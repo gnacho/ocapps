@@ -29,6 +29,11 @@ type session struct {
 	seeded    bool   // seeded by config (background scan)
 	expired   bool   // a scan detected 401/403 (expired Bearer)
 	lastSeen  time.Time
+	// drives is the last listing of /me/drives (every space visible to the
+	// owner: personal, project spaces and shares). It is refreshed by each
+	// scan and read by the API to resolve the prefix of a space; it is empty
+	// until the first resolution.
+	drives []webdav.Drive
 }
 
 // registry is the ownerID -> session map of the module (H8 §6.2). It implements
@@ -37,9 +42,10 @@ type session struct {
 type registry struct {
 	baseURL string
 	log     *slog.Logger
-	// space: drive the scan is limited to ("" = personal). It comes from
-	// OCAPPS_PHOTOS_SCAN_SPACE, see resolveSpace.
-	space string
+	// spaces: drives the scan is limited to ("" = every visible drive, or the
+	// keyword "personal"). It comes from OCAPPS_PHOTOS_SCAN_SPACES, see
+	// resolveSpaces.
+	spaces []string
 
 	// hooks to the scheduler (wired in New after building both, no lock
 	// because they are set before serving the first request)
@@ -57,9 +63,9 @@ type registry struct {
 	legacyOwner string
 }
 
-func newRegistry(baseURL, legacyUser, legacyToken, space string, log *slog.Logger) *registry {
+func newRegistry(baseURL, legacyUser, legacyToken string, spaces []string, log *slog.Logger) *registry {
 	return &registry{
-		baseURL: baseURL, log: log, space: space,
+		baseURL: baseURL, log: log, spaces: spaces,
 		sessions:    map[string]*session{},
 		legacyUser:  legacyUser,
 		legacyToken: legacyToken,
@@ -130,54 +136,114 @@ func (r *registry) DavFor(_ context.Context, owner string) *webdav.Client {
 	return nil
 }
 
-// resolveSpace resolves (and caches) the webDavUrl of the personal space of the
-// owner with ITS credential (driveType == "personal", fallback: the first one).
-// sess is the snapshot copy from get(): the cache is written to the STORED
-// session under the lock.
-// space: id of the drive to use ("" = the personal one). An explicit space is
-// always resolved against /me/drives, without trusting the cache: the cached
-// personal one is useless when the owner has the photos in another drive.
-func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string) (string, error) {
-	space := r.space
-	if space == "" && sess.webdavURL != "" {
-		return sess.webdavURL, nil
-	}
+// listDrives lists the spaces visible to the owner with ITS credential and
+// refreshes the session cache. The cache is what the API uses to resolve the
+// prefix of a space without a Graph call per request; a scan refreshes it, so a
+// space created after the last scan is picked up by the next one.
+func (r *registry) listDrives(ctx context.Context, sess *session, owner string) ([]webdav.Drive, error) {
 	drives, err := sess.dav.ListDrives(ctx)
 	if err != nil {
-		return "", err
-	}
-	webdavURL := ""
-	if space != "" {
-		for _, d := range drives {
-			if d.ID == space || strings.Contains(d.WebDAVURL, space) {
-				webdavURL = d.WebDAVURL
-				break
-			}
-		}
-		if webdavURL == "" {
-			return "", fmt.Errorf("space %q not available for the owner (%d visible drives)", space, len(drives))
-		}
-	} else {
-		for _, d := range drives {
-			if d.DriveType == "personal" {
-				webdavURL = d.WebDAVURL
-				break
-			}
-		}
-		if webdavURL == "" && len(drives) > 0 {
-			webdavURL = drives[0].WebDAVURL
-		}
-		if webdavURL == "" {
-			return "", errors.New("no space with a webDavUrl available")
-		}
+		return nil, err
 	}
 	r.mu.Lock()
 	if cur, ok := r.sessions[owner]; ok {
-		cur.webdavURL = webdavURL
+		cur.drives = drives
 	}
 	r.mu.Unlock()
-	r.log.Info("OpenCloud space located", "owner", owner, "webdav", webdavURL, "configured", space)
-	return webdavURL, nil
+	return drives, nil
+}
+
+// selectDrives applies the configured filter (OCAPPS_PHOTOS_SCAN_SPACES) to the
+// listing of drives: empty list = every drive with a webDavUrl (personal,
+// project spaces and shares), "personal" = the personal drive, anything else is
+// a drive id (the one after "$" in /dav/spaces/<storage>$<drive>) and an id
+// that is not visible is an error, not a silent fallback (fail loud: a typo in
+// the configuration must not leave the owner index at zero).
+func (r *registry) selectDrives(drives []webdav.Drive) ([]webdav.Drive, error) {
+	if len(r.spaces) == 0 {
+		out := make([]webdav.Drive, 0, len(drives))
+		for _, d := range drives {
+			if d.WebDAVURL != "" {
+				out = append(out, d)
+			}
+		}
+		if len(out) == 0 {
+			return nil, errors.New("no space with a webDavUrl available")
+		}
+		return out, nil
+	}
+	var out []webdav.Drive
+	for _, want := range r.spaces {
+		matched := false
+		for _, d := range drives {
+			if d.WebDAVURL == "" {
+				continue
+			}
+			if want == "personal" {
+				if d.DriveType != "personal" {
+					continue
+				}
+			} else if d.ID != want && !strings.Contains(d.WebDAVURL, want) {
+				continue
+			}
+			out = append(out, d)
+			matched = true
+			if want != "personal" {
+				break // an id identifies one drive, the keyword may match several
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("space %q not available for the owner (%d visible drives)", want, len(drives))
+		}
+	}
+	return out, nil
+}
+
+// resolveSpaces returns the drives a scan of the owner must walk, with the
+// listing just refreshed from /me/drives with the credential of the session.
+func (r *registry) resolveSpaces(ctx context.Context, sess *session, owner string) ([]webdav.Drive, error) {
+	drives, err := r.listDrives(ctx, sess, owner)
+	if err != nil {
+		return nil, err
+	}
+	selected, err := r.selectDrives(drives)
+	if err != nil {
+		return nil, err
+	}
+	// The cached single webDavUrl is the personal one (or the first selected):
+	// the folders handler and the legacy single-space paths keep working.
+	personal := ""
+	for _, d := range selected {
+		if d.DriveType == "personal" {
+			personal = d.WebDAVURL
+			break
+		}
+	}
+	if personal == "" {
+		personal = selected[0].WebDAVURL
+	}
+	r.mu.Lock()
+	if cur, ok := r.sessions[owner]; ok {
+		cur.webdavURL = personal
+	}
+	r.mu.Unlock()
+	names := make([]string, 0, len(selected))
+	for _, d := range selected {
+		names = append(names, d.Name)
+	}
+	r.log.Info("OpenCloud spaces located", "owner", owner, "spaces", names, "configured", r.spaces)
+	return selected, nil
+}
+
+// resolveSpace returns the webDavUrl of the personal space of the owner (the
+// fallback is the first selected one) for the single-space callers (folders,
+// resolve of "open with"). "" and an error when it cannot be resolved.
+func (r *registry) resolveSpace(ctx context.Context, sess *session, owner string) (string, error) {
+	spaces, err := r.resolveSpaces(ctx, sess, owner)
+	if err != nil {
+		return "", err
+	}
+	return spaces[0].WebDAVURL, nil
 }
 
 // SpacePrefix returns the path of the webDavUrl of the personal space of the
@@ -198,6 +264,37 @@ func (r *registry) SpacePrefix(ctx context.Context, owner string) string {
 	}
 	if u, err := url.Parse(webdavURL); err == nil {
 		return strings.TrimRight(u.Path, "/")
+	}
+	return ""
+}
+
+// SpacePrefixOf returns the path of the webDavUrl of a space of the owner (the
+// folders handler of that space). An unknown or not visible space returns ""
+// (the API answers with an empty listing, never a 500). It uses the drives
+// cached by the last scan and lists them when the cache is empty (first request
+// after a restart).
+func (r *registry) SpacePrefixOf(ctx context.Context, owner, spaceID string) string {
+	sess := r.get(owner)
+	if sess == nil {
+		return ""
+	}
+	sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	drives := sess.drives
+	if len(drives) == 0 {
+		var err error
+		if drives, err = r.listDrives(sctx, sess, owner); err != nil {
+			r.log.Warn("spaces not listable", "owner", owner, "err", err)
+			return ""
+		}
+	}
+	for _, d := range drives {
+		if d.ID != spaceID {
+			continue
+		}
+		if u, err := url.Parse(d.WebDAVURL); err == nil {
+			return strings.TrimRight(u.Path, "/")
+		}
 	}
 	return ""
 }

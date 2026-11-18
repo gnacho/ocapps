@@ -28,6 +28,8 @@ type fakeProvider struct {
 	prefix  string
 	touched []string
 	scans   []string
+	// spacePrefixes: webDavUrl path of each space id (folders by space)
+	spacePrefixes map[string]string
 }
 
 func (f *fakeProvider) Touch(_ context.Context, u *auth.User, _ auth.Credential) {
@@ -37,6 +39,14 @@ func (f *fakeProvider) Touch(_ context.Context, u *auth.User, _ auth.Credential)
 }
 func (f *fakeProvider) DavFor(_ context.Context, _ string) *webdav.Client { return f.dav }
 func (f *fakeProvider) SpacePrefix(_ context.Context, _ string) string    { return f.prefix }
+func (f *fakeProvider) SpacePrefixOf(_ context.Context, _, spaceID string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.spacePrefixes == nil {
+		return ""
+	}
+	return f.spacePrefixes[spaceID]
+}
 func (f *fakeProvider) LegacyOwner(_ context.Context) (string, error) {
 	if f.legacy == "" {
 		return "", errors.New("legacy not configured")
@@ -522,5 +532,61 @@ func TestExifBacklog(t *testing.T) {
 	rr = do(t, h, http.MethodPost, "/ocphotos-api/api/admin/exif", bearer)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("without session: %d, want 503", rr.Code)
+	}
+}
+
+// TestSpacesEndpoint: the space filter of the UI (issue #145) is fed by the
+// index: the spaces with photos of the owner and their count.
+func TestSpacesEndpoint(t *testing.T) {
+	s, st, _ := newMultiServer(t)
+	h := s.Handler()
+	ctx := context.Background()
+	if _, _, err := st.UpsertInSpace(ctx, "id-alice", "/dav/spaces/sa/Fotos/a.jpg", "e1", "a.jpg", "image", time.Now(), 100,
+		store.Space{ID: "p1", Name: "Personal", Type: "personal"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.UpsertInSpace(ctx, "id-alice", "/dav/spaces/sk/Fotos/b.jpg", "e2", "b.jpg", "image", time.Now(), 100,
+		store.Space{ID: "k1", Name: "Familia", Type: "project"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := do(t, h, http.MethodGet, PublicPrefix+"/api/spaces", "Bearer tok-alice")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("spaces -> %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`"id":"p1"`, `"id":"k1"`, `"name":"Familia"`, `"type":"project"`, `"count":1`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("spaces body misses %s: %s", want, body)
+		}
+	}
+
+	// Filter by space in the timeline
+	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/assets?space=k1", "Bearer tok-alice")
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"spaceName":"Familia"`) {
+		t.Fatalf("assets?space=k1 -> %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `"spaceName":"Personal"`) {
+		t.Errorf("the filter let other space through: %s", rr.Body.String())
+	}
+}
+
+// TestFoldersBySpace: the folders handler resolves the prefix of the requested
+// space, and an unknown one answers with a coherent empty listing instead of a
+// 500 (issue #145).
+func TestFoldersBySpace(t *testing.T) {
+	s, _, fp := newMultiServer(t)
+	h := s.Handler()
+	fp.spacePrefixes = map[string]string{"k1": "/dav/spaces/sk"}
+	rr := do(t, h, http.MethodGet, PublicPrefix+"/api/folders?space=k1", "Bearer tok-alice")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("folders?space=k1 -> %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"space":"k1"`) {
+		t.Errorf("the answer does not echo the space: %s", rr.Body.String())
+	}
+	rr = do(t, h, http.MethodGet, PublicPrefix+"/api/folders?space=nope", "Bearer tok-alice")
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"folders":[]`) {
+		t.Fatalf("folders?space=nope -> %d: %s", rr.Code, rr.Body.String())
 	}
 }
