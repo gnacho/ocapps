@@ -132,6 +132,12 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner string, space Space, root
 			if errors.Is(err, webdav.ErrUnauthorized) {
 				return err
 			}
+			// A timeout is not a missing folder: it must not be reported as a
+			// skipped space with an intact index, which would hide a scan that
+			// never happened.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			s.log.Info("space skipped: root folder not reachable", "owner", owner, "space", space.Name, "root", root, "err", err)
 			return nil
 		}
@@ -157,6 +163,11 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner string, space Space, root
 			if errors.Is(err, webdav.ErrUnauthorized) {
 				// expired credential: abort NOW and leave the index untouched
 				return fmt.Errorf("scan of %q aborted (no soft-delete): %w", owner, err)
+			}
+			if ctx.Err() != nil {
+				// deadline of the space: abort instead of counting a failure per
+				// queued folder (the soft-delete is skipped, the index is kept)
+				return fmt.Errorf("scan of %q aborted (no soft-delete): %w", owner, ctx.Err())
 			}
 			failures++
 			s.log.Warn("propfind failed, skipped", "owner", owner, "path", cur, "err", err)

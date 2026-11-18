@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,5 +155,54 @@ func TestScanWalksEverySpace(t *testing.T) {
 	spaces, err := m.st.Spaces(ctx, "user-1")
 	if err != nil || len(spaces) != 2 {
 		t.Fatalf("spaces = %+v %v", spaces, err)
+	}
+}
+
+// TestScanEachSpaceHasItsOwnTimeout: a space that takes longer than the budget
+// cannot leave the following spaces unscanned (issue #145). Measured on
+// drive.domatix.cloud: the personal library consumed the whole 2h cycle and the
+// shares space was never walked.
+func TestScanEachSpaceHasItsOwnTimeout(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/graph/v1.0/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "user-1"})
+		case r.URL.Path == "/graph/v1.0/me/drives":
+			_ = json.NewEncoder(w).Encode(map[string]any{"value": []map[string]any{
+				{"id": "p1", "name": "nacho", "driveType": "personal",
+					"root": map[string]any{"webDavUrl": srv.URL + "/dav/spaces/p"}},
+				{"id": "s1", "name": "Shares", "driveType": "virtual",
+					"root": map[string]any{"webDavUrl": srv.URL + "/dav/spaces/s"}},
+			}})
+		case r.Method == "PROPFIND":
+			if strings.HasPrefix(r.URL.Path, "/dav/spaces/p") {
+				// slow space: it will hit its own deadline
+				time.Sleep(400 * time.Millisecond)
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = fmt.Fprint(w, multistatusXML("/dav/spaces/s/", "/dav/spaces/s/foto.jpg"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newSpacesModule(t, srv, config.PhotosConfig{ScanRoot: "/"})
+	m.sched.tmo = 150 * time.Millisecond
+	ctx := context.Background()
+	m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: "tok"})
+
+	m.sched.scanOne(ctx, "user-1")
+
+	all, err := m.st.AssetsPage(ctx, "user-1", 1<<62-1, 1<<62-1, 10, false, false, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].SpaceName != "Shares" {
+		t.Fatalf("the space after the slow one was not scanned: %+v", all)
 	}
 }

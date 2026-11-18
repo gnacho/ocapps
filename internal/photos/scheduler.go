@@ -194,23 +194,39 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 	// Every space visible to the owner (personal, project spaces and shares,
 	// see issue #145) is walked in turn. The soft-delete of each space is
 	// scoped to its own prefix, so the spaces do not touch each other's rows.
+	// Each space has its OWN timeout (s.tmo): a big personal library cannot eat
+	// the budget of the spaces that come after it (measured on
+	// drive.domatix.cloud: 11k photos plus their folders took the whole 2h
+	// cycle and the second space was never scanned).
+	deadline := s.tmo
 	for _, d := range spaces {
 		space := index.Space{ID: d.ID, Name: d.Name, Type: d.DriveType, WebDAVURL: d.WebDAVURL}
-		if err := scanner.ScanSpace(sctx, owner, space, s.root); err != nil {
+		ssctx, cancel := context.WithTimeout(ctx, deadline)
+		started := time.Now()
+		err := scanner.ScanSpace(ssctx, owner, space, s.root)
+		cancel()
+		if err != nil {
 			if errors.Is(err, webdav.ErrUnauthorized) {
 				s.reg.markExpired(owner)
 				s.log.Info("scan postponed: expired token, it will resume on the next activity", "owner", owner)
 				return // does NOT count as lastScan: it is retried on fresh activity
 			}
-			s.log.Error("scan", "owner", owner, "space", d.Name, "err", err)
+			s.log.Error("scan", "owner", owner, "space", d.Name, "err", err, "duration", time.Since(started).Round(time.Second))
+			continue
 		}
+		s.log.Info("space scanned", "owner", owner, "space", d.Name, "duration", time.Since(started).Round(time.Second))
 	}
 	// The scan (or its non-auth attempt) counts for the ScanEvery rhythm.
 	s.mu.Lock()
 	s.lastScan[owner] = time.Now()
 	s.mu.Unlock()
 
-	if err := s.exifW.Run(sctx, owner, sess.dav); err != nil && errors.Is(err, webdav.ErrUnauthorized) {
+	// The EXIF backlog gets its own budget: the scan above may have used the
+	// whole cycle timeout, and the dates of what was just indexed are what the
+	// timeline shows.
+	exifCtx, exifCancel := context.WithTimeout(ctx, s.tmo)
+	defer exifCancel()
+	if err := s.exifW.Run(exifCtx, owner, sess.dav); err != nil && errors.Is(err, webdav.ErrUnauthorized) {
 		s.reg.markExpired(owner)
 		s.log.Info("exif postponed: expired token, it will resume on the next activity", "owner", owner)
 		return
