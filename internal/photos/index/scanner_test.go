@@ -77,7 +77,7 @@ func TestScanAbortsWithoutSoftDeleteOn401(t *testing.T) {
 
 	srv := davFake(t, func(path string) (int, string) { return http.StatusUnauthorized, "" })
 	sc := newTestScanner(t, srv, st)
-	err = sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos")
+	err = sc.ScanSpace(ctx, "alice", Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}, "Fotos")
 	if !errors.Is(err, webdav.ErrUnauthorized) {
 		t.Fatalf("err=%v, want ErrUnauthorized", err)
 	}
@@ -123,7 +123,7 @@ func TestScanGuardHalfFailures(t *testing.T) {
 		return http.StatusNotFound, ""
 	})
 	sc := newTestScanner(t, srv, st)
-	err = sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos")
+	err = sc.ScanSpace(ctx, "alice", Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}, "Fotos")
 	if err == nil || !strings.Contains(err.Error(), "PROPFINDs failed") {
 		t.Fatalf("err=%v, want an abort for >50%% failures", err)
 	}
@@ -155,7 +155,7 @@ func TestScanUpsertsPerOwner(t *testing.T) {
 	})
 	sc := newTestScanner(t, srv, st)
 	for _, owner := range []string{"alice", "bob"} {
-		if err := sc.ScanSpace(ctx, owner, srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
+		if err := sc.ScanSpace(ctx, owner, Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}, "Fotos"); err != nil {
 			t.Fatalf("scan %s: %v", owner, err)
 		}
 	}
@@ -167,7 +167,7 @@ func TestScanUpsertsPerOwner(t *testing.T) {
 		}
 	}
 	// a scan of carol (empty) soft-deleted only her own (nothing): alice and bob intact
-	if err := sc.ScanSpace(ctx, "carol", srv.URL+"/dav/spaces/y", "Fotos"); err != nil {
+	if err := sc.ScanSpace(ctx, "carol", Space{ID: "y", Name: "y", WebDAVURL: srv.URL + "/dav/spaces/y"}, "Fotos"); err != nil {
 		t.Fatal(err)
 	}
 	for _, owner := range []string{"alice", "bob"} {
@@ -223,7 +223,7 @@ func TestScanNotifiesChanges(t *testing.T) {
 		notices++
 	}
 
-	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
+	if err := sc.ScanSpace(ctx, "alice", Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}, "Fotos"); err != nil {
 		t.Fatal(err)
 	}
 	if notices != 1 {
@@ -231,10 +231,91 @@ func TestScanNotifiesChanges(t *testing.T) {
 	}
 
 	// Second identical scan: nothing changes, there is no notification.
-	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
+	if err := sc.ScanSpace(ctx, "alice", Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}, "Fotos"); err != nil {
 		t.Fatal(err)
 	}
 	if notices != 1 {
 		t.Fatalf("notifications after a scan with no changes = %d, want 1", notices)
+	}
+}
+
+// TestScanTwoSpaces: the scanner walks the personal space AND a project space
+// (issue #145): each asset keeps the space it was found in, so the UI can tell
+// them apart and filter by it.
+func TestScanTwoSpaces(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx := context.Background()
+
+	srv := davFake(t, func(path string) (int, string) {
+		switch path {
+		case "/dav/spaces/p/Fotos/":
+			return http.StatusMultiStatus, multistatus("/dav/spaces/p/Fotos/", "/dav/spaces/p/Fotos/a.jpg")
+		case "/dav/spaces/k/Fotos/":
+			return http.StatusMultiStatus, multistatus("/dav/spaces/k/Fotos/", "/dav/spaces/k/Fotos/b.jpg")
+		}
+		return http.StatusNotFound, ""
+	})
+	sc := newTestScanner(t, srv, st)
+	spaces := []Space{
+		{ID: "p1", Name: "Personal", Type: "personal", WebDAVURL: srv.URL + "/dav/spaces/p"},
+		{ID: "k1", Name: "Familia", Type: "project", WebDAVURL: srv.URL + "/dav/spaces/k"},
+	}
+	for _, sp := range spaces {
+		if err := sc.ScanSpace(ctx, "alice", sp, "Fotos"); err != nil {
+			t.Fatalf("scan %s: %v", sp.Name, err)
+		}
+	}
+
+	all, err := st.AssetsPage(ctx, "alice", 1<<62-1, 1<<62-1, 10, false, false, "", "")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("assets: %d %v", len(all), err)
+	}
+	bySpace := map[string]string{}
+	for _, a := range all {
+		bySpace[a.SpaceID] = a.SpaceName
+	}
+	if bySpace["p1"] != "Personal" || bySpace["k1"] != "Familia" {
+		t.Errorf("spaces stored = %v", bySpace)
+	}
+	listed, err := st.Spaces(ctx, "alice")
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("spaces: %+v %v", listed, err)
+	}
+}
+
+// TestScanSkipsSpaceWithoutRoot: a space that does not have the configured root
+// folder (a project space without "Fotos", say) is skipped. Its already indexed
+// assets are NOT soft-deleted: the scan of that space did not happen, so it
+// cannot conclude that they disappeared.
+func TestScanSkipsSpaceWithoutRoot(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx := context.Background()
+
+	// an asset of the project space indexed by an earlier scan
+	if _, _, err := st.UpsertInSpace(ctx, "alice", "/dav/spaces/k/Fotos/vieja.jpg", "e1", "vieja.jpg", "image", time.Now(), 100,
+		store.Space{ID: "k1", Name: "Familia", Type: "project"}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := davFake(t, func(path string) (int, string) { return http.StatusNotFound, "" })
+	sc := newTestScanner(t, srv, st)
+	space := Space{ID: "k1", Name: "Familia", Type: "project", WebDAVURL: srv.URL + "/dav/spaces/k"}
+	if err := sc.ScanSpace(ctx, "alice", space, "Fotos"); err != nil {
+		t.Fatalf("scan of a space without root must not fail: %v", err)
+	}
+	stats, err := st.Stats(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats["assets"].(int64) != 1 {
+		t.Fatalf("the existing asset was touched: %v", stats)
 	}
 }

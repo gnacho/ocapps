@@ -37,7 +37,7 @@ func TestStoreRoundtrip(t *testing.T) {
 		t.Fatalf("stats: %v %v", stats, err)
 	}
 
-	page, err := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, false, "")
+	page, err := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, false, "", "")
 	if err != nil || len(page) != 3 {
 		t.Fatalf("page: %d %v", len(page), err)
 	}
@@ -45,7 +45,7 @@ func TestStoreRoundtrip(t *testing.T) {
 	if err := st.SetFavorite(ctx, owner, page[0].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	favs, _ := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, true, false, "")
+	favs, _ := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, true, false, "", "")
 	if len(favs) != 1 {
 		t.Fatalf("favs: %d", len(favs))
 	}

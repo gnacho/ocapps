@@ -26,11 +26,11 @@ func TestArchiveCalendarPHash(t *testing.T) {
 	if err := st.SetArchived(ctx, owner, id1, true); err != nil {
 		t.Fatal(err)
 	}
-	normal, _ := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, false, "")
+	normal, _ := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, false, "", "")
 	if len(normal) != 2 {
 		t.Fatalf("timeline without archived: %d", len(normal))
 	}
-	archived, _ := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, true, "")
+	archived, _ := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, true, "", "")
 	if len(archived) != 1 || archived[0].ID != id1 || !archived[0].IsArchived {
 		t.Fatalf("archived: %+v", archived)
 	}

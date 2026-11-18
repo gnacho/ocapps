@@ -127,7 +127,7 @@ func New(cfg *config.Config, log *slog.Logger, gv *auth.GraphValidator) (*Module
 		_ = st.Close()
 		return nil, fmt.Errorf("photos: thumb cache: %w", err)
 	}
-	reg := newRegistry(common.OpenCloudURL, pcfg.User, pcfg.AppToken, pcfg.ScanSpace, log)
+	reg := newRegistry(common.OpenCloudURL, pcfg.User, pcfg.AppToken, pcfg.ScanSpaces, log)
 	exifW := exif.NewWorker(st, log)
 	sched := newScheduler(reg, st, exifW, pcfg.ScanRoot, pcfg.ScanEvery, log)
 	reg.touchHook = sched.maybeScan

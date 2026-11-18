@@ -67,6 +67,26 @@ taking the process down: `GET /healthz` (always 200, per-module detail) and
 `GET /readyz` (503 if any enabled module is failing) are the operational
 signal.
 
+## Spaces (photos)
+
+The photos scan walks **every space the user can see**, not only the personal
+one: project spaces and shares included. Each asset records the space it was
+found in (`spaceId`, `spaceName`, `spaceType`), so the client can show where a
+photo lives and filter by it.
+
+- The listing comes from `GET /graph/v1.0/me/drives` with the credential of the
+  user whose turn it is to be scanned, so a space whose visibility changes stops
+  being scanned (and its rows are soft-deleted) without any configuration.
+- The soft-delete of a scan is scoped to the prefix of the space being walked:
+  one space never deletes rows of another.
+- A space without `OCAPPS_PHOTOS_SCAN_ROOT` (for example a project space with no
+  `Fotos` folder) is skipped: it is not an error and its indexed assets are kept.
+- `OCAPPS_PHOTOS_SCAN_SPACES` restricts the walk to a list of drives (`personal`
+  or drive ids). Empty, the default, means every visible drive.
+- The index exposes `GET /ocphotos-api/api/spaces` (spaces with photos of the
+  owner and their count) and `GET /ocphotos-api/api/assets?space=<id>`; the
+  folders handler takes `space=<id>` too ("" = the personal one).
+
 ## Live updates (SSE)
 
 `GET /ocphotos-api/api/stream` is a **per-user** Server-Sent Events stream: the
@@ -228,7 +248,9 @@ versions, up to 0.3.0) > default. Full table with legacy names and notes: SPEC
 | `OCAPPS_NOTES_OWNER` | `""` | Backfill of `user` on empty rows (migration 002) |
 | `OCAPPS_PHOTOS_USER` / `OCAPPS_PHOTOS_APP_TOKEN` | *(required if photos enabled)* | OpenCloud user and app token (single-tenant) |
 | `OCAPPS_PHOTOS_TOKEN` | `""` | Static Bearer of its own (ex `MEMORIES_TOKEN`) |
-| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | Scan root folder |
+| `OCAPPS_PHOTOS_SCAN_ROOT` | `Fotos` | Scan root folder (each space that does not have it is skipped) |
+| `OCAPPS_PHOTOS_SCAN_SPACES` | *(all visible drives)* | Drives to scan, comma separated: `personal` and/or drive ids. Empty = every space the user sees (personal, project spaces and shares) |
+| `OCAPPS_PHOTOS_SCAN_SPACE` | `""` | **DEPRECATED**: single drive id, folded into `OCAPPS_PHOTOS_SCAN_SPACES` |
 | `OCAPPS_PHOTOS_SCAN_EVERY` | `5m` | Re-scan interval |
 
 Validation (SPEC §3.3): invalid shared config is fatal (the process does not

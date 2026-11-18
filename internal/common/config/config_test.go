@@ -32,6 +32,8 @@ var allVars = []string{
 	"OCAPPS_PHOTOS_TOKEN", "MEMORIES_TOKEN",
 	"OCAPPS_PHOTOS_SCAN_ROOT", "SCAN_ROOT",
 	"OCAPPS_PHOTOS_SCAN_EVERY", "SCAN_EVERY",
+	"OCAPPS_PHOTOS_SCAN_SPACE",
+	"OCAPPS_PHOTOS_SCAN_SPACES",
 	"WEB_DIR",
 }
 
@@ -92,6 +94,57 @@ func TestEmptyScanRootFallsBackToDefault(t *testing.T) {
 	}
 	if cfg.Photos.ScanRoot != "/" {
 		t.Errorf("explicit ScanRoot: got %q, want %q", cfg.Photos.ScanRoot, "/")
+	}
+}
+
+// TestScanSpaces: the multi-space scan (issue #145). Empty = every visible
+// drive (zero value of the slice, the scanner reads it as "all"), an explicit
+// list is kept as given, and the deprecated single-drive variable folds into
+// the list.
+func TestScanSpaces(t *testing.T) {
+	base(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Photos.ScanSpaces) != 0 {
+		t.Errorf("without configuration: got %v, want no filter (all drives)", cfg.Photos.ScanSpaces)
+	}
+
+	t.Setenv("OCAPPS_PHOTOS_SCAN_SPACES", " personal , proyecto-1 ,, proyecto-1 ")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"personal", "proyecto-1"}
+	if len(cfg.Photos.ScanSpaces) != len(want) {
+		t.Fatalf("ScanSpaces: got %v, want %v", cfg.Photos.ScanSpaces, want)
+	}
+	for i := range want {
+		if cfg.Photos.ScanSpaces[i] != want[i] {
+			t.Fatalf("ScanSpaces: got %v, want %v", cfg.Photos.ScanSpaces, want)
+		}
+	}
+
+	// DEPRECATED single-drive variable: it is honored when the list is empty
+	t.Setenv("OCAPPS_PHOTOS_SCAN_SPACES", "")
+	t.Setenv("OCAPPS_PHOTOS_SCAN_SPACE", "7b251a66")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Photos.ScanSpaces) != 1 || cfg.Photos.ScanSpaces[0] != "7b251a66" {
+		t.Errorf("deprecated SCAN_SPACE: got %v", cfg.Photos.ScanSpaces)
+	}
+
+	// The list prevails over the deprecated variable (no mixing)
+	t.Setenv("OCAPPS_PHOTOS_SCAN_SPACES", "personal")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Photos.ScanSpaces) != 1 || cfg.Photos.ScanSpaces[0] != "personal" {
+		t.Errorf("SCAN_SPACES must prevail: got %v", cfg.Photos.ScanSpaces)
 	}
 }
 

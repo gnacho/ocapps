@@ -35,6 +35,9 @@ type Asset struct {
 	Filename   string   `json:"filename"`
 	MediaType  string   `json:"mediaType"`
 	TakenAt    int64    `json:"takenAt"`
+	SpaceID    string   `json:"spaceId,omitempty"`
+	SpaceName  string   `json:"spaceName,omitempty"`
+	SpaceType  string   `json:"spaceType,omitempty"`
 	Width      int      `json:"width"`
 	Height     int      `json:"height"`
 	Camera     string   `json:"camera,omitempty"`
@@ -250,17 +253,40 @@ func (s *Store) AssetOwner(ctx context.Context, id int64) (string, error) {
 
 // --- writing (scanner) ---
 
-// UpsertByETag inserts or updates if the etag changed. It returns (id, changed).
-// The uniqueness is (owner, path): the same path can coexist under two owners.
+// Space is a drive of the owner (issue #145): the id after "$" in
+// /dav/spaces/<storage>$<space>, the display name and the OpenCloud driveType
+// (personal, project, share...). The API lists the spaces present in the index
+// so the UI can filter by them.
+type Space struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Assets int64  `json:"count"`
+}
+
+// UpsertByETag inserts or updates an asset whose space is not known by the
+// caller (tests, one-off tooling). It is UpsertInSpace with an empty space.
 func (s *Store) UpsertByETag(ctx context.Context, owner, path, etag, filename, mediaType string, mtime time.Time, size int64) (int64, bool, error) {
+	return s.UpsertInSpace(ctx, owner, path, etag, filename, mediaType, mtime, size, Space{})
+}
+
+// UpsertInSpace is UpsertByETag with the drive the asset was found in: the
+// scanner walks every space of the owner, so the space is part of the index.
+// It returns (id, changed). The uniqueness is (owner, path): the same physical
+// path can coexist under two owners, and two spaces never share a path because
+// the path carries the space UUID.
+// space is stored so the API can filter by space and show its name (issue
+// #145). A rename of the space does not change the path, so the name and the
+// type are refreshed when they differ.
+func (s *Store) UpsertInSpace(ctx context.Context, owner, path, etag, filename, mediaType string, mtime time.Time, size int64, space Space) (int64, bool, error) {
 	var id int64
-	var curETag string
-	err := s.db.QueryRowContext(ctx, `SELECT id, etag FROM assets WHERE owner = ? AND path = ?`, owner, path).Scan(&id, &curETag)
+	var curETag, curSpaceID, curSpaceName, curSpaceType string
+	err := s.db.QueryRowContext(ctx, `SELECT id, etag, space_id, space_name, space_type FROM assets WHERE owner = ? AND path = ?`, owner, path).Scan(&id, &curETag, &curSpaceID, &curSpaceName, &curSpaceType)
 	switch {
 	case err == sql.ErrNoRows:
 		res, err := s.db.ExecContext(ctx,
-			`INSERT INTO assets (owner, path, etag, filename, media_type, taken_at, size) VALUES (?,?,?,?,?,?,?)`,
-			owner, path, etag, filename, mediaType, mtime.Unix(), size)
+			`INSERT INTO assets (owner, path, etag, filename, media_type, taken_at, size, space_id, space_name, space_type) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			owner, path, etag, filename, mediaType, mtime.Unix(), size, space.ID, space.Name, space.Type)
 		if err != nil {
 			return 0, false, err
 		}
@@ -269,18 +295,49 @@ func (s *Store) UpsertByETag(ctx context.Context, owner, path, etag, filename, m
 	case err != nil:
 		return 0, false, err
 	case curETag != etag:
-		// modified file: reset the EXIF to reprocess it, keep the favourite flag
+		// modified file (or first scan after 004, when space_id is still
+		// empty): reset the EXIF to reprocess it, keep the favourite flag
 		if _, err := s.db.ExecContext(ctx,
-			`UPDATE assets SET etag=?, taken_at=?, size=?, exif_done=0, deleted_at=NULL WHERE id=?`,
-			etag, mtime.Unix(), size, id); err != nil {
+			`UPDATE assets SET etag=?, taken_at=?, size=?, exif_done=0, deleted_at=NULL, space_id=?, space_name=?, space_type=? WHERE id=?`,
+			etag, mtime.Unix(), size, space.ID, space.Name, space.Type, id); err != nil {
 			return 0, false, err
 		}
 		return id, true, nil
+	case curSpaceID != space.ID || curSpaceName != space.Name || curSpaceType != space.Type:
+		// a rename of the space (its path does not change) or the first scan
+		// after migration 004 (space_id still empty)
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE assets SET deleted_at=NULL, space_id=?, space_name=?, space_type=? WHERE id=?`,
+			space.ID, space.Name, space.Type, id)
+		return id, false, err
 	default:
 		// no changes, make sure it is revived if it was soft-deleted
 		_, err := s.db.ExecContext(ctx, `UPDATE assets SET deleted_at=NULL WHERE id=?`, id)
 		return id, false, err
 	}
+}
+
+// Spaces lists the spaces (drives) with live assets of the owner, with their
+// count, ordered by name. Rows indexed before migration 004 have no space yet:
+// they are left out until the next scan fills them in.
+func (s *Store) Spaces(ctx context.Context, owner string) ([]Space, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT space_id, space_name, space_type, COUNT(*) FROM assets
+		 WHERE owner = ? AND deleted_at IS NULL AND is_archived = 0 AND space_id <> ''
+		 GROUP BY space_id, space_name, space_type ORDER BY space_name, space_id`, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []Space{}
+	for rows.Next() {
+		var sp Space
+		if err := rows.Scan(&sp.ID, &sp.Name, &sp.Type, &sp.Assets); err != nil {
+			return nil, err
+		}
+		out = append(out, sp)
+	}
+	return out, rows.Err()
 }
 
 // SoftDeleteExcept marks as deleted the live assets OF THE OWNER that fall under
@@ -365,7 +422,7 @@ func (s *Store) SaveExif(ctx context.Context, id int64, r ExifResult) error {
 
 // --- reading (API) ---
 
-const assetCols = `id, path, filename, media_type, taken_at, width, height, camera, lens, iso, aperture, shutter, focal, lat, lon, size, is_favorite, is_archived, exif_done, deleted_at`
+const assetCols = `id, path, filename, media_type, taken_at, width, height, camera, lens, iso, aperture, shutter, focal, lat, lon, size, is_favorite, is_archived, exif_done, deleted_at, space_id, space_name, space_type`
 
 func scanAsset(rows interface{ Scan(...any) error }) (Asset, error) {
 	var a Asset
@@ -374,7 +431,8 @@ func scanAsset(rows interface{ Scan(...any) error }) (Asset, error) {
 	var camera, lens, aperture, shutter, focal *string
 	var iso, width, height *int
 	err := rows.Scan(&a.ID, &a.Path, &a.Filename, &a.MediaType, &a.TakenAt, &width, &height,
-		&camera, &lens, &iso, &aperture, &shutter, &focal, &lat, &lon, &a.Size, &fav, &arch, &exif, &a.DeletedAt)
+		&camera, &lens, &iso, &aperture, &shutter, &focal, &lat, &lon, &a.Size, &fav, &arch, &exif, &a.DeletedAt,
+		&a.SpaceID, &a.SpaceName, &a.SpaceType)
 	if err != nil {
 		return a, err
 	}
@@ -411,7 +469,7 @@ func scanAsset(rows interface{ Scan(...any) error }) (Asset, error) {
 
 // AssetsPage paginates by cursor (taken_at, id) descending - stable infinite
 // scroll. It only returns assets of the owner.
-func (s *Store) AssetsPage(ctx context.Context, owner string, beforeTaken int64, beforeID int64, limit int, favoritesOnly, archivedOnly bool, query string) ([]Asset, error) {
+func (s *Store) AssetsPage(ctx context.Context, owner string, beforeTaken int64, beforeID int64, limit int, favoritesOnly, archivedOnly bool, query, spaceID string) ([]Asset, error) {
 	arch := 0
 	if archivedOnly {
 		arch = 1
@@ -420,6 +478,10 @@ func (s *Store) AssetsPage(ctx context.Context, owner string, beforeTaken int64,
 	args := []any{owner, arch, beforeTaken, beforeTaken, beforeID}
 	if favoritesOnly {
 		q += ` AND is_favorite = 1`
+	}
+	if spaceID != "" {
+		q += ` AND space_id = ?`
+		args = append(args, spaceID)
 	}
 	if query != "" {
 		q += ` AND (filename LIKE ? OR camera LIKE ? OR path LIKE ?)`

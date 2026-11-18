@@ -94,7 +94,7 @@ func TestScanAppliesForeignSidecar(t *testing.T) {
 		map[string]string{folder + "a.jpg.xmp": sidecarFavorite}, &gets)
 
 	sc := newTestScanner(t, srv, st)
-	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
+	if err := sc.ScanSpace(ctx, "alice", Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}, "Fotos"); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 
@@ -123,7 +123,7 @@ func TestScanAppliesForeignSidecar(t *testing.T) {
 	}
 
 	// second scan: same etag, not one extra download
-	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
+	if err := sc.ScanSpace(ctx, "alice", Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}, "Fotos"); err != nil {
 		t.Fatalf("second scan: %v", err)
 	}
 	if n := atomic.LoadInt32(&gets); n != 1 {
@@ -161,7 +161,7 @@ func TestScanSidecarWithoutRatingKeepsFavorite(t *testing.T) {
 		[]string{folder + "a.jpg", folder + "a.jpg.xmp"},
 		map[string]string{folder + "a.jpg.xmp": noRating}, &gets)
 	sc := newTestScanner(t, srv, st)
-	if err := sc.ScanSpace(ctx, "alice", srv.URL+"/dav/spaces/x", "Fotos"); err != nil {
+	if err := sc.ScanSpace(ctx, "alice", Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}, "Fotos"); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestScanSidecarWithoutRatingKeepsFavorite(t *testing.T) {
 	srv2 := davFakeXMP(t, folder, "v2",
 		[]string{folder + "a.jpg", folder + "a.jpg.xmp"},
 		map[string]string{folder + "a.jpg.xmp": zeroRating}, &gets)
-	if err := newTestScanner(t, srv2, st).ScanSpace(ctx, "alice", srv2.URL+"/dav/spaces/x", "Fotos"); err != nil {
+	if err := newTestScanner(t, srv2, st).ScanSpace(ctx, "alice", Space{ID: "x", Name: "x", WebDAVURL: srv2.URL + "/dav/spaces/x"}, "Fotos"); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 	a, err = st.AssetByID(ctx, "alice", id)

@@ -78,6 +78,10 @@ type SessionProvider interface {
 	// the owner (folders handler), resolving it on demand with the credential
 	// of its session when needed. "" if it cannot be resolved.
 	SpacePrefix(ctx context.Context, owner string) string
+	// SpacePrefixOf returns the path of the webDavUrl of a space of the owner
+	// (folders handler of that space). "" if the space is unknown or not
+	// visible (the handler answers with an empty listing).
+	SpacePrefixOf(ctx context.Context, owner, spaceID string) string
 	// LegacyOwner resolves the oc_id of the legacy user OCAPPS_PHOTOS_USER
 	// (identity of the DEPRECATED static Bearer). Error if it cannot be
 	// resolved (OpenCloud down, invalid credentials).
@@ -161,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+PublicPrefix+"/api/stats", s.stats)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/assets", s.assets)
+	mux.HandleFunc("GET "+PublicPrefix+"/api/spaces", s.spaces)
 	mux.HandleFunc("GET "+PublicPrefix+"/api/assets/resolve", s.resolve)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/assets/{id}/favorite", s.favorite)
 	mux.HandleFunc("POST "+PublicPrefix+"/api/assets/{id}/archive", s.archive)
@@ -277,7 +282,7 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, st)
 }
 
-// GET /api/assets?before_taken=&before_id=&limit=&favorites=1&q=
+// GET /api/assets?before_taken=&before_id=&limit=&favorites=1&q=&space=
 func (s *Server) assets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	beforeTaken := int64(1<<62 - 1)
@@ -294,12 +299,23 @@ func (s *Server) assets(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	list, err := s.st.AssetsPage(r.Context(), OwnerFrom(r.Context()), beforeTaken, beforeID, limit, q.Get("favorites") == "1", q.Get("archived") == "1", q.Get("q"))
+	list, err := s.st.AssetsPage(r.Context(), OwnerFrom(r.Context()), beforeTaken, beforeID, limit, q.Get("favorites") == "1", q.Get("archived") == "1", q.Get("q"), q.Get("space"))
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	writeJSON(w, map[string]any{"assets": list})
+}
+
+// GET /api/spaces: the spaces (drives) with indexed photos of the owner, with
+// their count. It is what feeds the space filter of the UI (issue #145).
+func (s *Server) spaces(w http.ResponseWriter, r *http.Request) {
+	list, err := s.st.Spaces(r.Context(), OwnerFrom(r.Context()))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]any{"spaces": list})
 }
 
 // resolve implements GET /api/assets/resolve, the destination of the "Open
@@ -833,16 +849,25 @@ func (s *Server) writeXMP(ctx context.Context, owner string, id int64) {
 // --- Folders ---
 
 // folders: subfolders and photos of a folder (derived from the owner index).
-// path = relative path inside the space ("" = root). The prefix of the space
-// comes from the user session (webDavUrl cached in the registry, H8), if it is
-// not resolved yet a coherent empty answer is returned (not a 500).
+// path = relative path inside the space ("" = root) and space = drive id ("" =
+// the personal one, kept for compatibility with a single-space client). The
+// prefix of the space comes from the user session (webDavUrl cached in the
+// registry, H8), if it is not resolved yet a coherent empty answer is returned
+// (not a 500).
 func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 	owner := OwnerFrom(r.Context())
-	prefix := s.provider.SpacePrefix(r.Context(), owner)
+	spaceID := r.URL.Query().Get("space")
+	prefix := ""
+	if spaceID != "" {
+		prefix = s.provider.SpacePrefixOf(r.Context(), owner, spaceID)
+	} else {
+		prefix = s.provider.SpacePrefix(r.Context(), owner)
+	}
 	rel := strings.Trim(r.URL.Query().Get("path"), "/")
 	if prefix == "" {
-		// user without a resolved space yet: coherent empty answer
-		writeJSON(w, map[string]any{"path": rel, "folders": []store.FolderEntry{}, "assets": []store.Asset{}})
+		// user without a resolved space yet (or a space not visible): coherent
+		// empty answer
+		writeJSON(w, map[string]any{"path": rel, "space": spaceID, "folders": []store.FolderEntry{}, "assets": []store.Asset{}})
 		return
 	}
 	base := prefix + "/"
@@ -863,7 +888,7 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 	for i := range folders {
 		folders[i].Path = strings.TrimPrefix(base+folders[i].Name, prefix+"/")
 	}
-	writeJSON(w, map[string]any{"path": rel, "folders": folders, "assets": assets})
+	writeJSON(w, map[string]any{"path": rel, "space": spaceID, "folders": folders, "assets": assets})
 }
 
 // --- Albums ---

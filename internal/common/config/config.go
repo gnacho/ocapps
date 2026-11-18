@@ -100,8 +100,14 @@ type PhotosConfig struct {
 	Users    []AppUser // OCAPPS_PHOTOS_USERS + legacy folding (background scan)
 	Token    string    // static Bearer DEPRECATED (requires User), "" = disabled
 	ScanRoot string
-	// ScanSpace limits the scan to a specific drive (drive id, the one after
-	// "$" in /dav/spaces/<user>$<drive>). Empty = personal drive.
+	// ScanSpaces lists the drives the scan walks: drive ids (the one after
+	// "$" in /dav/spaces/<user>$<drive>) or the keyword "personal". Empty =
+	// every drive visible to the owner (personal, project spaces and shares),
+	// which is what makes photos of a project space show up (issue #145).
+	ScanSpaces []string
+	// ScanSpace is the DEPRECATED single-drive variant (OCAPPS_PHOTOS_SCAN_SPACE).
+	// When ScanSpaces is empty it is folded into it, so both mean the same
+	// thing to the scanner.
 	ScanSpace string
 	ScanEvery time.Duration
 	// CacheDir: root of the thumbnails cache. Empty = <DATA_DIR>/thumbs.
@@ -403,6 +409,16 @@ func Load() (*Config, error) {
 	if usersErr != nil {
 		photosErrs = append(photosErrs, usersErr)
 	}
+	// Multi-space scan (issue #145): an explicit list of drives, or all the
+	// drives visible to the owner when nothing is configured. The deprecated
+	// single-drive variable folds into the list.
+	if raw := l.get("OCAPPS_PHOTOS_SCAN_SPACES", "", ""); strings.TrimSpace(raw) != "" {
+		c.Photos.ScanSpaces = parseScanSpaces(raw)
+	} else if c.Photos.ScanSpace != "" {
+		c.Photos.ScanSpaces = []string{c.Photos.ScanSpace}
+		slog.Warn("OCAPPS_PHOTOS_SCAN_SPACE is deprecated: use OCAPPS_PHOTOS_SCAN_SPACES (a comma separated list, \"personal\" for the personal drive)",
+			"space", c.Photos.ScanSpace)
+	}
 	// The static Bearer is DEPRECATED and no longer has an identity of its own
 	// (H8 §6.2): without OCAPPS_PHOTOS_USER there is no oc_id to map it to.
 	if c.PhotosEnabled && c.Photos.Token != "" && c.Photos.User == "" {
@@ -472,6 +488,23 @@ func photosUserListed(users []AppUser, user string) bool {
 		}
 	}
 	return false
+}
+
+// parseScanSpaces parses OCAPPS_PHOTOS_SCAN_SPACES: a comma separated list of
+// drive ids, or the keyword "personal" for the personal drive. Empty entries
+// are ignored and duplicates dropped (the configuration is a set of drives).
+func parseScanSpaces(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	return out
 }
 
 // loadOpenCloudURL resolves the server root with the precedence

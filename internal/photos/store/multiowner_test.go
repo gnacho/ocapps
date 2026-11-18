@@ -37,7 +37,7 @@ func twoOwnersFixture(t *testing.T) (*Store, context.Context, map[string]int64, 
 func TestMultiOwnerSamePathsCoexist(t *testing.T) {
 	st, ctx, _, _ := twoOwnersFixture(t)
 	for _, owner := range []string{"alice", "bob"} {
-		page, err := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, false, "")
+		page, err := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 10, false, false, "", "")
 		if err != nil || len(page) != 2 {
 			t.Fatalf("%s: %d assets %v", owner, len(page), err)
 		}
@@ -58,7 +58,7 @@ func TestMultiOwnerSamePathsCoexist(t *testing.T) {
 
 func mustID(t *testing.T, st *Store, ctx context.Context, owner, path string) int64 {
 	t.Helper()
-	page, err := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 100, false, false, "")
+	page, err := st.AssetsPage(ctx, owner, 1<<62-1, 1<<62-1, 100, false, false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

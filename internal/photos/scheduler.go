@@ -178,26 +178,32 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 	sctx, cancel := context.WithTimeout(ctx, s.tmo)
 	defer cancel()
 
-	webdavURL, err := s.reg.resolveSpace(sctx, sess, owner)
+	spaces, err := s.reg.resolveSpaces(sctx, sess, owner)
 	if err != nil {
 		if errors.Is(err, webdav.ErrUnauthorized) {
 			s.reg.markExpired(owner)
 			s.log.Info("scan postponed: expired token, it will resume on the next activity", "owner", owner)
 		} else {
-			s.log.Error("scan: space not resolvable", "owner", owner, "err", err)
+			s.log.Error("scan: spaces not resolvable", "owner", owner, "err", err)
 		}
 		return
 	}
 
 	scanner := index.NewScanner(sess.dav, webdav.DefaultOptions(), s.st, s.log)
 	scanner.OnIndexChange = s.publishIndexChange
-	if err := scanner.ScanSpace(sctx, owner, webdavURL, s.root); err != nil {
-		if errors.Is(err, webdav.ErrUnauthorized) {
-			s.reg.markExpired(owner)
-			s.log.Info("scan postponed: expired token, it will resume on the next activity", "owner", owner)
-			return // does NOT count as lastScan: it is retried on fresh activity
+	// Every space visible to the owner (personal, project spaces and shares,
+	// see issue #145) is walked in turn. The soft-delete of each space is
+	// scoped to its own prefix, so the spaces do not touch each other's rows.
+	for _, d := range spaces {
+		space := index.Space{ID: d.ID, Name: d.Name, Type: d.DriveType, WebDAVURL: d.WebDAVURL}
+		if err := scanner.ScanSpace(sctx, owner, space, s.root); err != nil {
+			if errors.Is(err, webdav.ErrUnauthorized) {
+				s.reg.markExpired(owner)
+				s.log.Info("scan postponed: expired token, it will resume on the next activity", "owner", owner)
+				return // does NOT count as lastScan: it is retried on fresh activity
+			}
+			s.log.Error("scan", "owner", owner, "space", d.Name, "err", err)
 		}
-		s.log.Error("scan", "owner", owner, "err", err)
 	}
 	// The scan (or its non-auth attempt) counts for the ScanEvery rhythm.
 	s.mu.Lock()
