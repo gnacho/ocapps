@@ -386,3 +386,36 @@ func TestFileURL(t *testing.T) {
 		}
 	}
 }
+
+// TestPropfindExcludesSelfWithEscapedNames: the server sends the hrefs
+// percent-encoded, so a folder with a space or an accent must still be
+// recognised as the resource itself and left out of the children. Missing it
+// made the photos scanner queue the same folder again and again (issue #72).
+func TestPropfindExcludesSelfWithEscapedNames(t *testing.T) {
+	const body = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>/dav/spaces/x/Marca%20Domatix/Dise%C3%B1o/</d:href>
+    <d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+    <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+  <d:response><d:href>/dav/spaces/x/Marca%20Domatix/Dise%C3%B1o/logo.png</d:href>
+    <d:propstat><d:prop><d:resourcetype/><d:getetag>"e1"</d:getetag></d:prop>
+    <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "alice", "tok")
+	entries, err := c.Propfind(context.Background(), "/dav/spaces/x/Marca%20Domatix/Dise%C3%B1o/", 1)
+	if err != nil {
+		t.Fatalf("Propfind: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries: got %d, want 1 (self excluded): %+v", len(entries), entries)
+	}
+	if entries[0].IsDir || entries[0].Href != "/dav/spaces/x/Marca%20Domatix/Dise%C3%B1o/logo.png" {
+		t.Errorf("entry: %+v", entries[0])
+	}
+}

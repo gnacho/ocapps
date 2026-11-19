@@ -317,9 +317,23 @@ func (c *Client) Propfind(ctx context.Context, href string, depth int) ([]Entry,
 
 	selfPath, _ := url.Parse(u)
 	entries := make([]Entry, 0, len(ms.Responses))
+	// The server answers with the hrefs percent-encoded and url.Parse keeps the
+	// request path decoded, so comparing them raw only works for plain ASCII
+	// names. A folder with a space or an accent ("Diseño/") did not match, its
+	// own entry was returned as a child and the scanner queued the folder
+	// again: an endless walk of the same tree (issue #72).
+	self := ""
+	selfEscaped := ""
+	if selfPath != nil {
+		self = selfPath.Path
+		selfEscaped = selfPath.EscapedPath()
+	}
 	for _, r := range ms.Responses {
 		// exclude the entry of the resource itself
-		if selfPath != nil && r.Href == selfPath.Path {
+		if r.Href == self || r.Href == selfEscaped {
+			continue
+		}
+		if unescaped, err := url.PathUnescape(r.Href); err == nil && unescaped == self {
 			continue
 		}
 		if len(r.PropStat) == 0 || !strings.Contains(r.PropStat[0].Status, "200") {
