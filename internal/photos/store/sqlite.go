@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -338,6 +339,72 @@ func (s *Store) Spaces(ctx context.Context, owner string) ([]Space, error) {
 		out = append(out, sp)
 	}
 	return out, rows.Err()
+}
+
+// SpaceIDFromPath returns the id of the space an indexed path belongs to. The
+// path is "/dav/spaces/<storage>$<space>/...", so the id is what sits between
+// the '$' of the first segment and the next slash. "" when the path does not
+// have that shape.
+func SpaceIDFromPath(p string) string {
+	rest := strings.TrimPrefix(p, "/dav/spaces/")
+	if rest == p {
+		return ""
+	}
+	seg, _, _ := strings.Cut(rest, "/")
+	_, id, ok := strings.Cut(seg, "$")
+	if !ok {
+		return ""
+	}
+	return id
+}
+
+// SoftDeleteLostSpaces marks as deleted the live assets of the owner whose
+// space is NOT in visible (the drives the user can see right now). It is the
+// counterpart of SoftDeleteExcept for a space that disappears: a scan only
+// walks the spaces that exist, so a space the user lost access to would keep
+// its rows alive forever (issue #70).
+//
+// The id is read from the path when the row has no space yet (rows indexed
+// before migration 004), so those are pruned too.
+//
+// The caller must only use it after a scan that finished every selected space
+// AND with a listing of the visible drives: with an empty or partial visible
+// set it would delete the whole index.
+func (s *Store) SoftDeleteLostSpaces(ctx context.Context, owner string, visible map[string]bool) (int, error) {
+	if len(visible) == 0 {
+		return 0, errors.New("soft-delete of lost spaces with an empty list of visible spaces")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, path, space_id FROM assets WHERE owner = ? AND deleted_at IS NULL`, owner)
+	if err != nil {
+		return 0, err
+	}
+	var stale []int64
+	for rows.Next() {
+		var id int64
+		var p, spaceID string
+		if err := rows.Scan(&id, &p, &spaceID); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		if spaceID == "" {
+			spaceID = SpaceIDFromPath(p)
+		}
+		// A row whose space cannot be determined is kept: pruning on a guess is
+		// how an index disappears.
+		if spaceID == "" || visible[spaceID] {
+			continue
+		}
+		stale = append(stale, id)
+	}
+	_ = rows.Close()
+	now := time.Now().Unix()
+	for _, id := range stale {
+		if _, err := s.db.ExecContext(ctx, `UPDATE assets SET deleted_at=? WHERE id=?`, now, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(stale), nil
 }
 
 // SoftDeleteExcept marks as deleted the live assets OF THE OWNER that fall under

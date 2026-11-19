@@ -157,3 +157,73 @@ func TestUpsertRefreshesSpaceName(t *testing.T) {
 		t.Errorf("name not refreshed: %+v", spaces)
 	}
 }
+
+// TestSoftDeleteLostSpaces: the rows of a space the owner can no longer see are
+// soft-deleted, including the ones indexed before migration 004 (their space is
+// read from the path). A visible space is never touched, and a row whose space
+// cannot be determined is kept.
+func TestSoftDeleteLostSpaces(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	keep := Space{ID: "p1", Name: "Personal", Type: "personal"}
+
+	if _, _, err := st.UpsertInSpace(ctx, "alice", "/dav/spaces/s$p1/Fotos/a.jpg", "e1", "a.jpg", "image", now, 100, keep); err != nil {
+		t.Fatal(err)
+	}
+	// a space that is no longer visible, indexed with its space
+	if _, _, err := st.UpsertInSpace(ctx, "alice", "/dav/spaces/s$k1/Fotos/b.jpg", "e2", "b.jpg", "image", now, 100,
+		Space{ID: "k1", Name: "Familia", Type: "project"}); err != nil {
+		t.Fatal(err)
+	}
+	// the same case but from before migration 004: no space in the row
+	if _, _, err := st.UpsertByETag(ctx, "alice", "/dav/spaces/s$k2/Fotos/c.jpg", "e3", "c.jpg", "image", now, 100); err != nil {
+		t.Fatal(err)
+	}
+	// a path without a space: never pruned on a guess
+	if _, _, err := st.UpsertByETag(ctx, "alice", "/dav/x/d.jpg", "e4", "d.jpg", "image", now, 100); err != nil {
+		t.Fatal(err)
+	}
+	// another owner must not be touched
+	if _, _, err := st.UpsertInSpace(ctx, "bob", "/dav/spaces/s$k1/Fotos/z.jpg", "e5", "z.jpg", "image", now, 100,
+		Space{ID: "k1", Name: "Familia", Type: "project"}); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.SoftDeleteLostSpaces(ctx, "alice", map[string]bool{"p1": true})
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("pruned = %d, want 2 (k1 and k2)", n)
+	}
+	alice, _ := st.AssetsPage(ctx, "alice", 1<<62-1, 1<<62-1, 10, false, false, "", "")
+	if len(alice) != 2 { // p1 plus the unparsable path
+		t.Fatalf("alice live assets = %d, want 2: %+v", len(alice), alice)
+	}
+	bob, _ := st.AssetsPage(ctx, "bob", 1<<62-1, 1<<62-1, 10, false, false, "", "")
+	if len(bob) != 1 {
+		t.Errorf("another owner was touched: %d", len(bob))
+	}
+
+	// defensive: an empty visible set is an error, never a full purge
+	if _, err := st.SoftDeleteLostSpaces(ctx, "alice", nil); err == nil {
+		t.Error("an empty list of visible spaces must not prune")
+	}
+}
+
+// TestSpaceIDFromPath: the space id is the part after the '$' of the first
+// segment of the DAV path.
+func TestSpaceIDFromPath(t *testing.T) {
+	cases := map[string]string{
+		"/dav/spaces/7d443b01-21d3$9bc084a7-9bb4/Fotos/a.jpg": "9bc084a7-9bb4",
+		"/dav/spaces/storage$space":                          "space",
+		"/dav/x/a.jpg":                                       "",
+		"/dav/spaces/plain/Fotos/a.jpg":                      "",
+	}
+	for p, want := range cases {
+		if got := SpaceIDFromPath(p); got != want {
+			t.Errorf("SpaceIDFromPath(%q) = %q, want %q", p, got, want)
+		}
+	}
+}
