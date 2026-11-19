@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"log/slog"
 	"math"
@@ -405,4 +406,95 @@ func must(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// tiffWith builds a little-endian TIFF/EXIF block with the given tags, so the
+// tests do not need binary fixtures.
+func tiffWith(tags []struct {
+	id    uint16
+	typ   uint16
+	count uint32
+	value uint32
+}) []byte {
+	hdr := []byte{'I', 'I', 42, 0, 8, 0, 0, 0}
+	n := len(tags)
+	body := make([]byte, 2+n*12+4)
+	binary.LittleEndian.PutUint16(body[0:], uint16(n))
+	for i, tg := range tags {
+		e := body[2+i*12:]
+		binary.LittleEndian.PutUint16(e[0:], tg.id)
+		binary.LittleEndian.PutUint16(e[2:], tg.typ)
+		binary.LittleEndian.PutUint32(e[4:], tg.count)
+		if tg.typ == 3 { // SHORT lives in the first two bytes of the value
+			binary.LittleEndian.PutUint16(e[8:], uint16(tg.value))
+		} else {
+			binary.LittleEndian.PutUint32(e[8:], tg.value)
+		}
+	}
+	return append(hdr, body...)
+}
+
+// TestParseExifSwapsDimsOfRotatedPhotos: a photo stored landscape with
+// orientation 6 is displayed portrait, so the index must carry the size the
+// user sees (the timeline lays the grid out with it). Regression guard for the
+// thumbnails that used to come out sideways.
+func TestParseExifSwapsDimsOfRotatedPhotos(t *testing.T) {
+	cases := []struct {
+		orientation int
+		wantW       int
+		wantH       int
+	}{
+		{1, 4000, 2252},
+		{6, 2252, 4000},
+		{8, 2252, 4000},
+		{3, 4000, 2252},
+	}
+	for _, c := range cases {
+		tiff := tiffWith([]struct {
+			id    uint16
+			typ   uint16
+			count uint32
+			value uint32
+		}{
+			{0x0112, 3, 1, uint32(c.orientation)}, // Orientation (SHORT)
+			{0xA002, 4, 1, 4000},                  // PixelXDimension (LONG)
+			{0xA003, 4, 1, 2252},                  // PixelYDimension (LONG)
+		})
+		var buf bytes.Buffer
+		if err := jpegWithExif(tiff, &buf); err != nil {
+			t.Fatal(err)
+		}
+		x, err := exif.Decode(bytes.NewReader(buf.Bytes()))
+		if err != nil {
+			t.Fatalf("orientation %d: exif.Decode: %v", c.orientation, err)
+		}
+		res := store.ExifResult{}
+		parseExif(x, &res)
+		if res.Width != c.wantW || res.Height != c.wantH {
+			t.Errorf("orientation %d: %dx%d, want %dx%d", c.orientation, res.Width, res.Height, c.wantW, c.wantH)
+		}
+	}
+}
+
+// jpegWithExif wraps a TIFF/EXIF block in the APP1 segment of a tiny JPEG.
+func jpegWithExif(tiff []byte, out *bytes.Buffer) error {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 3))
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 4; x++ {
+			img.Set(x, y, color.RGBA{R: 10, G: 20, B: 30, A: 255})
+		}
+	}
+	var base bytes.Buffer
+	if err := jpeg.Encode(&base, img, nil); err != nil {
+		return err
+	}
+	b := base.Bytes()
+	body := append([]byte("Exif\x00\x00"), tiff...)
+	seg := []byte{0xFF, 0xE1, 0, 0}
+	binary.BigEndian.PutUint16(seg[2:4], uint16(len(body)+2))
+	out.Write(b[:2])
+	out.Write(seg)
+	out.Write(body)
+	out.Write(b[2:])
+	return nil
 }

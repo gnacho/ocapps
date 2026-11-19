@@ -6,6 +6,7 @@
 package thumb
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -20,7 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	_ "github.com/gen2brain/h265/heic" // registers image.Decode for HEIC/HEIF
+	"github.com/gen2brain/h265/heic"
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
@@ -47,8 +48,13 @@ func New(cacheDir string) (*Service, error) {
 	return &Service{cacheDir: cacheDir}, nil
 }
 
+// cacheVersion salts the cache key: bump it whenever the generation of a
+// thumbnail changes, so the entries produced by the previous code are not
+// served (v2 applies the EXIF orientation, the v1 thumbnails are sideways).
+const cacheVersion = "v2"
+
 func cacheKey(href, etag string, maxSize int) string {
-	h := sha1.Sum([]byte(fmt.Sprintf("%s|%s|%d", href, etag, maxSize)))
+	h := sha1.Sum([]byte(fmt.Sprintf("%s|%s|%s|%d", cacheVersion, href, etag, maxSize)))
 	return hex.EncodeToString(h[:]) + ".jpg"
 }
 
@@ -103,6 +109,23 @@ func (s *Service) VideoPoster(ctx context.Context, dav *webdav.Client, href, eta
 	return "", errors.New("ffmpeg could not extract a frame")
 }
 
+// isHEIC sniffs the ftyp box at offset 4: every valid ISOBMFF file carries it
+// there, and the heic/mif1 brands are handled by the gen2brain/h265 decoder.
+func isHEIC(data []byte) bool {
+	return len(data) >= 8 && string(data[4:8]) == "ftyp"
+}
+
+// decode turns the downloaded bytes into an image. HEIC/HEIF goes through
+// heic.Decode with AutoRotate (the container carries the rotation of a phone
+// photo in irot/imir/clap); the rest goes through the image.Decode registry.
+func decode(data []byte) (image.Image, error) {
+	if isHEIC(data) {
+		return heic.Decode(bytes.NewReader(data), heic.Options{AutoRotate: true})
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	return img, err
+}
+
 // Get returns the path of the cached thumbnail, generating it when needed.
 // maxSize is the long side. It is served as a quality 80 progressive JPEG.
 // dav is the client of the session of the asset owner (H8).
@@ -119,10 +142,22 @@ func (s *Service) Get(ctx context.Context, dav *webdav.Client, href, etag string
 	}
 	defer func() { _ = rc.Close() }()
 
-	// defensive limit: 60 MB per photo
-	img, _, err := image.Decode(io.LimitReader(rc, 60<<20))
+	// defensive limit: 60 MB per photo. The bytes are kept because the HEIC
+	// decoder seeks inside the container and the JPEG needs them to read the
+	// EXIF orientation.
+	data, err := io.ReadAll(io.LimitReader(rc, 60<<20))
+	if err != nil {
+		return "", err
+	}
+	img, err := decode(data)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrUnsupported, err)
+	}
+	// HEIC comes out already rotated (AutoRotate applies irot/imir/clap); the
+	// rest carries the rotation in the EXIF orientation, which the decoder
+	// ignores.
+	if !isHEIC(data) {
+		img = ApplyOrientation(img, Orientation(data))
 	}
 
 	b := img.Bounds()
