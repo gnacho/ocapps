@@ -471,6 +471,28 @@ type ExifResult struct {
 	Lat, Lon                               *float64
 }
 
+// MarkExifDone marks the asset as processed without touching its metadata. It
+// is what the worker uses when the read fails (a transient error, a 404): a
+// failure must never erase the camera, the dimensions or the location of a
+// photo that was already indexed.
+func (s *Store) MarkExifDone(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE assets SET exif_done=1 WHERE id=?`, id)
+	return err
+}
+
+// ResetExif marks every live image asset of the owner as pending EXIF again, so
+// the worker re-reads its header. It is the backfill for a change in what is
+// extracted (for example the visible size of rotated photos, issue #75) and it
+// returns how many rows were queued.
+func (s *Store) ResetExif(ctx context.Context, owner string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE assets SET exif_done=0 WHERE owner=? AND deleted_at IS NULL AND media_type='image'`, owner)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SaveExif stores the EXIF by id (ids are global, the worker only processes ids
 // obtained from PendingExif(owner, ...), so there is no need to repeat the owner
 // filter here).

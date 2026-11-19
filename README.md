@@ -88,6 +88,9 @@ photo lives and filter by it.
 - The index exposes `GET /ocphotos-api/api/spaces` (spaces with photos of the
   owner and their count) and `GET /ocphotos-api/api/assets?space=<id>`; the
   folders handler takes `space=<id>` too ("" = the personal one).
+- `POST /ocphotos-api/api/admin/exif` drains the pending EXIF backlog of the
+  owner; with `?all=1` it queues every image again first (the backfill after a
+  change in what is extracted, for example the visible size of a rotated photo).
 
 ## Live updates (SSE)
 

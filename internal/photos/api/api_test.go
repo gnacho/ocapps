@@ -590,3 +590,33 @@ func TestFoldersBySpace(t *testing.T) {
 		t.Fatalf("folders?space=nope -> %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// TestExifBacklogAll: POST /api/admin/exif?all=1 queues every image of the owner
+// again (the backfill after the extractor changes, issue #75) and says how many.
+func TestExifBacklogAll(t *testing.T) {
+	s, st, fp := newTestServer(t)
+	h := s.Handler()
+	bearer := "Bearer test-token"
+	ctx := context.Background()
+	if _, _, err := st.UpsertByETag(ctx, "legacy-owner", "/dav/spaces/s/Fotos/a.jpg", "e1", "a.jpg", "image", time.Now(), 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.UpsertByETag(ctx, "legacy-owner", "/dav/spaces/s/Fotos/b.jpg", "e2", "b.jpg", "image", time.Now(), 100); err != nil {
+		t.Fatal(err)
+	}
+	// a 404 upstream: the worker marks them processed without touching anything
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	fp.dav = webdav.New(srv.URL, "u", "t")
+	s.SetExifWorker(exif.NewWorker(st, slog.Default()))
+
+	rr := do(t, h, http.MethodPost, "/ocphotos-api/api/admin/exif?all=1", bearer)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"queued":2`) {
+		t.Errorf("the answer does not say how many assets were queued: %s", rr.Body.String())
+	}
+}

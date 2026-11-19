@@ -72,8 +72,10 @@ func (w *Worker) Run(ctx context.Context, owner string, dav *webdav.Client) erro
 					return err
 				}
 				w.log.Warn("exif failed", "owner", owner, "path", a.Path, "err", err)
-				// mark it as processed so it is not retried in a loop
-				_ = w.store.SaveExif(ctx, a.ID, store.ExifResult{})
+				// mark it as processed so it is not retried in a loop, but keep
+				// what the row already had: a failed read must not erase the
+				// camera, the dimensions or the location of an indexed photo
+				_ = w.store.MarkExifDone(ctx, a.ID)
 			}
 		}
 	}

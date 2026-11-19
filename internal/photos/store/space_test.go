@@ -227,3 +227,51 @@ func TestSpaceIDFromPath(t *testing.T) {
 		}
 	}
 }
+
+// TestResetExifAndMarkExifDone: the backfill of the EXIF (issue #75) queues the
+// owner's live images again, and a failed read marks the asset as processed
+// without erasing what the row already had.
+func TestResetExifAndMarkExifDone(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	id, _, err := st.UpsertInSpace(ctx, "alice", "/dav/spaces/s$p1/Fotos/a.jpg", "e1", "a.jpg", "image", now, 100,
+		Space{ID: "p1", Name: "Personal", Type: "personal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveExif(ctx, id, ExifResult{TakenAt: &now, Camera: "Apple iPhone", Width: 4032, Height: 3024}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.UpsertInSpace(ctx, "alice", "/dav/spaces/s$p1/Fotos/v.mp4", "e2", "v.mp4", "video", now, 100,
+		Space{ID: "p1", Name: "Personal", Type: "personal"}); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.ResetExif(ctx, "alice")
+	if err != nil {
+		t.Fatalf("ResetExif: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("queued = %d, want 1 (videos are not EXIF-processed)", n)
+	}
+	pending, err := st.PendingExif(ctx, "alice", 10)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending = %d, err=%v", len(pending), err)
+	}
+
+	// a failed read must keep the metadata of the row
+	if err := st.MarkExifDone(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.AssetByID(ctx, "alice", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Camera != "Apple iPhone" || a.Width != 4032 || a.Height != 3024 {
+		t.Errorf("the metadata was wiped: %+v", a)
+	}
+	if !a.ExifDone {
+		t.Error("the asset was not marked as processed")
+	}
+}
