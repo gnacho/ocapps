@@ -19,6 +19,7 @@ import (
 	"github.com/gen2brain/h265/heic"
 	"github.com/gnacho/ocapps/internal/common/webdav"
 	"github.com/gnacho/ocapps/internal/photos/store"
+	"github.com/gnacho/ocapps/internal/photos/thumb"
 	"github.com/rwcarlsen/goexif/exif"
 	_ "golang.org/x/image/webp"
 )
@@ -199,6 +200,14 @@ func parseExif(x *exif.Exif, res *store.ExifResult) {
 	}
 	if lat, lon, err := x.LatLong(); err == nil {
 		res.Lat, res.Lon = &lat, &lon
+	}
+	// The dimensions of the EXIF are the stored ones. A photo with orientation
+	// 6 (a phone portrait) is displayed 90 degrees turned, so the size the user
+	// sees is the other way round: the timeline lays the grid out with it.
+	if v, err := x.Get(exif.Orientation); err == nil {
+		if n, err := v.Int(0); err == nil && thumb.SwapsSides(n) {
+			res.Width, res.Height = res.Height, res.Width
+		}
 	}
 }
 

@@ -217,9 +217,9 @@ func TestSoftDeleteLostSpaces(t *testing.T) {
 func TestSpaceIDFromPath(t *testing.T) {
 	cases := map[string]string{
 		"/dav/spaces/7d443b01-21d3$9bc084a7-9bb4/Fotos/a.jpg": "9bc084a7-9bb4",
-		"/dav/spaces/storage$space":                          "space",
-		"/dav/x/a.jpg":                                       "",
-		"/dav/spaces/plain/Fotos/a.jpg":                      "",
+		"/dav/spaces/storage$space":                           "space",
+		"/dav/x/a.jpg":                                        "",
+		"/dav/spaces/plain/Fotos/a.jpg":                       "",
 	}
 	for p, want := range cases {
 		if got := SpaceIDFromPath(p); got != want {
