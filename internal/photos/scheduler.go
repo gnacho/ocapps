@@ -199,6 +199,7 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 	// drive.domatix.cloud: 11k photos plus their folders took the whole 2h
 	// cycle and the second space was never scanned).
 	deadline := s.tmo
+	complete := true
 	for _, d := range spaces {
 		space := index.Space{ID: d.ID, Name: d.Name, Type: d.DriveType, WebDAVURL: d.WebDAVURL}
 		ssctx, cancel := context.WithTimeout(ctx, deadline)
@@ -212,10 +213,28 @@ func (s *scheduler) scanOne(ctx context.Context, owner string) {
 				return // does NOT count as lastScan: it is retried on fresh activity
 			}
 			s.log.Error("scan", "owner", owner, "space", d.Name, "err", err, "duration", time.Since(started).Round(time.Second))
+			complete = false
 			continue
 		}
 		s.log.Info("space scanned", "owner", owner, "space", d.Name, "duration", time.Since(started).Round(time.Second))
 	}
+	// A space the owner lost access to is never walked, so its rows would stay
+	// alive forever (issue #70). It is pruned only when every selected space
+	// finished: with a partial pass (a timeout, an error) a row that is not in
+	// the index yet must not be taken for a lost space.
+	if complete {
+		visible := map[string]bool{}
+		for _, d := range s.reg.VisibleDrives(owner) {
+			visible[d.ID] = true
+		}
+		if n, err := s.st.SoftDeleteLostSpaces(ctx, owner, visible); err != nil {
+			s.log.Error("scan: lost spaces not pruned", "owner", owner, "err", err)
+		} else if n > 0 {
+			s.log.Info("scan: rows of spaces that are no longer visible pruned", "owner", owner, "removed", n)
+			s.publishIndexChange(owner)
+		}
+	}
+
 	// The scan (or its non-auth attempt) counts for the ScanEvery rhythm.
 	s.mu.Lock()
 	s.lastScan[owner] = time.Now()

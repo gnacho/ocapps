@@ -199,6 +199,19 @@ func (r *registry) selectDrives(drives []webdav.Drive) ([]webdav.Drive, error) {
 	return out, nil
 }
 
+// VisibleDrives returns the drives cached by the last listing of /me/drives
+// (every space the owner can see, whether or not the scan is configured for
+// it). nil when nothing has been listed yet. It is the "keep" set of the prune
+// of spaces that disappeared (issue #70).
+func (r *registry) VisibleDrives(owner string) []webdav.Drive {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sess, ok := r.sessions[owner]; ok {
+		return sess.drives
+	}
+	return nil
+}
+
 // resolveSpaces returns the drives a scan of the owner must walk, with the
 // listing just refreshed from /me/drives with the credential of the session.
 func (r *registry) resolveSpaces(ctx context.Context, sess *session, owner string) ([]webdav.Drive, error) {

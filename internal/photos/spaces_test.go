@@ -13,6 +13,7 @@ import (
 
 	"github.com/gnacho/ocapps/internal/common/auth"
 	"github.com/gnacho/ocapps/internal/common/config"
+	"github.com/gnacho/ocapps/internal/photos/store"
 )
 
 // fakeDrivesOpenCloud is fakeOpenCloud with several drives (issue #145): the
@@ -204,5 +205,121 @@ func TestScanEachSpaceHasItsOwnTimeout(t *testing.T) {
 	}
 	if len(all) != 1 || all[0].SpaceName != "Shares" {
 		t.Fatalf("the space after the slow one was not scanned: %+v", all)
+	}
+}
+
+// TestScanPrunesRowsOfLostSpaces: after a complete pass, the rows of a space the
+// owner can no longer see are soft-deleted (issue #70). The 31 rows of a drive
+// that disappeared from /me/drives stayed alive forever before this.
+func TestScanPrunesRowsOfLostSpaces(t *testing.T) {
+	srv := fakeDrivesOpenCloud(t)
+	m := newSpacesModule(t, srv, config.PhotosConfig{ScanRoot: "Fotos"})
+	ctx := context.Background()
+	m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: "tok"})
+
+	// an asset of a space the listing does not return any more
+	if _, _, err := m.st.UpsertInSpace(ctx, "user-1", "/dav/spaces/s$gone/Fotos/vieja.jpg", "e0", "vieja.jpg", "image", time.Now(), 100,
+		store.Space{ID: "gone", Name: "Antiguo", Type: "project"}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.sched.scanOne(ctx, "user-1")
+
+	all, err := m.st.AssetsPage(ctx, "user-1", 1<<62-1, 1<<62-1, 10, false, false, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range all {
+		if a.SpaceID == "gone" {
+			t.Errorf("the lost space was not pruned: %+v", a)
+		}
+	}
+	if len(all) != 2 { // p1 and k1 from the listing
+		t.Errorf("live assets = %d, want 2: %+v", len(all), all)
+	}
+}
+
+// TestScanKeepsRowsOfVisibleSpacesNotSelected: configuring OCAPPS_PHOTOS_SCAN_SPACES
+// to a subset of the drives must not delete the photos of the other visible
+// spaces (they are simply not walked).
+func TestScanKeepsRowsOfVisibleSpacesNotSelected(t *testing.T) {
+	srv := fakeDrivesOpenCloud(t)
+	m := newSpacesModule(t, srv, config.PhotosConfig{ScanRoot: "Fotos", ScanSpaces: []string{"personal"}})
+	ctx := context.Background()
+	m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: "tok"})
+
+	if _, _, err := m.st.UpsertInSpace(ctx, "user-1", "/dav/spaces/s$k1/Fotos/b.jpg", "e1", "b.jpg", "image", time.Now(), 100,
+		store.Space{ID: "k1", Name: "Familia", Type: "project"}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.sched.scanOne(ctx, "user-1")
+
+	all, err := m.st.AssetsPage(ctx, "user-1", 1<<62-1, 1<<62-1, 10, false, false, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range all {
+		if a.SpaceID == "k1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a visible space that is not selected was pruned: %+v", all)
+	}
+}
+
+// TestScanDoesNotPruneAfterAnIncompletePass: if one space fails (a timeout,
+// say) the pass cannot conclude that anything is lost, so nothing is pruned.
+func TestScanDoesNotPruneAfterAnIncompletePass(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/graph/v1.0/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "user-1"})
+		case r.URL.Path == "/graph/v1.0/me/drives":
+			_ = json.NewEncoder(w).Encode(map[string]any{"value": []map[string]any{
+				{"id": "p1", "name": "nacho", "driveType": "personal",
+					"root": map[string]any{"webDavUrl": srv.URL + "/dav/spaces/p"}},
+				{"id": "s1", "name": "Shares", "driveType": "virtual",
+					"root": map[string]any{"webDavUrl": srv.URL + "/dav/spaces/s"}},
+			}})
+		case r.Method == "PROPFIND":
+			if strings.HasPrefix(r.URL.Path, "/dav/spaces/p") {
+				time.Sleep(200 * time.Millisecond) // hits its own deadline
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = fmt.Fprint(w, multistatusXML("/dav/spaces/s/", "/dav/spaces/s/foto.jpg"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newSpacesModule(t, srv, config.PhotosConfig{ScanRoot: "Fotos"})
+	m.sched.tmo = 100 * time.Millisecond
+	ctx := context.Background()
+	m.reg.Touch(ctx, &auth.User{ID: "user-1"}, auth.Credential{Bearer: "tok"})
+
+	if _, _, err := m.st.UpsertInSpace(ctx, "user-1", "/dav/spaces/s$gone/Fotos/vieja.jpg", "e0", "vieja.jpg", "image", time.Now(), 100,
+		store.Space{ID: "gone", Name: "Antiguo", Type: "project"}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.sched.scanOne(ctx, "user-1")
+
+	all, _ := m.st.AssetsPage(ctx, "user-1", 1<<62-1, 1<<62-1, 10, false, false, "", "")
+	pruned := true
+	for _, a := range all {
+		if a.SpaceID == "gone" {
+			pruned = false
+		}
+	}
+	if pruned {
+		t.Errorf("an incomplete pass pruned rows: %+v", all)
 	}
 }
