@@ -118,6 +118,10 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner string, space Space, root
 	queue := []string{root}
 	seen := map[string]bool{}
 	var scanned, changed, attempts, failures, xmpApplied int
+	// Time spent in the two costs of a scan (issue #71): the DAV listings and
+	// the index writes. Without this, a scan that takes hours can only be
+	// guessed at.
+	var tPropfind, tUpsert time.Duration
 
 	// A space without the configured root folder (for example "Fotos" on a
 	// project space): the scan is skipped instead of walking nothing and
@@ -158,7 +162,9 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner string, space Space, root
 			continue
 		}
 		attempts++
+		pfStart := time.Now()
 		entries, err := s.dav.Propfind(ctx, href, 1)
+		tPropfind += time.Since(pfStart)
 		if err != nil {
 			if errors.Is(err, webdav.ErrUnauthorized) {
 				// expired credential: abort NOW and leave the index untouched
@@ -197,6 +203,12 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner string, space Space, root
 			}
 			scanned++
 			seen[e.ETag] = true
+			if scanned%1000 == 0 {
+				s.log.Info("scan progress", "owner", owner, "space", space.Name,
+					"assets", scanned, "folders", attempts,
+					"elapsed", time.Since(start).Round(time.Second),
+					"propfind", tPropfind.Round(time.Second), "upsert", tUpsert.Round(time.Second))
+			}
 			mt := "image"
 			if s.opts.IsVideo(e.Href) {
 				mt = "video"
@@ -206,8 +218,10 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner string, space Space, root
 				mtime = time.Now()
 			}
 			p, _ := url.PathUnescape(e.Href)
+			upStart := time.Now()
 			id, ch, err := s.store.UpsertInSpace(ctx, owner, p, e.ETag, path.Base(p), mt, mtime, e.Size,
 				store.Space{ID: space.ID, Name: space.Name, Type: space.Type})
+			tUpsert += time.Since(upStart)
 			if err != nil {
 				s.log.Error("upsert", "owner", owner, "path", p, "err", err)
 				continue
@@ -231,8 +245,8 @@ func (s *Scanner) ScanSpace(ctx context.Context, owner string, space Space, root
 		return err
 	}
 	s.log.Info("scan completed",
-		"owner", owner, "scanned", scanned, "changed", changed, "removed", removed,
-		"xmp", xmpApplied,
+		"owner", owner, "space", space.Name, "scanned", scanned, "changed", changed, "removed", removed,
+		"xmp", xmpApplied, "propfind", tPropfind.Round(time.Millisecond), "upsert", tUpsert.Round(time.Millisecond),
 		"duration", time.Since(start).Round(time.Second))
 	if changed > 0 || removed > 0 || xmpApplied > 0 {
 		if s.OnIndexChange != nil {

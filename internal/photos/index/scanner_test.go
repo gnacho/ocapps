@@ -1,6 +1,7 @@
 package index
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -390,5 +391,88 @@ func TestScanWholeSpace(t *testing.T) {
 	spaces, _ := st.Spaces(ctx, "alice")
 	if len(spaces) != 1 || spaces[0].Assets != 2 {
 		t.Errorf("spaces = %+v", spaces)
+	}
+}
+
+// TestScanLogsItsCost: a scan that takes hours must say where the time went
+// (issue #71). The progress line carries the assets, the folders and the time
+// spent in the DAV listings and in the index writes.
+func TestScanLogsItsCost(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx := context.Background()
+
+	// 1000 photos in one folder: enough for the progress line
+	entries := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		entries = append(entries, fmt.Sprintf("/dav/spaces/x/Fotos/%04d.jpg", i))
+	}
+	srv := davFake(t, func(path string) (int, string) {
+		if path == "/dav/spaces/x/Fotos/" {
+			return http.StatusMultiStatus, multistatus("/dav/spaces/x/Fotos/", entries...)
+		}
+		return http.StatusNotFound, ""
+	})
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	sc := NewScanner(webdav.NewBearer(srv.URL, "tok"), webdav.DefaultOptions(), st, logger)
+	space := Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}
+	if err := sc.ScanSpace(ctx, "alice", space, "Fotos"); err != nil {
+		t.Fatal(err)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "scan progress") || !strings.Contains(out, "assets=1000") {
+		t.Errorf("no progress line: %s", out)
+	}
+	if !strings.Contains(out, "propfind=") || !strings.Contains(out, "upsert=") {
+		t.Errorf("the completion line does not split the cost: %s", out)
+	}
+}
+
+// TestScanDoesNotRevisitAFolderWithEscapedName: the self entry of a PROPFIND
+// comes percent-encoded; if the client does not recognise it, the scanner
+// queues the same folder again and walks the tree in a loop until the timeout
+// (issue #72: 2 hours of scan and one core of OpenCloud for an 85 second walk).
+func TestScanDoesNotRevisitAFolderWithEscapedName(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx := context.Background()
+
+	folder := "/dav/spaces/x/Dise%C3%B1o/"
+	var listings int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PROPFIND" || r.URL.Path != "/dav/spaces/x/Diseño/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusMultiStatus)
+		if r.Header.Get("Depth") == "0" { // root probe
+			_, _ = fmt.Fprint(w, multistatus(folder))
+			return
+		}
+		listings++
+		_, _ = fmt.Fprint(w, multistatus(folder, folder+"logo.png"))
+	}))
+	t.Cleanup(srv.Close)
+
+	sc := NewScanner(webdav.NewBearer(srv.URL, "tok"), webdav.DefaultOptions(), st, slog.Default())
+	space := Space{ID: "x", Name: "x", WebDAVURL: srv.URL + "/dav/spaces/x"}
+	if err := sc.ScanSpace(ctx, "alice", space, "Diseño"); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if listings != 1 {
+		t.Errorf("the folder was listed %d times, want 1", listings)
+	}
+	stats, _ := st.Stats(ctx, "alice")
+	if stats["assets"].(int64) != 1 {
+		t.Errorf("assets = %v, want 1", stats["assets"])
 	}
 }
