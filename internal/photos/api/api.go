@@ -1014,6 +1014,23 @@ func (s *Server) exifBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?all=1 queues every image of the owner again: it is the backfill used
+	// after the extractor changes (the visible size of a rotated photo, issue
+	// #75). Without it only the pending backlog is processed.
+	var reset int64
+	if r.URL.Query().Get("all") == "1" {
+		n, err := s.st.ResetExif(r.Context(), owner)
+		if err != nil {
+			s.exifMu.Lock()
+			delete(s.exifBusy, owner)
+			s.exifMu.Unlock()
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		reset = n
+		s.log.Info("exif backlog: every image queued again", "owner", owner, "assets", n)
+	}
+
 	go func() {
 		defer func() {
 			s.exifMu.Lock()
@@ -1028,7 +1045,11 @@ func (s *Server) exifBacklog(w http.ResponseWriter, r *http.Request) {
 		// The dates and the GPS change: let the open tabs reload.
 		s.publishOwner(owner, "", TopicPhotos)
 	}()
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "exif queued"})
+	resp := map[string]any{"status": "exif queued"}
+	if reset > 0 {
+		resp["queued"] = reset
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, resp)
 }
 
 // rescan: enqueues a scan OF THE OWNER of the request only (H8: there is no

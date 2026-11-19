@@ -498,3 +498,48 @@ func jpegWithExif(tiff []byte, out *bytes.Buffer) error {
 	out.Write(b[2:])
 	return nil
 }
+
+// TestFailedReadKeepsTheMetadata: a photo whose header cannot be read (a 404, a
+// transient error) is marked as processed so it is not retried in a loop, but
+// the camera and the dimensions of the row survive (issue #75: the backfill
+// re-reads every asset, and a glitch must not erase what is already indexed).
+func TestFailedReadKeepsTheMetadata(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx := context.Background()
+	now := time.Now()
+	id, _, err := st.UpsertByETag(ctx, "alice", "/dav/spaces/s/Fotos/a.jpg", "e1", "a.jpg", "image", now, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveExif(ctx, id, store.ExifResult{TakenAt: &now, Camera: "Canon", Width: 6000, Height: 4000}); err != nil {
+		t.Fatal(err)
+	}
+	// pending again, as the backfill leaves it
+	if _, err := st.ResetExif(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	w := NewWorker(st, slog.Default())
+	if err := w.Run(ctx, "alice", webdav.New(srv.URL, "u", "t")); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	a, err := st.AssetByID(ctx, "alice", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Camera != "Canon" || a.Width != 6000 || a.Height != 4000 {
+		t.Errorf("a failed read erased the metadata: %+v", a)
+	}
+	if !a.ExifDone {
+		t.Error("the asset was not marked as processed: it would be retried in a loop")
+	}
+}
