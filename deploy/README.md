@@ -176,7 +176,21 @@ docker compose -f docker-compose.yml -f docker-compose.ocapps.yml up -d
 ```
 
 Port `8096` is published on `127.0.0.1` only, because only the host proxy needs
-it. `OCAPPS_OPENCLOUD_URL=http://opencloud:9200` points at the internal API of
+it. If another service already owns that port on the host (Jellyfin uses 8096
+too), publish another one instead: the container keeps listening on 8096 inside,
+so only the left side of the mapping changes.
+
+```yaml
+ports:
+  - "127.0.0.1:18096:8096"   # host 18096 -> container 8096
+```
+
+Nothing else needs editing: the `healthcheck` and the proxy routes point at the
+**container** port. Only the proxy upstream follows the host side
+(`proxy_pass http://127.0.0.1:18096;`). Same rule with `--listen` when running
+from a release with `install.sh`.
+
+`OCAPPS_OPENCLOUD_URL=http://opencloud:9200` points at the internal API of
 the OpenCloud container, so there is no need to publish 9200. Enable only the
 modules you are going to use. `photos` additionally needs an app token
 (`OCAPPS_PHOTOS_USERS`).

@@ -8,6 +8,7 @@
 #   --apps a,b,c         extensions to install (default: news,notes,ocphotos)
 #   --no-extensions      backend only
 #   --admin-token TOK    enables the extensions panel (/ocapps-admin/)
+#   --listen ADDR        listen address written to the env (default: 127.0.0.1:8096)
 #   --version vX.Y.Z     binary version (default: latest release)
 #   --dry-run            shows what it would do, without touching anything
 #   --uninstall          stops and removes the service (keeps /var/lib/ocapps)
@@ -31,13 +32,14 @@ OC_URL=""
 APPS="news,notes,ocphotos"
 WITH_EXTENSIONS=1
 ADMIN_TOKEN=""
+LISTEN="127.0.0.1:8096"
 VERSION=""
 DRY_RUN=0
 UNINSTALL=0
 PURGE=0
 
 usage() {
-  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-1}"
 }
 
@@ -50,6 +52,8 @@ while [ $# -gt 0 ]; do
     --no-extensions) WITH_EXTENSIONS=0 ;;
     --admin-token) shift; ADMIN_TOKEN="${1:-}" ;;
     --admin-token=*) ADMIN_TOKEN="${1#*=}" ;;
+    --listen) shift; LISTEN="${1:-}" ;;
+    --listen=*) LISTEN="${1#*=}" ;;
     --version) shift; VERSION="${1:-}" ;;
     --version=*) VERSION="${1#*=}" ;;
     --dry-run) DRY_RUN=1 ;;
@@ -102,6 +106,8 @@ need tar
 [ -n "$OC_URL" ] || { echo "error: missing --url (public OpenCloud URL)" >&2; usage; }
 case "$OC_URL" in http://*|https://*) ;; *) echo "error: --url must start with http(s)://" >&2; exit 1 ;; esac
 OC_URL="${OC_URL%/}"
+case "$LISTEN" in *:*) ;; *) echo "error: --listen must be host:port" >&2; exit 1 ;; esac
+
 
 arch=$(uname -m)
 case "$arch" in
@@ -148,14 +154,14 @@ fi
 say "== environment in $ETC/env"
 run "install -d -m 750 -o root -g $APP_USER '$ETC'"
 if [ -f "$ETC/env" ]; then
-  say "  already exists, left untouched (check OCAPPS_OPENCLOUD_URL by hand)"
+  say "  already exists, left untouched (check OCAPPS_OPENCLOUD_URL and OCAPPS_LISTEN_ADDR by hand)"
   run "sed -i 's|^OCAPPS_OPENCLOUD_URL=.*|OCAPPS_OPENCLOUD_URL=$OC_URL|' '$ETC/env'"
 else
   [ "$DRY_RUN" = 1 ] && say "  [dry-run] write $ETC/env"
   if [ "$DRY_RUN" = 0 ]; then
     cat > "$ETC/env" <<EOF
 OCAPPS_OPENCLOUD_URL=$OC_URL
-OCAPPS_LISTEN_ADDR=0.0.0.0:8096
+OCAPPS_LISTEN_ADDR=$LISTEN
 OCAPPS_DATA_DIR=/var/lib/ocapps
 OCAPPS_LOG_LEVEL=info
 OCAPPS_AUTH_MODE=opencloud
@@ -227,14 +233,24 @@ fi
 
 say ""
 say "== check"
+# The port comes from the env file, so a run that found an existing one
+# (installed with another --listen) is checked where it really listens.
+check_addr=$(sed -n 's|^OCAPPS_LISTEN_ADDR=||p' "$ETC/env" 2>/dev/null | tail -1)
+[ -n "$check_addr" ] || check_addr="$LISTEN"
+case "$check_addr" in
+  0.0.0.0:*) check_addr="127.0.0.1:${check_addr#0.0.0.0:}" ;;
+  \[::\]:*) check_addr="[::1]:${check_addr#\[::\]:}" ;;
+  *:*) ;;
+  *) check_addr="127.0.0.1:${check_addr##*:}" ;;
+esac
 if [ "$DRY_RUN" = 1 ]; then
-  say "  [dry-run] systemctl is-active opencloud-apps && curl -f http://127.0.0.1:8096/readyz"
+  say "  [dry-run] systemctl is-active opencloud-apps && curl -f http://$check_addr/readyz"
 else
   sleep 2
   systemctl is-active opencloud-apps || { echo "error: the service did not start (journalctl -u opencloud-apps)" >&2; exit 1; }
-  curl -fsS -o /dev/null http://127.0.0.1:8096/readyz && say "  readyz OK"
+  curl -fsS -o /dev/null "http://$check_addr/readyz" && say "  readyz OK on $check_addr"
   if [ -x "$HELPER" ]; then "$HELPER" list || true; fi
   say ""
   say "Proxy still missing: publish /ocphotos-api/, /index.php/apps/news/, /index.php/apps/notes/,"
-  say "both /ocs/v2.php/cloud/* and /ocapps-admin/ towards 127.0.0.1:8096."
+  say "both /ocs/v2.php/cloud/* and /ocapps-admin/ towards http://$check_addr."
 fi
