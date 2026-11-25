@@ -19,7 +19,7 @@
 >   `deploy/README.md` and the Store metadata stay here. Only `app/server-go/`
 >   is frozen (do not accept PRs against it).
 > - **Proxy change when migrating**: the proxy must pass `/ocphotos-api/` to the
->   ocapps upstream (`127.0.0.1:8096`) **WITHOUT strip**, so the trailing slash
+>   ocapps upstream (`127.0.0.1:8077`) **WITHOUT strip**, so the trailing slash
 >   that stripped the prefix towards the old service has to be removed. The
 >   extension already calls `/ocphotos-api/api/...`, so there are no frontend
 >   changes.

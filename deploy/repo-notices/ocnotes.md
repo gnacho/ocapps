@@ -22,7 +22,7 @@
 > - **Users / deployment**: install the `ocapps` *companion server* (static
 >   binary + systemd unit + migration script for the `ocnotes` data in
 >   [`deploy/`](https://github.com/gnacho/ocapps/tree/main/deploy)) and point the
->   proxy at its single listener (`127.0.0.1:8096`). The `OCNOTES_*` variables
+>   proxy at its single listener (`127.0.0.1:8077`). The `OCNOTES_*` variables
 >   are still accepted as legacy for 2 minor versions (up to ocapps 0.3.0) with
 >   a warning, so migrate to `OCAPPS_*`. Note that `OCNOTES_GRAPH_URL` (the full
 >   `.../graph/v1.0/me` URL) maps to `OCAPPS_OPENCLOUD_URL` by deriving the root

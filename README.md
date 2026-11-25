@@ -2,7 +2,7 @@
 
 `ocapps` is a single Go service that replaces the three Go backends behind
 the OpenCloud apps (`ocnews`, `ocnotes`, `ocphotos`): one static binary, one
-listener (`127.0.0.1:8096` by default), one systemd unit and one proxy upstream, serving
+listener (`127.0.0.1:8077` by default), one systemd unit and one proxy upstream, serving
 the **same API contracts** as the three original services (News API v1.3,
 Notes API v1/v1.4 + OCS, and the photos API under `/ocphotos-api/`).
 
@@ -140,7 +140,7 @@ OCAPPS_PHOTOS_ENABLED=false OCAPPS_NOTES_ENABLED=false \
 OCAPPS_DATA_DIR=/tmp/ocapps-dev \
 ./ocapps
 
-curl -s localhost:8096/healthz    # {"version":"dev",...,"modules":{...}}
+curl -s localhost:8077/healthz    # {"version":"dev",...,"modules":{...}}
 ```
 
 Against a real OpenCloud instance (default mode, `opencloud`):
@@ -185,21 +185,22 @@ It is idempotent.
 
 All that is left is publishing the routes on the proxy (`/ocphotos-api/`,
 `/index.php/apps/news/`, `/index.php/apps/notes/`, the two
-`/ocs/v2.php/cloud/*` and `/ocapps-admin/`) towards `127.0.0.1:8096`.
+`/ocs/v2.php/cloud/*` and `/ocapps-admin/`) towards `127.0.0.1:8077`.
 
 ### Port
 
-`8096` is only a default. The service needs one port, the one in
+`8077` is only a default. The service needs one port, the one in
 `OCAPPS_LISTEN_ADDR`, and the proxy is the only thing that has to know it:
 
 ```bash
-... | sudo sh -s -- --url https://cloud.example.com --listen 127.0.0.1:18096
+... | sudo sh -s -- --url https://cloud.example.com --listen 127.0.0.1:18077
 # or, once installed, edit OCAPPS_LISTEN_ADDR in /etc/ocapps/env and restart
 ```
 
-Mind that other services use 8096 (Jellyfin, for instance). Under Docker the
-container keeps listening on 8096 and you publish a different host port in the
-mapping (`"127.0.0.1:18096:8096"`), as explained in `deploy/README.md`.
+Mind that 8096 is a common self-hosted port (Jellyfin uses it), which is why the
+default is 8077. Under Docker the container keeps listening on 8077 and you
+publish a different host port in the mapping (`"127.0.0.1:18077:8077"`), as
+explained in `deploy/README.md`.
 
 ### Manual install
 
@@ -230,7 +231,7 @@ sudoedit /etc/ocapps/env
 sudo install -m 644 deploy/opencloud-apps.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now opencloud-apps
-curl -s localhost:8096/healthz
+curl -s localhost:8077/healthz
 ```
 
 `/var/lib/ocapps` does not need to be created by hand: the unit declares it with
@@ -252,7 +253,7 @@ versions, up to 0.3.0) > default. Full table with legacy names and notes: SPEC
 | Variable | Default | Description |
 |---|---|---|
 | `OCAPPS_OPENCLOUD_URL` | *(required with opencloud auth)* | OpenCloud server root |
-| `OCAPPS_LISTEN_ADDR` | `127.0.0.1:8096` | Single listener. Change it freely (see "Ports" below) |
+| `OCAPPS_LISTEN_ADDR` | `127.0.0.1:8077` | Single listener. Change it freely (see "Ports" below) |
 | `OCAPPS_DATA_DIR` | `/var/lib/ocapps` | Data root (`<dir>/{news,notes,photos}`) |
 | `OCAPPS_LOG_LEVEL` | `info` | `debug\|info\|warn\|error` |
 | `OCAPPS_AUTH_MODE` | `opencloud` | `opencloud` (Graph) \| `local` (bcrypt, news only) |

@@ -158,7 +158,7 @@ func (l *loader) dur(newVar, legacy string, def time.Duration) (time.Duration, e
 | New | Default | Legacy (in order of precedence among them) | Notes |
 |---|---|---|---|
 | `OCAPPS_OPENCLOUD_URL` | *(required)* | `OCNEWS_OPENCOLOUD_URL` (**historic typo, double O**), `OCNOTES_GRAPH_URL`†, `OC_BASE_URL` | OpenCloud server root. †`OCNOTES_GRAPH_URL` is the full URL `.../graph/v1.0/me`, so mapping it derives the root (strip the `/graph/v1.0/me` suffix if present) and logs the transformation. |
-| `OCAPPS_LISTEN_ADDR` | `127.0.0.1:8096` | `OCNEWS_ADDR`, `OCNOTES_ADDR`, `LISTEN_ADDR` | **A single listener.** The legacy names are only used to detect old deployments in the logs, the port is not inherited (each service had its own). Documented in the migration. |
+| `OCAPPS_LISTEN_ADDR` | `127.0.0.1:8077` | `OCNEWS_ADDR`, `OCNOTES_ADDR`, `LISTEN_ADDR` | **A single listener.** The legacy names are only used to detect old deployments in the logs, the port is not inherited (each service had its own). Documented in the migration. |
 | `OCAPPS_DATA_DIR` | `/var/lib/ocapps` | `OCNEWS_DATA_DIR`, `OCNOTES_DATA_DIR`, `DATA_DIR` | The per-module subdirectories are derived: `<dir>/news`, `<dir>/notes`, `<dir>/photos` (§5.1). If a per-module legacy variable is set, that path is used for that module (smooth transition). |
 | `OCAPPS_LOG_LEVEL` | `info` | `OCNEWS_LOG_LEVEL` | debug\|info\|warn\|error. |
 | `OCAPPS_AUTH_MODE` | `opencloud` | `OCNEWS_AUTH_MODE`, `OCNOTES_AUTH_MODE` | `opencloud` (Graph) \| `local` (bcrypt, news only, for bootstrap/dev). The default changes from `local` (ocnews) to `opencloud`, which is already the mode used in real deployments. |
@@ -233,7 +233,7 @@ Today **both** serve `/ocs/v2.php/cloud/user`: ocnews as a stub for news-android
 
 Today the proxy strips `/ocphotos-api/`, so photos sees `/api/...` (`deploy/README.md`: "trailing slash strips the prefix"). In the unified binary `/api/` already belongs to news (`/api/me/*`), so:
 
-**Decision**: the proxy routes `/ocphotos-api/` to `http://127.0.0.1:8096` **with no strip**, and photos registers its routes as `/ocphotos-api/api/...`. Zero frontend changes (the extension already calls `/ocphotos-api/api/...`) and the prefix hardcoded in the video signature (`"/ocphotos-api/api/video/%d"`, `api.go:342`) is still correct as is. The prefix is extracted into a constant `photos.PublicPrefix = "/ocphotos-api"` used both in the route registration and in the video signature (parametrizable with `OCAPPS_PHOTOS_PUBLIC_PREFIX` only if it is ever needed, do not expose it without demand).
+**Decision**: the proxy routes `/ocphotos-api/` to `http://127.0.0.1:8077` **with no strip**, and photos registers its routes as `/ocphotos-api/api/...`. Zero frontend changes (the extension already calls `/ocphotos-api/api/...`) and the prefix hardcoded in the video signature (`"/ocphotos-api/api/video/%d"`, `api.go:342`) is still correct as is. The prefix is extracted into a constant `photos.PublicPrefix = "/ocphotos-api"` used both in the route registration and in the video signature (parametrizable with `OCAPPS_PHOTOS_PUBLIC_PREFIX` only if it is ever needed, do not expose it without demand).
 
 Alternative considered and rejected: keep the strip and mount photos at `/api/` with news moving `/api/me`, which would break the news extension (it calls `/api/me/*` with no app prefix) and would mix two contracts under one prefix.
 
@@ -495,7 +495,7 @@ Note: `Restart=on-failure` only acts if the whole process dies, and a failed mod
 
 ```bash
 OCAPPS_OPENCLOUD_URL=https://cloud.example.com
-OCAPPS_LISTEN_ADDR=127.0.0.1:8096
+OCAPPS_LISTEN_ADDR=127.0.0.1:8077
 OCAPPS_DATA_DIR=/var/lib/ocapps
 OCAPPS_LOG_LEVEL=info
 OCAPPS_AUTH_MODE=opencloud
@@ -520,12 +520,12 @@ Today (inferred from the audits and the deploy README): `/index.php/apps/news/*`
 ```nginx
 # /index.php/apps/news/ and /index.php/apps/notes/ and /ocs/ as today (no strip),
 # only the upstream changes:
-location /index.php/apps/news/  { proxy_pass http://127.0.0.1:8096; }
-location /index.php/apps/notes/ { proxy_pass http://127.0.0.1:8096; }
-location /ocs/                  { proxy_pass http://127.0.0.1:8096; }
-location /api/me                { proxy_pass http://127.0.0.1:8096; }   # news extension contract
+location /index.php/apps/news/  { proxy_pass http://127.0.0.1:8077; }
+location /index.php/apps/notes/ { proxy_pass http://127.0.0.1:8077; }
+location /ocs/                  { proxy_pass http://127.0.0.1:8077; }
+location /api/me                { proxy_pass http://127.0.0.1:8077; }   # news extension contract
 # photos: REMOVE the trailing slash that stripped the prefix:
-location /ocphotos-api/         { proxy_pass http://127.0.0.1:8096; }   # before: http://...:8097/
+location /ocphotos-api/         { proxy_pass http://127.0.0.1:8077; }   # before: http://...:8097/
 ```
 
 (Replicate the `Authorization` and `Host` headers and the long timeouts for `/ocphotos-api/api/video/` for Range/streaming, the same as today.) **Decision**: direct routing by public prefixes, with no new `/ocnews-api/` or `/ocnotes-api/` prefixes, since they would break the Nextcloud News and Iotas client contracts.
@@ -536,13 +536,13 @@ location /ocphotos-api/         { proxy_pass http://127.0.0.1:8096; }   # before
 systemctl is-active opencloud-apps                       # active
 systemctl is-enabled ocnews ocnotes ocphotos             # disabled (x3)
 journalctl -u opencloud-apps -n 50 --no-pager            # no unexpected "legacy env" and no failed modules
-curl -s localhost:8096/healthz | jq .                    # all 3 modules "ok"
-curl -s -o /dev/null -w '%{http_code}\n' localhost:8096/readyz   # 200
+curl -s localhost:8077/healthz | jq .                    # all 3 modules "ok"
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8077/readyz   # 200
 # Contracts (internal, over localhost, with valid credentials):
-curl -su user:app-token localhost:8096/index.php/apps/news/api/v1-3/version
-curl -su user:app-token localhost:8096/index.php/apps/notes/api/v1/notes
-curl -s  -H "Authorization: Bearer $TOK" localhost:8096/ocs/v2.php/cloud/capabilities
-curl -s  -H "Authorization: Bearer $TOK" localhost:8096/ocphotos-api/api/stats
+curl -su user:app-token localhost:8077/index.php/apps/news/api/v1-3/version
+curl -su user:app-token localhost:8077/index.php/apps/notes/api/v1/notes
+curl -s  -H "Authorization: Bearer $TOK" localhost:8077/ocs/v2.php/cloud/capabilities
+curl -s  -H "Authorization: Bearer $TOK" localhost:8077/ocphotos-api/api/stats
 # Database integrity:
 for f in /var/lib/ocapps/*/*.db; do sqlite3 "$f" 'PRAGMA integrity_check;'; done   # ok x3
 sqlite3 /var/lib/ocapps/news/ocnews.db 'PRAGMA user_version;'    # 18

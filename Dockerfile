@@ -29,9 +29,9 @@ RUN apk add --no-cache ca-certificates tzdata ffmpeg \
     && mkdir -p /var/lib/ocapps \
     && chown ocapps:ocapps /var/lib/ocapps
 COPY --from=build /ocapps /usr/local/bin/ocapps
-ENV OCAPPS_LISTEN_ADDR=0.0.0.0:8096 \
+ENV OCAPPS_LISTEN_ADDR=0.0.0.0:8077 \
     OCAPPS_DATA_DIR=/var/lib/ocapps
 VOLUME /var/lib/ocapps
-EXPOSE 8096
+EXPOSE 8077
 USER ocapps
 ENTRYPOINT ["/usr/local/bin/ocapps"]
