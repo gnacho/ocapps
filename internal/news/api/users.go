@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/gnacho/ocapps/internal/news/auth"
+	"github.com/gnacho/ocapps/internal/news/privacy"
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
@@ -159,6 +160,7 @@ type userSettings struct {
 	ReaderFont      string `json:"readerFont"`      // default|serif|sans|mono
 	ReaderFontSize  string `json:"readerFontSize"`  // px, empty = 15
 	NtfyTopic       string `json:"ntfyTopic"`       // user ntfy topic, empty = global/off
+	LinkHygiene     string `json:"linkHygiene"`     // off|tracking|aggressive, empty = tracking
 }
 
 func (s *Server) mySettings(w http.ResponseWriter, r *http.Request) {
@@ -169,6 +171,7 @@ func (s *Server) mySettings(w http.ResponseWriter, r *http.Request) {
 	font, _ := s.store.GetUserSetting(u.ID, "reader_font")
 	fontSize, _ := s.store.GetUserSetting(u.ID, "reader_font_size")
 	ntfy, _ := s.store.GetUserSetting(u.ID, "ntfy_topic")
+	hygiene, _ := s.store.GetUserSetting(u.ID, "link_hygiene")
 	if theme == "" {
 		theme = "system"
 	}
@@ -181,7 +184,10 @@ func (s *Server) mySettings(w http.ResponseWriter, r *http.Request) {
 	if fontSize == "" {
 		fontSize = "15"
 	}
-	writeJSON(w, http.StatusOK, userSettings{theme, width, interval, font, fontSize, ntfy})
+	if hygiene == "" {
+		hygiene = string(privacy.LevelTracking)
+	}
+	writeJSON(w, http.StatusOK, userSettings{theme, width, interval, font, fontSize, ntfy, hygiene})
 }
 
 func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +198,7 @@ func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
 		ReaderFont      *string `json:"readerFont"`
 		ReaderFontSize  *string `json:"readerFontSize"`
 		NtfyTopic       *string `json:"ntfyTopic"`
+		LinkHygiene     *string `json:"linkHygiene"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		errorStatus(w, r, http.StatusUnprocessableEntity, "invalid_body")
@@ -264,6 +271,21 @@ func (s *Server) updateMySettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.store.SetUserSetting(u.ID, "reader_font_size", v); err != nil {
 			s.logError(w, r, "store font size", err)
+			return
+		}
+	}
+	if body.LinkHygiene != nil {
+		v, ok := privacy.ValidLevel(*body.LinkHygiene)
+		if !ok {
+			errorStatus(w, r, http.StatusUnprocessableEntity, "invalid_link_hygiene")
+			return
+		}
+		stored := string(v)
+		if v == privacy.LevelTracking {
+			stored = "" // the default is not stored
+		}
+		if err := s.store.SetUserSetting(u.ID, "link_hygiene", stored); err != nil {
+			s.logError(w, r, "save link hygiene", err)
 			return
 		}
 	}
