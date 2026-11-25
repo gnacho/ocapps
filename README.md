@@ -2,7 +2,7 @@
 
 `ocapps` is a single Go service that replaces the three Go backends behind
 the OpenCloud apps (`ocnews`, `ocnotes`, `ocphotos`): one static binary, one
-listener (`127.0.0.1:8096`), one systemd unit and one proxy upstream, serving
+listener (`127.0.0.1:8096` by default), one systemd unit and one proxy upstream, serving
 the **same API contracts** as the three original services (News API v1.3,
 Notes API v1/v1.4 + OCS, and the photos API under `/ocphotos-api/`).
 
@@ -187,6 +187,20 @@ All that is left is publishing the routes on the proxy (`/ocphotos-api/`,
 `/index.php/apps/news/`, `/index.php/apps/notes/`, the two
 `/ocs/v2.php/cloud/*` and `/ocapps-admin/`) towards `127.0.0.1:8096`.
 
+### Port
+
+`8096` is only a default. The service needs one port, the one in
+`OCAPPS_LISTEN_ADDR`, and the proxy is the only thing that has to know it:
+
+```bash
+... | sudo sh -s -- --url https://cloud.example.com --listen 127.0.0.1:18096
+# or, once installed, edit OCAPPS_LISTEN_ADDR in /etc/ocapps/env and restart
+```
+
+Mind that other services use 8096 (Jellyfin, for instance). Under Docker the
+container keeps listening on 8096 and you publish a different host port in the
+mapping (`"127.0.0.1:18096:8096"`), as explained in `deploy/README.md`.
+
 ### Manual install
 
 Each tag produces static binaries for `linux/amd64` and `linux/arm64` plus a
@@ -238,7 +252,7 @@ versions, up to 0.3.0) > default. Full table with legacy names and notes: SPEC
 | Variable | Default | Description |
 |---|---|---|
 | `OCAPPS_OPENCLOUD_URL` | *(required with opencloud auth)* | OpenCloud server root |
-| `OCAPPS_LISTEN_ADDR` | `127.0.0.1:8096` | Single listener |
+| `OCAPPS_LISTEN_ADDR` | `127.0.0.1:8096` | Single listener. Change it freely (see "Ports" below) |
 | `OCAPPS_DATA_DIR` | `/var/lib/ocapps` | Data root (`<dir>/{news,notes,photos}`) |
 | `OCAPPS_LOG_LEVEL` | `info` | `debug\|info\|warn\|error` |
 | `OCAPPS_AUTH_MODE` | `opencloud` | `opencloud` (Graph) \| `local` (bcrypt, news only) |
