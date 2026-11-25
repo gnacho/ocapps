@@ -26,11 +26,11 @@ services:
       - ocapps-data:/var/lib/ocapps
     ports:
       # Only the host proxy needs it. Do not expose it to the Internet.
-      - "127.0.0.1:8096:8096"
+      - "127.0.0.1:8077:8077"
     networks:
       - opencloud-net
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8096/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8077/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

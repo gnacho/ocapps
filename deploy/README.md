@@ -99,7 +99,7 @@ Security rules enforced by the code, not by documentation:
 
 After restarting `opencloud`, the panel is reachable at
 `https://<domain>/ocapps-admin/` (it needs its route in the proxy towards
-`127.0.0.1:8096`).
+`127.0.0.1:8077`).
 
 
 ## Requirements
@@ -175,19 +175,20 @@ share `opencloud-net`. Do not use it as a separate project: `ocapps` resolves
 docker compose -f docker-compose.yml -f docker-compose.ocapps.yml up -d
 ```
 
-Port `8096` is published on `127.0.0.1` only, because only the host proxy needs
-it. If another service already owns that port on the host (Jellyfin uses 8096
-too), publish another one instead: the container keeps listening on 8096 inside,
+Port `8077` is published on `127.0.0.1` only, because only the host proxy needs
+it. The default is 8077 instead of the more common 8096 (Jellyfin's) so it does
+not clash out of the box. If another service already owns 8077 on the host,
+publish another port instead: the container keeps listening on 8077 inside,
 so only the left side of the mapping changes.
 
 ```yaml
 ports:
-  - "127.0.0.1:18096:8096"   # host 18096 -> container 8096
+  - "127.0.0.1:18077:8077"   # host 18077 -> container 8077
 ```
 
 Nothing else needs editing: the `healthcheck` and the proxy routes point at the
 **container** port. Only the proxy upstream follows the host side
-(`proxy_pass http://127.0.0.1:18096;`). Same rule with `--listen` when running
+(`proxy_pass http://127.0.0.1:18077;`). Same rule with `--listen` when running
 from a release with `install.sh`.
 
 `OCAPPS_OPENCLOUD_URL=http://opencloud:9200` points at the internal API of
@@ -228,13 +229,13 @@ The routes go to the published port, with no trailing slash in `proxy_pass`
 
 ```nginx
 location /index.php/apps/notes/ {
-    proxy_pass http://127.0.0.1:8096;
+    proxy_pass http://127.0.0.1:8077;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 
 location = /ocs/v2.php/cloud/capabilities {
-    proxy_pass http://127.0.0.1:8096;
+    proxy_pass http://127.0.0.1:8077;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
@@ -249,7 +250,7 @@ Traefik. The `/ocapps-admin/` panel belongs to the systemd path, since it runs
 ### 5. Verification
 
 ```bash
-docker compose exec ocapps wget -qO- http://127.0.0.1:8096/healthz
+docker compose exec ocapps wget -qO- http://127.0.0.1:8077/healthz
 docker compose logs --tail=50 ocapps
 ```
 
@@ -294,7 +295,7 @@ systemctl daemon-reload
 > Today the proxy strips `/ocphotos-api/` (ocphotos sees `/api/...`). In the
 > unified binary `/api/` belongs to news (`/api/me`, `/api/users`) and photos
 > registers its routes as `/ocphotos-api/api/...`. The proxy must pass the
-> prefix **intact** to the single upstream `127.0.0.1:8096` (SPEC §4.3/§9.3).
+> prefix **intact** to the single upstream `127.0.0.1:8077` (SPEC §4.3/§9.3).
 > This is **THE proxy change of this migration** and the only step the binary
 > itself cannot revert: coordinate it with the systemd cutover (apply the new
 > snippet at the same time `migrate.sh` enables `opencloud-apps`, or right
@@ -306,11 +307,11 @@ OpenCloud instance. Summary:
 
 | Route | Before | Now |
 |---|---|---|
-| `/index.php/apps/news/` | -> ocnews :8094 (no strip) | -> `127.0.0.1:8096` (no strip) |
-| `/index.php/apps/notes/` | -> ocnotes :8100 (no strip) | -> `127.0.0.1:8096` (no strip) |
-| `/ocs/` | -> ocnotes :8100 | -> `127.0.0.1:8096` |
-| `/api/me`, `/api/users` | -> ocnews :8094 | -> `127.0.0.1:8096` (exact patterns, **not** a `/api/` catch-all) |
-| `/ocphotos-api/` | -> ocphotos :8097 **with strip** | -> `127.0.0.1:8096` **WITHOUT strip** |
+| `/index.php/apps/news/` | -> ocnews :8094 (no strip) | -> `127.0.0.1:8077` (no strip) |
+| `/index.php/apps/notes/` | -> ocnotes :8100 (no strip) | -> `127.0.0.1:8077` (no strip) |
+| `/ocs/` | -> ocnotes :8100 | -> `127.0.0.1:8077` |
+| `/api/me`, `/api/users` | -> ocnews :8094 | -> `127.0.0.1:8077` (exact patterns, **not** a `/api/` catch-all) |
+| `/ocphotos-api/` | -> ocphotos :8097 **with strip** | -> `127.0.0.1:8077` **WITHOUT strip** |
 
 Both snippets preserve `Authorization` and `Host`, and
 `/ocphotos-api/api/video/` gets long timeouts and unbuffered streaming (Range
@@ -475,14 +476,14 @@ Notes:
 systemctl is-active opencloud-apps                       # active
 systemctl is-enabled ocnews ocnotes ocphotos             # disabled (x3)
 journalctl -u opencloud-apps -n 50 --no-pager            # no unexpected "legacy env" and no failed modules
-curl -s localhost:8096/healthz | jq .                    # all 3 modules "ok"
-curl -s -o /dev/null -w '%{http_code}\n' localhost:8096/readyz   # 200
+curl -s localhost:8077/healthz | jq .                    # all 3 modules "ok"
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8077/readyz   # 200
 
 # Contracts (internal, over localhost, with valid credentials):
-curl -su user:app-token localhost:8096/index.php/apps/news/api/v1-3/version
-curl -su user:app-token localhost:8096/index.php/apps/notes/api/v1/notes
-curl -s  -H "Authorization: Bearer $TOK" localhost:8096/ocs/v2.php/cloud/capabilities
-curl -s  -H "Authorization: Bearer $TOK" localhost:8096/ocphotos-api/api/stats
+curl -su user:app-token localhost:8077/index.php/apps/news/api/v1-3/version
+curl -su user:app-token localhost:8077/index.php/apps/notes/api/v1/notes
+curl -s  -H "Authorization: Bearer $TOK" localhost:8077/ocs/v2.php/cloud/capabilities
+curl -s  -H "Authorization: Bearer $TOK" localhost:8077/ocphotos-api/api/stats
 
 # Database integrity:
 for f in /var/lib/ocapps/*/*.db; do sqlite3 "$f" 'PRAGMA integrity_check;'; done   # ok x3

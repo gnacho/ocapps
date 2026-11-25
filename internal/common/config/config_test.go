@@ -157,7 +157,7 @@ func TestDefaults(t *testing.T) {
 	if cfg.OpenCloudURL != "https://cloud.example.com" {
 		t.Errorf("OpenCloudURL: %q", cfg.OpenCloudURL)
 	}
-	if cfg.ListenAddr != "127.0.0.1:8096" {
+	if cfg.ListenAddr != "127.0.0.1:8077" {
 		t.Errorf("ListenAddr: %q", cfg.ListenAddr)
 	}
 	if cfg.LogLevel != "info" || cfg.AuthMode != "opencloud" {

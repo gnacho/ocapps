@@ -42,7 +42,7 @@ OLD_UNITS="${OLD_UNITS:-ocnews ocnotes ocphotos}"
 NEW_UNIT="${NEW_UNIT:-opencloud-apps}"
 
 # Address of the new listener for the final smoke checks.
-OCAPPS_ADDR="${OCAPPS_ADDR:-127.0.0.1:8096}"
+OCAPPS_ADDR="${OCAPPS_ADDR:-127.0.0.1:8077}"
 
 # user_version values expected after the migration (SPEC §5.3/§5.4):
 #   news arrives with its live schema (18), notes the same (2), and

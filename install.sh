@@ -8,7 +8,7 @@
 #   --apps a,b,c         extensions to install (default: news,notes,ocphotos)
 #   --no-extensions      backend only
 #   --admin-token TOK    enables the extensions panel (/ocapps-admin/)
-#   --listen ADDR        listen address written to the env (default: 127.0.0.1:8096)
+#   --listen ADDR        listen address written to the env (default: 127.0.0.1:8077)
 #   --version vX.Y.Z     binary version (default: latest release)
 #   --dry-run            shows what it would do, without touching anything
 #   --uninstall          stops and removes the service (keeps /var/lib/ocapps)
@@ -32,7 +32,7 @@ OC_URL=""
 APPS="news,notes,ocphotos"
 WITH_EXTENSIONS=1
 ADMIN_TOKEN=""
-LISTEN="127.0.0.1:8096"
+LISTEN="127.0.0.1:8077"
 VERSION=""
 DRY_RUN=0
 UNINSTALL=0

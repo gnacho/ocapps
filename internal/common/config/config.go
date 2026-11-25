@@ -19,7 +19,7 @@ import (
 
 // Defaults (SPEC §3.2).
 const (
-	DefaultListenAddr = "127.0.0.1:8096"
+	DefaultListenAddr = "127.0.0.1:8077"
 	DefaultDataDir    = "/var/lib/ocapps"
 	DefaultLogLevel   = "info"
 	DefaultAuthMode   = "opencloud"

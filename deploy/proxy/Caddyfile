@@ -21,28 +21,28 @@
 # extension calls it at the host root, so exact patterns, NOT a /api/
 # catch-all).
 handle /index.php/apps/news/* {
-	reverse_proxy 127.0.0.1:8096
+	reverse_proxy 127.0.0.1:8077
 }
 handle /api/me {
-	reverse_proxy 127.0.0.1:8096
+	reverse_proxy 127.0.0.1:8077
 }
 handle /api/me/* {
-	reverse_proxy 127.0.0.1:8096
+	reverse_proxy 127.0.0.1:8077
 }
 handle /api/users {
-	reverse_proxy 127.0.0.1:8096
+	reverse_proxy 127.0.0.1:8077
 }
 handle /api/users/* {
-	reverse_proxy 127.0.0.1:8096
+	reverse_proxy 127.0.0.1:8077
 }
 
 # notes: Notes API contract plus OCS (capabilities and cloud/user are served
 # by the notes module, SPEC §4.2).
 handle /index.php/apps/notes/* {
-	reverse_proxy 127.0.0.1:8096
+	reverse_proxy 127.0.0.1:8077
 }
 handle /ocs/* {
-	reverse_proxy 127.0.0.1:8096
+	reverse_proxy 127.0.0.1:8077
 }
 
 # photos: /ocphotos-api/ WITHOUT STRIP (see the warning above). Do NOT use
@@ -50,7 +50,7 @@ handle /ocs/* {
 # Signed video streaming (/ocphotos-api/api/video/{id}): long timeouts for
 # Range and streaming, and flush_interval -1 disables buffering.
 handle /ocphotos-api/api/video/* {
-	reverse_proxy 127.0.0.1:8096 {
+	reverse_proxy 127.0.0.1:8077 {
 		flush_interval -1
 		transport http {
 			read_timeout 1h
@@ -61,7 +61,7 @@ handle /ocphotos-api/api/video/* {
 # Change notice channel (SSE): no buffering (flush_interval -1 is the Caddy
 # default, left explicit) and long timeouts.
 handle /ocphotos-api/api/stream {
-	reverse_proxy 127.0.0.1:8096 {
+	reverse_proxy 127.0.0.1:8077 {
 		flush_interval -1
 		transport http {
 			read_timeout 1h
@@ -70,5 +70,5 @@ handle /ocphotos-api/api/stream {
 	}
 }
 handle /ocphotos-api/* {
-	reverse_proxy 127.0.0.1:8096
+	reverse_proxy 127.0.0.1:8077
 }
