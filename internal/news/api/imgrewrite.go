@@ -2,14 +2,60 @@ package api
 
 import (
 	"html"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 
+	"github.com/gnacho/ocapps/internal/news/privacy"
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
 var imgSrcRe = regexp.MustCompile(`src="(https?://[^"]+)"`)
+
+// linkHygiene reads the link hygiene level of the requesting user. Empty or on
+// error means tracking, which is the default and has no false positives.
+func (s *Server) linkHygiene(r *http.Request) privacy.Level {
+	u := user(r)
+	if u == nil {
+		return privacy.LevelTracking
+	}
+	v, err := s.store.GetUserSetting(u.ID, "link_hygiene")
+	if err != nil {
+		return privacy.LevelTracking
+	}
+	lvl, ok := privacy.ValidLevel(v)
+	if !ok {
+		return privacy.LevelTracking
+	}
+	return lvl
+}
+
+// ownerLinkHygiene resolves the level of the owner of a feed: the public page
+// of a shared article is cleaned with the level of whoever shared it, not with
+// the visitor's.
+func (s *Server) ownerLinkHygiene(feedID int64) privacy.Level {
+	f, err := s.store.GetFeedByID(feedID)
+	if err != nil || f == nil {
+		return privacy.LevelTracking
+	}
+	v, err := s.store.GetUserSetting(f.UserID, "link_hygiene")
+	if err != nil {
+		return privacy.LevelTracking
+	}
+	lvl, ok := privacy.ValidLevel(v)
+	if !ok {
+		return privacy.LevelTracking
+	}
+	return lvl
+}
+
+// rewriteBody prepares an article body for the client: link hygiene first (the
+// href no longer carry tracking or intermediaries) and then the image proxy,
+// in that order because cleaning href does not touch src.
+func (s *Server) rewriteBody(body string, level privacy.Level) string {
+	return s.rewriteImages(privacy.CleanLinks(body, level))
+}
 
 // rewriteImages transforms the http(s) src of the body towards the signed proxy
 // (the host CSP blocks external images, the browser can load
@@ -36,9 +82,9 @@ func (s *Server) rewriteImages(body string) string {
 
 // rewriteAll applies the proxy to all the items of a response: bodies
 // (images and embedded media) and audio/video/image enclosures.
-func (s *Server) rewriteAll(items []store.Item) {
+func (s *Server) rewriteAll(items []store.Item, level privacy.Level) {
 	for i := range items {
-		items[i].Body = s.rewriteImages(items[i].Body)
+		items[i].Body = s.rewriteBody(items[i].Body, level)
 		if items[i].EnclosureLink != nil && items[i].EnclosureMime != nil {
 			m := *items[i].EnclosureMime
 			if s.mediaMime(m) && strings.HasPrefix(*items[i].EnclosureLink, "http") {

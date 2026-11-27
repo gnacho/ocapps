@@ -17,7 +17,7 @@ func (s *Server) itemFull(w http.ResponseWriter, r *http.Request) {
 
 	// cache: the content of a published article does not change
 	if body, err := s.store.GetItemFull(id); err == nil && body != "" {
-		writeJSON(w, http.StatusOK, map[string]string{"body": s.rewriteImages(body)})
+		writeJSON(w, http.StatusOK, map[string]string{"body": s.rewriteBody(body, s.linkHygiene(r))})
 		return
 	}
 
@@ -42,5 +42,5 @@ func (s *Server) itemFull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.SaveItemFull(id, body)
-	writeJSON(w, http.StatusOK, map[string]string{"body": s.rewriteImages(body)})
+	writeJSON(w, http.StatusOK, map[string]string{"body": s.rewriteBody(body, s.linkHygiene(r))})
 }

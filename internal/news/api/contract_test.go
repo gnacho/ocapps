@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gnacho/ocapps/internal/news/privacy"
 	"github.com/gnacho/ocapps/internal/news/store"
 )
 
@@ -290,7 +291,7 @@ func TestRewriteAllSignsMediaEnclosures(t *testing.T) {
 		{Body: `<img src="https://img.example/a.jpg">`, EnclosureMime: &media, EnclosureLink: &link},
 		{Body: "plain", EnclosureMime: &doc, EnclosureLink: &pdfLink},
 	}
-	e.srv.rewriteAll(items)
+	e.srv.rewriteAll(items, privacy.LevelTracking)
 
 	if !strings.Contains(items[0].Body, "/img?u=") {
 		t.Fatalf("body = %q, want the image proxied", items[0].Body)
